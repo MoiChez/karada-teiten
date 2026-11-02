@@ -57,6 +57,8 @@ export const METRIC_TO_TRAIT: Partial<Record<MetricKey, TraitKey>> = {
   front_pelvis_tilt: 'pelvis_asymmetry',
   front_head_tilt: 'head_tilt',
   front_trunk_shift: 'trunk_shift',
+  front_lower_lean: 'lower_lean',
+  front_neck_shift: 'neck_shift',
   front_knee_left: 'leg_alignment',
   front_knee_right: 'leg_alignment',
   front_load_shift: 'load_shift',
@@ -107,7 +109,8 @@ function compareMetric(a: ComputedMetric, b: ComputedMetric): MetricChange | nul
     if (Math.abs(diff) > threshold) {
       change = 'changed'
       significance = Math.abs(diff) / threshold
-      sentence = `${b.label}は${diff >= 0 ? '前方' : '後方'}へ約${fmtAbs(diff, unit)}移動しています。`
+      const toward = b.key === 'side_head_pitch' ? (diff >= 0 ? '下向き' : '上向き') : diff >= 0 ? '前' : '後ろ'
+      sentence = `${b.label}は前回より${toward}の方向へ約${fmtAbs(diff, unit)}変わっています。`
     } else {
       change = 'stable'
       significance = Math.abs(diff) / threshold

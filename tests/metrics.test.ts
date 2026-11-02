@@ -73,9 +73,39 @@ describe('正面の指標', () => {
     expect(out.rawValue!).toBeCloseTo(expected, 1)
   })
 
-  it('体幹の左右偏位: 肩を被写体の左へ 20px ずらすと + ', () => {
+  it('上半身の左右傾き: 肩を被写体の左へ 20px ずらすと +、胸のあたりの位置ずれも出す', () => {
     const m = metric(front({ shoulderShiftX: 20 }), 'front_trunk_shift')
-    expect(m.rawValue!).toBeCloseTo((20 / Math.hypot(20, 500)) * 100, 0)
+    expect(m.rawValue!).toBeCloseTo(deg(Math.atan(20 / 500)), 1)
+    expect(m.normalizedValue!).toBeCloseTo((20 / Math.hypot(20, 500)) * 100, 0)
+    // 体の高さ H = 耳 300 〜 かかと 1840 = 1540px
+    expect(m.offset!.frac).toBeCloseTo(20 / 1540, 4)
+    expect(m.offset!.label).toContain('胸')
+  })
+
+  it('下半身の左右傾き: 股関節を被写体の左へずらすと +、腰の位置ずれも出す', () => {
+    const lms = frontPose()
+    const shifted = lms.map((l, i) => (i === 23 || i === 24 ? { ...l, x: l.x + 40 / 1000 } : l))
+    const ms = computePlaneMetrics(planeInputFrom(record('front', shifted), true))
+    const m = metric(ms, 'front_lower_lean')
+    expect(m.rawValue!).toBeCloseTo(deg(Math.atan(40 / 800)), 1)
+    expect(m.direction).toContain('左')
+    expect(m.offset!.frac).toBeCloseTo(40 / 1540, 4)
+    expect(m.status).toBe('noticeable')
+  })
+
+  it('首の左右位置ずれ: 耳の中点が肩の中点より右なら −', () => {
+    const lms = frontPose()
+    const shifted = lms.map((l, i) => (i === 7 || i === 8 ? { ...l, x: l.x - 30 / 1000 } : l))
+    const m = metric(computePlaneMetrics(planeInputFrom(record('front', shifted), true)), 'front_neck_shift')
+    expect(m.rawValue!).toBeCloseTo((-30 / 1540) * 100, 2)
+    expect(m.direction).toContain('右')
+    expect(m.offset!.frac).toBeCloseTo(-30 / 1540, 4)
+  })
+
+  it('肩の高さの差は長さ（体の高さ比）でも返す', () => {
+    const m = metric(front({ leftShoulderDrop: 30 }), 'front_shoulder_tilt')
+    expect(m.offset!.frac).toBeCloseTo(30 / 1540, 3)
+    expect(m.offset!.sigma).toBeGreaterThan(0)
   })
 
   it('信頼度が低い点を使う指標は「評価不可」になり、理由が付く', () => {
@@ -133,6 +163,24 @@ describe('側面の指標', () => {
   it('骨盤帯の前後位置: 股関節が前に出ると +', () => {
     const m = metric(side({ hipForward: 40 }), 'side_hip_forward')
     expect(m.rawValue!).toBeGreaterThan(0)
+  })
+
+  it('全身・下半身の前後傾きは角度で、良し悪しは判定しない（記述のみ）', () => {
+    const ms = side({ hipForward: 40, shoulderForward: 40, earForward: 40 })
+    const hip = metric(ms, 'side_plumb_hip')
+    expect(hip.status).toBe('descriptive')
+    expect(hip.rawValue!).toBeCloseTo(deg(Math.atan(40 / 800)), 1)
+    expect(hip.offset!.frac).toBeCloseTo(40 / 1540, 4)
+    const body = metric(ms, 'side_plumb_shoulder')
+    expect(body.rawValue!).toBeCloseTo(deg(Math.atan(40 / 1300)), 1)
+  })
+
+  it('頭の前後傾き: 目尻が耳より下なら +（顔が下を向く方向）、記述のみ', () => {
+    const down = metric(side({ eyeDrop: 20 }), 'side_head_pitch')
+    expect(down.rawValue!).toBeCloseTo(deg(Math.atan(20 / 80)), 1)
+    expect(down.status).toBe('descriptive')
+    const up = metric(side({ eyeDrop: -20, facing: 'left' }, { facing: 'left' }), 'side_head_pitch')
+    expect(up.rawValue!).toBeCloseTo(-deg(Math.atan(20 / 80)), 1)
   })
 
   it('下げ振り線からの位置は「記述のみ」', () => {

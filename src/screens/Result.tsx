@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { Box, Columns2, Footprints, PencilRuler, Trash2 } from 'lucide-react'
 import type { AssessmentSession, Plane, PostureTrait } from '../domain/types'
-import { AREA_LABELS, confidenceLabel, fmtDate } from '../domain/format'
+import { AREA_LABELS, confidenceLabel, fmtDate, fmtShortDate } from '../domain/format'
+import { gaugeRows } from '../domain/gauge'
 import { deriveHypotheses } from '../domain/hypotheses'
 import { buildPlan } from '../domain/recommend/engine'
 import { correctedSet, correctionDiffs } from '../domain/session'
@@ -11,6 +12,7 @@ import { db } from '../data/db'
 import { data } from '../data/repo'
 import { useCheckins, useLogs, useProfile, useSession, useSessions } from '../data/hooks'
 import { MetricList } from '../components/MetricList'
+import { GaugeTable, LoadShiftFeet } from '../components/Gauge'
 import { PhotoWithPose, PostureGrid, useStoredImageUrl } from '../components/PoseViews'
 import { RoutineItem } from '../components/RoutineItem'
 import { Badge, Button, ButtonLink, Dialog, IconButton, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
@@ -36,6 +38,7 @@ function ResultBody({ s }: { s: AssessmentSession }) {
   const planes: Plane[] = [s.front && 'front', s.side && 'side'].filter(Boolean) as Plane[]
   const [plane, setPlane] = useState<Plane>(planes[0] ?? 'front')
   const [showSkeleton, setShowSkeleton] = useState(true)
+  const [showGuides, setShowGuides] = useState(true)
   const [useCorrected, setUseCorrected] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -62,6 +65,8 @@ function ResultBody({ s }: { s: AssessmentSession }) {
   const planeTraits = s.postureTraits.filter((t) => t.plane === plane)
   const planeMetrics = s.computedMetrics.filter((m) => m.plane === plane)
   const majorFlags = s.qualityFlags.filter((f) => f.severity !== 'minor')
+  const heightCm = profile?.heightCm
+  const rows = useMemo(() => gaugeRows(s.computedMetrics, plane, prev?.computedMetrics), [s, plane, prev])
 
   const del = async () => {
     await data.deleteSession(s.id)
@@ -136,7 +141,7 @@ function ResultBody({ s }: { s: AssessmentSession }) {
       {rec && rec.landmarksRaw.length > 0 && (
         <div className={cx('grid gap-3', planes.length > 1 ? 'mt-0' : 'mt-6', imageUrl ? 'grid-cols-2' : 'mx-auto max-w-[300px] grid-cols-1')}>
           {imageUrl && (
-            <PhotoWithPose record={rec} imageUrl={imageUrl} useCorrected={useCorrected} showSkeleton={showSkeleton} alt={`${plane === 'front' ? '正面' : '横向き'}の写真と骨格`} />
+            <PhotoWithPose record={rec} imageUrl={imageUrl} useCorrected={useCorrected} showSkeleton={showSkeleton} showGuides={showGuides} alt={`${plane === 'front' ? '正面' : '横向き'}の写真と骨格`} />
           )}
           <PostureGrid current={rec} useCorrected={useCorrected} label={`${plane === 'front' ? '正面' : '横向き'}の骨格を、体の高さでそろえて方眼に描いた図`} />
         </div>
@@ -149,6 +154,12 @@ function ResultBody({ s }: { s: AssessmentSession }) {
               骨格を重ねる
             </label>
           )}
+          {imageUrl && (
+            <label className="flex min-h-11 items-center gap-2 text-[15px]">
+              <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={showGuides} onChange={(e) => setShowGuides(e.target.checked)} />
+              基準線
+            </label>
+          )}
           {correctedSet(rec).size > 0 && (
             <label className="flex min-h-11 items-center gap-2 text-[15px]">
               <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={!useCorrected} onChange={(e) => setUseCorrected(!e.target.checked)} />
@@ -159,6 +170,15 @@ function ResultBody({ s }: { s: AssessmentSession }) {
       )}
       {!imageUrl && rec && <p className="text-sm text-ink-3">写真は保存されていないため、骨格だけを表示しています。</p>}
       {plane === 'front' && <p className="mt-1 text-sm text-ink-3">左右は、写っている人自身から見た左右です。</p>}
+
+      {/* 3b. ずれの向きと大きさ */}
+      {rec && rec.landmarksRaw.length > 0 && (
+        <>
+          <SectionTitle sub="向きと大きさをひと目で。中央の帯は測定のばらつきの範囲です">ずれの向きと大きさ（{plane === 'front' ? '正面' : '横向き'}）</SectionTitle>
+          <GaugeTable rows={rows} heightCm={heightCm} pastLabel={prev ? fmtShortDate(prev.createdAt) : undefined} />
+          {plane === 'front' && <LoadShiftFeet metric={planeMetrics.find((m) => m.key === 'front_load_shift')} heightCm={heightCm} />}
+        </>
+      )}
 
       {/* 4. 主な姿勢特徴 */}
       <SectionTitle sub="写真から観測された事実">主な姿勢特徴（{plane === 'front' ? '正面' : '横向き'}）</SectionTitle>
@@ -186,7 +206,7 @@ function ResultBody({ s }: { s: AssessmentSession }) {
 
       {/* 6. 項目別の指標 */}
       <SectionTitle sub="値・ばらつきの目安・信頼度。開くと計算方法と限界が見られます">項目別の指標</SectionTitle>
-      <MetricList metrics={planeMetrics} rawMetrics={s.computedMetricsRaw} />
+      <MetricList metrics={planeMetrics} rawMetrics={s.computedMetricsRaw} heightCm={heightCm} />
       {diffs.length > 0 && <p className="mt-2 text-sm text-ink-3">手動補正により {diffs.length} 項目の値が変わっています（補正前の値は各項目に表示）。</p>}
 
       {/* 7. 生活習慣との関連仮説 */}

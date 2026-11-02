@@ -24,7 +24,7 @@ const RULES: Rule[] = [
   },
   {
     id: 'bag_shoulder',
-    traits: ['shoulder_asymmetry', 'head_tilt'],
+    traits: ['shoulder_asymmetry', 'head_tilt', 'neck_shift'],
     lifestyle: ['bag_one_side'],
     text: 'いつも同じ側でかばんを持つ習慣が、肩の高さの左右差に関係している可能性があります。',
   },
@@ -36,7 +36,7 @@ const RULES: Rule[] = [
   },
   {
     id: 'crossed_legs',
-    traits: ['pelvis_asymmetry', 'load_shift', 'lateral_lean', 'trunk_shift'],
+    traits: ['pelvis_asymmetry', 'load_shift', 'lateral_lean', 'trunk_shift', 'lower_lean'],
     lifestyle: ['crossed_legs', 'standing_work'],
     text: '脚を組む・片脚に体重をかけて立つクセが、左右差に関係している可能性があります。',
   },

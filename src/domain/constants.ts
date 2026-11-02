@@ -2,13 +2,20 @@
 // 測定の品質や「ばらつきを超える差か」を判断するための工学的な目安（docs/05-analysis-logic.md）
 
 /** 計算ロジックの版。変えたら保存済みセッションは読み込み時に再計算される */
-export const ALGORITHM_VERSION = 1
+export const ALGORITHM_VERSION = 2
 
 /** ランドマーク位置の想定誤差（体の高さ H に対する割合、1σ） */
 export const LANDMARK_SIGMA_FRACTION = 0.005
 
 /** 不確かさを求める乱数摂動の回数 */
 export const PERTURBATION_SAMPLES = 150
+
+/**
+ * 体の高さ H（耳〜かかとの点の縦の距離）が身長の何割にあたるか。cm の目安の換算に使う。
+ * 身体寸法比の文献値（目の高さ ≈ 身長の 93.6%、Drillis & Contini）から、耳はそれより少し下、
+ * かかとの点は床より少し上として概算した値。数 % の誤差を含む
+ */
+export const H_TO_STATURE = 0.91
 
 /** 「差が見られる」とみなす倍率（|値| > K × σ） */
 export const NOTICEABLE_K = 2

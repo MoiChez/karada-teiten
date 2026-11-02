@@ -7,10 +7,12 @@ import { comparisonSuggestions, reviewTiming } from '../domain/recommend/engine'
 import { routineById } from '../domain/recommend/routines'
 import { confidenceLabel, fmtDate, fmtShortDate, fmtValue } from '../domain/format'
 import { correctedSet } from '../domain/session'
+import { gaugeRows } from '../domain/gauge'
 import { useCheckins, useLogs, useProfile, useSessions } from '../data/hooks'
 import { ChangeLabel } from '../components/ChangeLabel'
 import { PhotoWithPose, PostureGrid, useStoredImageUrl } from '../components/PoseViews'
 import { RoutineItem } from '../components/RoutineItem'
+import { GaugeTable } from '../components/Gauge'
 import { Badge, ButtonLink, EmptyState, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
 
 const TrendChart = lazy(() => import('../components/TrendChart'))
@@ -180,6 +182,16 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
       <ButtonLink to={`/session/${c.after.id}/3d?vs=${c.before.id}`} variant="secondary" block className="mt-3" icon={<Box aria-hidden className="size-5" />}>
         3D で重ねて見る
       </ButtonLink>
+
+      {/* ずれの向きと大きさの比較 */}
+      {planes.length > 0 && (
+        <>
+          <SectionTitle sub="塗りつぶしが今回、点線の枠が前回。中央の帯は測定のばらつきの範囲です">
+            ずれの比較（{plane === 'front' ? '正面' : '横向き'}）
+          </SectionTitle>
+          <GaugeTable rows={gaugeRows(c.after.computedMetrics, plane, c.before.computedMetrics)} heightCm={profile?.heightCm} pastLabel={fmtShortDate(c.before.createdAt)} />
+        </>
+      )}
 
       {/* E. 変化の言語化 */}
       <SectionTitle sub="測定された差を言葉にしたもの。診断ではありません">変化の読み取り</SectionTitle>

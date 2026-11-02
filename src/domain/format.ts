@@ -1,5 +1,6 @@
 // 表示用の文言・数値の整形
 import type { BodyArea, ComputedMetric, GoalTag, LifestyleTag, MetricUnit } from './types'
+import { H_TO_STATURE } from './constants'
 
 export const GOAL_LABELS: Record<GoalTag, string> = {
   posture: '姿勢改善',
@@ -86,4 +87,34 @@ export function daysBetween(a: string, b: string): number {
 
 export function localDateKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// ---------- cm の目安 ----------
+
+/** 体の高さ比の長さを、身長から cm の目安に換算する。身長が分からなければ null */
+export function fracToCm(frac: number, heightCm: number | undefined): number | null {
+  if (!heightCm || !Number.isFinite(heightCm) || heightCm <= 0) return null
+  return frac * heightCm * H_TO_STATURE
+}
+
+/** 指標の長さ（位置のずれ・高さの差）を cm の目安で返す。換算できなければ null */
+export function offsetCm(m: ComputedMetric, heightCm: number | undefined): { cm: number; sigmaCm: number | null; label: string } | null {
+  if (!m.offset || m.rawValue === null) return null
+  const cm = fracToCm(m.offset.frac, heightCm)
+  if (cm === null) return null
+  return { cm, sigmaCm: m.offset.sigma === null ? null : fracToCm(m.offset.sigma, heightCm), label: m.offset.label }
+}
+
+/** cm を主に見せる指標（位置のずれ・高さの差）。それ以外は角度などを主に見せる */
+const CM_PRIMARY = new Set<ComputedMetric['key']>(['front_shoulder_tilt', 'front_pelvis_tilt', 'side_head_forward'])
+
+/**
+ * ゲージ・一覧の主な値（向きは別に示すので絶対値）。
+ * % の指標と肩・骨盤の高さの差は、身長があれば cm の目安で示す
+ */
+export function primaryValue(m: ComputedMetric, heightCm: number | undefined): string {
+  if (m.rawValue === null) return '—'
+  const off = offsetCm(m, heightCm)
+  if (off && (m.unit === '%' || CM_PRIMARY.has(m.key))) return `${fmtNum(Math.abs(off.cm))}cm`
+  return fmtAbs(m.rawValue, m.unit)
 }

@@ -65,6 +65,8 @@ export interface SideOpts {
   hipForward?: number
   kneeBack?: number
   wristForward?: number
+  /** 目尻を耳より下げる量（+ で顔が下を向く方向） */
+  eyeDrop?: number
   facing?: 'left' | 'right'
   vis?: Record<number, number>
 }
@@ -75,6 +77,7 @@ export function sidePose(o: SideOpts = {}): Landmark[] {
   const ax = 500
   const pts: Pts = {
     0: { x: ax + (o.earForward ?? 0) * f + 60 * f, y: 320 },
+    6: { x: ax + (o.earForward ?? 0) * f + 80 * f, y: 300 + (o.eyeDrop ?? 0) },
     8: { x: ax + (o.earForward ?? 0) * f, y: 300 },
     12: { x: ax + (o.shoulderForward ?? 0) * f, y: 500 },
     14: { x: ax + (o.shoulderForward ?? 0) * f, y: 760 },
@@ -87,6 +90,7 @@ export function sidePose(o: SideOpts = {}): Landmark[] {
   }
   // 奥側（左半身）は同じ位置で visibility を低くする
   for (const [l, r] of [
+    [3, 6],
     [7, 8],
     [11, 12],
     [13, 14],
@@ -99,7 +103,7 @@ export function sidePose(o: SideOpts = {}): Landmark[] {
   ]) {
     pts[l] = { ...pts[r] }
   }
-  const vis: Record<number, number> = { 7: 0.3, 11: 0.35, 13: 0.3, 15: 0.3, 23: 0.35, 25: 0.3, 27: 0.3, 29: 0.3, 31: 0.3, ...o.vis }
+  const vis: Record<number, number> = { 3: 0.3, 7: 0.3, 11: 0.35, 13: 0.3, 15: 0.3, 23: 0.35, 25: 0.3, 27: 0.3, 29: 0.3, 31: 0.3, ...o.vis }
   return toLandmarks(pts, vis)
 }
 

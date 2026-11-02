@@ -119,7 +119,7 @@ export const ROUTINES: Routine[] = [
     category: 'stretch',
     durationMin: 2,
     difficulty: 1,
-    targetTags: ['head_tilt', 'shoulder_asymmetry', 'neck', 'shoulders'],
+    targetTags: ['head_tilt', 'neck_shift', 'shoulder_asymmetry', 'neck', 'shoulders'],
     summary: '首から肩にかけての横側をゆるめる',
     instructions: [
       '座って、右手で椅子の座面の端を軽くつかみます。',
@@ -137,7 +137,7 @@ export const ROUTINES: Routine[] = [
     category: 'stretch',
     durationMin: 2,
     difficulty: 1,
-    targetTags: ['lateral_lean', 'trunk_shift', 'shoulder_asymmetry', 'pelvis_asymmetry', 'lower_back'],
+    targetTags: ['lateral_lean', 'trunk_shift', 'lower_lean', 'shoulder_asymmetry', 'pelvis_asymmetry', 'lower_back'],
     summary: '左右の体側を順に伸ばして、伸びやすさの違いを感じる',
     instructions: [
       '足を腰幅に開いて立ちます（座っても構いません）。',
@@ -310,7 +310,7 @@ export const ROUTINES: Routine[] = [
     category: 'posture_tip',
     durationMin: 1,
     difficulty: 1,
-    targetTags: ['load_shift', 'lateral_lean', 'pelvis_asymmetry', 'feet'],
+    targetTags: ['load_shift', 'lateral_lean', 'lower_lean', 'pelvis_asymmetry', 'feet'],
     summary: '左右どちらに体重をかけやすいかに気づく',
     instructions: [
       '足を腰幅に開いて立ち、目を閉じます（ふらつく場合は開けたまま）。',

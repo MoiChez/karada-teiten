@@ -158,6 +158,8 @@ export type MetricKey =
   | 'front_pelvis_tilt'
   | 'front_head_tilt'
   | 'front_trunk_shift'
+  | 'front_lower_lean'
+  | 'front_neck_shift'
   | 'front_knee_left'
   | 'front_knee_right'
   | 'front_load_shift'
@@ -170,6 +172,7 @@ export type MetricKey =
   | 'side_plumb_shoulder'
   | 'side_plumb_hip'
   | 'side_plumb_knee'
+  | 'side_head_pitch'
   | 'side_pelvis_tilt'
   | 'composite_kyphosis'
   | 'composite_swayback'
@@ -199,6 +202,11 @@ export interface ComputedMetric {
   correctedLandmarks: number[]
   /** 複合指標の内訳 */
   components?: { key: MetricKey; value: number; scale: number }[]
+  /**
+   * 位置のずれ・高さの差の長さ（体の高さ H に対する比、符号は rawValue と同じ向き）。
+   * 身長が分かれば cm の目安に換算して表示する
+   */
+  offset?: { frac: number; sigma: number | null; label: string }
 }
 
 // ---------- 姿勢特徴 ----------
@@ -209,6 +217,8 @@ export type TraitKey =
   | 'pelvis_asymmetry'
   | 'head_tilt'
   | 'trunk_shift'
+  | 'lower_lean'
+  | 'neck_shift'
   | 'leg_alignment'
   | 'load_shift'
   | 'forward_head'

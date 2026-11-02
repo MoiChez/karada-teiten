@@ -1,15 +1,15 @@
 import type { ComputedMetric } from '../domain/types'
 import { METRIC_DOCS } from '../domain/metricDocs'
-import { confidenceLabel, fmtValue, metricStatusLabel } from '../domain/format'
+import { confidenceLabel, fmtNum, fmtValue, metricStatusLabel, offsetCm } from '../domain/format'
 import { landmarkName } from '../domain/landmarks'
 import { Badge, Details } from './ui'
 
-export function MetricList({ metrics, rawMetrics }: { metrics: ComputedMetric[]; rawMetrics?: ComputedMetric[] }) {
+export function MetricList({ metrics, rawMetrics, heightCm }: { metrics: ComputedMetric[]; rawMetrics?: ComputedMetric[]; heightCm?: number }) {
   const raw = new Map((rawMetrics ?? []).map((m) => [m.key, m]))
   return (
     <ul className="divide-y divide-line border-y border-line">
       {metrics.map((m) => (
-        <MetricRow key={m.key} m={m} before={changedBefore(m, raw.get(m.key))} />
+        <MetricRow key={m.key} m={m} before={changedBefore(m, raw.get(m.key))} heightCm={heightCm} />
       ))}
     </ul>
   )
@@ -26,9 +26,10 @@ function statusTone(m: ComputedMetric) {
   return m.status === 'noticeable' ? 'attention' : m.status === 'within_noise' ? 'neutral' : m.status === 'descriptive' ? 'measure' : 'neutral'
 }
 
-export function MetricRow({ m, before }: { m: ComputedMetric; before?: ComputedMetric }) {
+export function MetricRow({ m, before, heightCm }: { m: ComputedMetric; before?: ComputedMetric; heightCm?: number }) {
   const doc = METRIC_DOCS[m.key]
   const assessed = m.rawValue !== null
+  const cm = offsetCm(m, heightCm)
   return (
     <li className="py-3">
       <div className="flex items-start gap-3">
@@ -46,6 +47,11 @@ export function MetricRow({ m, before }: { m: ComputedMetric; before?: ComputedM
         </div>
       </div>
       {assessed && <p className="mt-1 text-[15px] text-ink-2">{m.direction}</p>}
+      {cm && (
+        <p className="mt-0.5 text-sm text-ink-3 num">
+          {cm.label}: 約 {fmtNum(Math.abs(cm.cm))}cm（身長からの目安{cm.sigmaCm !== null ? `、ばらつき ±${fmtNum(cm.sigmaCm)}cm` : ''}）
+        </p>
+      )}
       {!assessed && m.qualityNote && <p className="mt-1 text-[15px] text-ink-2">{m.qualityNote}</p>}
       {before && (
         <p className="mt-1 text-sm text-ink-3 num">補正前の値: {before.rawValue === null ? '評価不可' : fmtValue(before.rawValue, before.unit)}</p>

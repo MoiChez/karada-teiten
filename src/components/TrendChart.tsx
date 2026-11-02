@@ -13,6 +13,8 @@ const KEYS: MetricKey[] = [
   'front_head_tilt',
   'front_body_lean',
   'front_trunk_shift',
+  'front_lower_lean',
+  'front_neck_shift',
   'front_knee_left',
   'front_knee_right',
   'side_head_forward',

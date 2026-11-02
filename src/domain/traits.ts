@@ -20,7 +20,7 @@ const side = (v: number, pos: string, neg: string) => (v >= 0 ? pos : neg)
 const TRAIT_DEFS: TraitDef[] = [
   {
     key: 'lateral_lean',
-    label: '全身の左右への傾き',
+    label: '全身の左右の傾き',
     plane: 'front',
     evidence: ['front_body_lean'],
     direction: 0,
@@ -59,7 +59,7 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'head_tilt',
-    label: '頭部の左右の傾き',
+    label: '頭の左右の傾き',
     plane: 'front',
     evidence: ['front_head_tilt'],
     direction: 0,
@@ -72,15 +72,42 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'trunk_shift',
-    label: '体幹の左右偏位',
+    label: '上半身の左右の傾き',
     plane: 'front',
     evidence: ['front_trunk_shift'],
     direction: 0,
     areas: ['upper_back', 'lower_back'],
-    caution: '胸郭そのものの点はないため、肩と股関節の中央の差で代用した参考値です。',
+    caution: '胸郭そのものの点はないため、肩と股関節の中央で代用した参考値です。',
     summary: (m) => {
-      const v = m.get('front_trunk_shift')!.rawValue!
-      return `胸のあたりが骨盤より${side(v, '左', '右')}へ、胴の長さの約${fmtAbs(v, '%')}ずれています。`
+      const x = m.get('front_trunk_shift')!
+      const v = x.rawValue!
+      return `股関節の中央から見て、肩の中央が${side(v, '左', '右')}へ約${fmtAbs(v, '°')}傾いています（胸のあたりが胴の長さの約${fmtAbs(x.normalizedValue ?? 0, '%')}${side(v, '左', '右')}寄り）。`
+    },
+  },
+  {
+    key: 'lower_lean',
+    label: '下半身の左右の傾き',
+    plane: 'front',
+    evidence: ['front_lower_lean'],
+    direction: 0,
+    areas: ['hips', 'knees', 'feet'],
+    caution: '片脚に体重をかけた立ち方や、カメラの傾きでも変わります。',
+    summary: (m) => {
+      const v = m.get('front_lower_lean')!.rawValue!
+      return `足首の中央から見て、股関節の中央（腰）が${side(v, '左', '右')}へ約${fmtAbs(v, '°')}傾いています。`
+    },
+  },
+  {
+    key: 'neck_shift',
+    label: '首の左右の位置ずれ',
+    plane: 'front',
+    evidence: ['front_neck_shift'],
+    direction: 0,
+    areas: ['neck', 'shoulders'],
+    caution: '首の骨の位置ではなく、耳の中央と肩の中央の位置関係です。顔の向きや髪の影響を受けます。',
+    summary: (m) => {
+      const v = m.get('front_neck_shift')!.rawValue!
+      return `頭の中心（左右の耳の中央）が肩の中央より${side(v, '左', '右')}へ、体の高さの約${fmtAbs(v, '%')}ずれています。`
     },
   },
   {
@@ -164,7 +191,7 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'trunk_sagittal',
-    label: '体幹の前後傾',
+    label: '上半身の前後の傾き',
     plane: 'side',
     evidence: ['side_trunk_lean'],
     direction: 0,

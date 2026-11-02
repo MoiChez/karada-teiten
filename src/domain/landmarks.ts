@@ -102,6 +102,7 @@ export function sidePoints(side: 'left' | 'right') {
   const L = side === 'left'
   return {
     ear: L ? LM.leftEar : LM.rightEar,
+    eye: L ? LM.leftEyeOuter : LM.rightEyeOuter,
     shoulder: L ? LM.leftShoulder : LM.rightShoulder,
     wrist: L ? LM.leftWrist : LM.rightWrist,
     hip: L ? LM.leftHip : LM.rightHip,
