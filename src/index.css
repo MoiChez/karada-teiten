@@ -1,0 +1,129 @@
+@import 'tailwindcss';
+
+/*
+  デザインの方針
+  - 主題は「定点観測」。計測器・下げ振り・方眼紙の世界から色と線を選ぶ
+  - 紙（paper）とインク（ink）を基本に、水準器の気泡の黄緑（level）を主要な行動と計測線にだけ使う
+  - 事実は実線、仮説は破線、行動は黄緑の帯で区別する（色だけに頼らず見出しと線の種類でも示す）
+*/
+@theme {
+  --color-paper: #f2f5f4;
+  --color-surface: #ffffff;
+  --color-sunken: #e6ecea;
+  --color-ink: #10282f;
+  --color-ink-2: #3d555c;
+  --color-ink-3: #5a6e75;
+  --color-line: #cfd9d8;
+  --color-grid: #dfe7e6;
+  --color-level: #cde14b;
+  --color-level-soft: #eef5c8;
+  --color-level-ink: #4a5f00;
+  --color-measure: #1c6e8c;
+  --color-measure-soft: #e1eff4;
+  --color-past: #7c8d93;
+  --color-attention: #9a5413;
+  --color-attention-soft: #fbf0e3;
+  --color-good: #2e7550;
+  --color-good-soft: #e3f2ea;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdecea;
+
+  --font-sans: 'IBM Plex Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Noto Sans CJK JP', 'Yu Gothic UI', 'Meiryo', system-ui, sans-serif;
+
+  --radius-control: 12px;
+  --radius-panel: 18px;
+
+  --shadow-lift: 0 1px 0 rgb(16 40 47 / 0.06), 0 8px 24px -12px rgb(16 40 47 / 0.25);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.65;
+    font-feature-settings: 'palt' 0;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100dvh;
+  }
+  h1,
+  h2,
+  h3 {
+    line-height: 1.35;
+    text-wrap: balance;
+  }
+  button,
+  a,
+  [role='button'],
+  input,
+  select,
+  textarea,
+  label {
+    touch-action: manipulation;
+  }
+  button:not(:disabled),
+  a,
+  [role='button'] {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-measure);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  ::selection {
+    background: var(--color-level);
+    color: var(--color-ink);
+  }
+}
+
+@layer utilities {
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 0px);
+  }
+  /* 方眼（定点グリッド） */
+  .grid-paper {
+    background-color: var(--color-surface);
+    background-image:
+      linear-gradient(var(--color-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--color-grid) 1px, transparent 1px);
+    background-size: 16px 16px;
+    background-position: -1px -1px;
+  }
+  .rule-fact {
+    border-left: 3px solid var(--color-measure);
+  }
+  .rule-hypothesis {
+    border-left: 3px dashed var(--color-ink-3);
+  }
+  .rule-action {
+    border-left: 3px solid var(--color-level);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+dialog::backdrop {
+  background: rgb(16 40 47 / 0.45);
+}

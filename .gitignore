@@ -1,0 +1,9 @@
+node_modules
+dist
+dev-dist
+*.local
+.DS_Store
+# MediaPipe の WASM は node_modules からビルド時にコピーする
+public/mediapipe
+.vite
+coverage
