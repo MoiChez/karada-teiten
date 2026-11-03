@@ -140,6 +140,20 @@ export interface CorrectionEntry {
   at: string
 }
 
+/**
+ * 立ち直しながら複数枚撮ったときの情報。landmarksRaw はこの平均。
+ * 各撮影の点は、代表の写真の位置と大きさにそろえてある（正規化座標）
+ */
+export interface BurstInfo {
+  frames: Landmark[][]
+  /** 代表の写真（保存・表示する写真）が何枚目か（0 始まり） */
+  repIndex: number
+  /** 撮影した枚数（骨格を検出できなかった分も含む） */
+  attempted: number
+  /** 1 枚あたりの点のぶれ（体の高さ H に対する比、1σ）。点が足りず求められなければ null */
+  spreadFrac: number | null
+}
+
 export interface PlaneRecord {
   plane: Plane
   imageMetadata: ImageMetadata
@@ -148,6 +162,7 @@ export interface PlaneRecord {
   landmarksCorrected: Landmark[]
   correctionLog: CorrectionEntry[]
   qualityFlags: QualityFlag[]
+  burst?: BurstInfo
 }
 
 // ---------- 指標 ----------
@@ -207,6 +222,8 @@ export interface ComputedMetric {
    * 身長が分かれば cm の目安に換算して表示する
    */
   offset?: { frac: number; sigma: number | null; label: string }
+  /** 複数枚撮りのとき、1 枚ごとの値（評価できなかった枚は null） */
+  burstValues?: (number | null)[]
 }
 
 // ---------- 姿勢特徴 ----------
@@ -252,6 +269,17 @@ export interface Hypothesis {
 
 // ---------- セッション ----------
 
+/** 「意識した姿勢」（自分が良いと思う姿勢）の測定。いつもの姿勢と同じ日に撮って比べる */
+export interface ConsciousPose {
+  capturedAt: string
+  front?: PlaneRecord
+  side?: PlaneRecord
+  computedMetrics: ComputedMetric[]
+  computedMetricsRaw: ComputedMetric[]
+  confidenceScores: { overall: number; front?: number; side?: number }
+  qualityFlags: QualityFlag[]
+}
+
 export interface AssessmentSession {
   id: string
   createdAt: string
@@ -265,6 +293,7 @@ export interface AssessmentSession {
   qualityFlags: QualityFlag[]
   recommendationSnapshot?: { planId: string; routineIds: string[] }
   checkinId?: string
+  conscious?: ConsciousPose
   imagesSaved: boolean
   modelVersion: string
   appVersion: string
@@ -350,5 +379,7 @@ export interface AppSettings {
   saveImages: boolean
   model: 'full' | 'heavy'
   timerSec: 0 | 3 | 5 | 10
+  /** 1 回の撮影で撮る枚数（3 = 立ち直しながら 3 枚撮って平均する） */
+  shots: 1 | 3
   onboarded: boolean
 }

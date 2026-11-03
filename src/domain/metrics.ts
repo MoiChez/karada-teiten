@@ -1,5 +1,5 @@
 // 姿勢指標の計算（docs/05-analysis-logic.md の定義どおり）
-import type { ComputedMetric, Landmark, MetricKey, MetricUnit, Plane, PlaneRecord, Point } from './types'
+import type { BurstInfo, ComputedMetric, Landmark, MetricKey, MetricUnit, Plane, PlaneRecord, Point } from './types'
 import {
   CONFIDENCE_CAP,
   COMPOSITE_SCALE,
@@ -36,6 +36,10 @@ export interface PlaneInput {
   qualityFactor: number
   facing?: 'left' | 'right'
   nearSide?: 'left' | 'right'
+  /** 点の位置の誤差（体の高さ H に対する比、1σ）。省略時は想定値 LANDMARK_SIGMA_FRACTION */
+  sigmaFraction?: number
+  /** 複数枚撮りの各撮影の点（landmarks と同じ座標系）。1 枚ごとの値を出すのに使う */
+  frames?: Landmark[][]
 }
 
 type Getter = (i: number) => Point
@@ -592,7 +596,35 @@ export function planeInputFrom(record: PlaneRecord, useCorrected: boolean): Plan
     qualityFactor: qualityFactorOf(record),
     facing: record.imageMetadata.facing,
     nearSide: record.imageMetadata.nearSide,
+    sigmaFraction: burstSigmaFraction(record.burst),
+    frames: record.burst && record.burst.frames.length >= 2 ? burstFramesCorrected(record, corrected) : undefined,
   }
+}
+
+/**
+ * 判定に使う点の誤差（H 比、1σ）。1 枚なら想定値。
+ * 複数枚の平均なら、実測した 1 枚あたりのぶれと想定値の大きいほうを √枚数 で割る
+ * （平均でぶれは小さくなるが、前提より小さいぶれは繰り返しでは見えない誤差を見落とすおそれがあるため使わない）
+ */
+export function burstSigmaFraction(b: BurstInfo | undefined): number {
+  if (!b || b.frames.length < 2) return LANDMARK_SIGMA_FRACTION
+  return Math.max(b.spreadFrac ?? 0, LANDMARK_SIGMA_FRACTION) / Math.sqrt(b.frames.length)
+}
+
+/** 各撮影の点に手動補正を反映する（平均に加えた補正と同じだけ動かす） */
+function burstFramesCorrected(record: PlaneRecord, corrected: Set<number>): Landmark[][] {
+  const frames = record.burst!.frames
+  if (!corrected.size) return frames
+  return frames.map((fr) =>
+    fr.map((l, i) => {
+      if (!corrected.has(i)) return l
+      const c = record.landmarksCorrected[i]
+      const r = record.landmarksRaw[i]
+      // その枚で検出できていなかった点は、補正した位置をそのまま使う
+      if (!(visibilityOf(l) >= MIN_VISIBILITY)) return { ...l, x: c.x, y: c.y, visibility: 1 }
+      return { ...l, x: l.x + (c.x - r.x), y: l.y + (c.y - r.y), visibility: 1 }
+    }),
+  )
 }
 
 export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
@@ -612,8 +644,12 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     H: H ?? height * 0.7,
     isValid,
   }
-  const sigmaPx = LANDMARK_SIGMA_FRACTION * ctx.H
+  const sigmaPx = (input.sigmaFraction ?? LANDMARK_SIGMA_FRACTION) * ctx.H
   const defs = METRIC_DEFS.filter((d) => d.plane === input.plane)
+  const framePts = (input.frames ?? []).map((fr) => ({
+    pts: fr.map((lm) => ({ x: lm.x * width, y: lm.y * height })),
+    valid: (i: number) => !!fr[i] && inFrame(fr[i]) && visibilityOf(fr[i]) >= MIN_VISIBILITY,
+  }))
 
   return defs.map((def) => {
     const shell: ComputedMetric = {
@@ -702,6 +738,13 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       }
     }
     if (def.group === 'composite') metric.components = compositeComponents(def.key, base, ctx)
+    if (framePts.length >= 2) {
+      metric.burstValues = framePts.map((fp) => {
+        if (!used.every(fp.valid)) return null
+        const r = def.compute((i) => fp.pts[i], ctx)
+        return 'fail' in r || !Number.isFinite(r.raw) ? null : round(r.raw, 2)
+      })
+    }
     return metric
   })
 }

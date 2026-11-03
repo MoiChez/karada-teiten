@@ -1,11 +1,11 @@
 // 測定セッションの組み立て・補正・再計算
-import type { AssessmentSession, Landmark, Plane, PlaneRecord, Point, QualityFlag } from './types'
+import type { AssessmentSession, ConsciousPose, Landmark, Plane, PlaneRecord, Point, QualityFlag } from './types'
 import { ALGORITHM_VERSION, SNAP_FRACTION } from './constants'
 import { assessQuality } from './quality'
 import { computeAllMetrics, confidenceSummary } from './metrics'
 import { deriveTraits } from './traits'
 
-export const APP_VERSION = '0.2.0'
+export const APP_VERSION = '0.3.0'
 
 export function newId(prefix = ''): string {
   const rand =
@@ -143,11 +143,28 @@ export function buildSession(params: {
   }
 }
 
+/** 「意識した姿勢」の測定をまとめる */
+export function buildConscious(params: { front?: PlaneRecord; side?: PlaneRecord; capturedAt?: string }): ConsciousPose {
+  const front = params.front ? requalify(params.front) : undefined
+  const side = params.side ? requalify(params.side) : undefined
+  const r = analyze(front, side)
+  return {
+    capturedAt: params.capturedAt ?? new Date().toISOString(),
+    front,
+    side,
+    computedMetrics: r.computedMetrics,
+    computedMetricsRaw: r.computedMetricsRaw,
+    confidenceScores: r.confidenceScores,
+    qualityFlags: r.qualityFlags,
+  }
+}
+
 /** 保存済みセッションを最新の計算ロジックで計算し直す（補正の更新時・版の更新時） */
 export function recomputeSession(s: AssessmentSession): AssessmentSession {
   const front = s.front ? requalify(s.front) : undefined
   const side = s.side ? requalify(s.side) : undefined
-  return { ...s, front, side, ...analyze(front, side), algorithmVersion: ALGORITHM_VERSION }
+  const conscious = s.conscious ? buildConscious(s.conscious) : undefined
+  return { ...s, front, side, ...analyze(front, side), conscious, algorithmVersion: ALGORITHM_VERSION }
 }
 
 /** 補正前後で値が変わった指標 */

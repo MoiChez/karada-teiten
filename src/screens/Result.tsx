@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link, Navigate, useNavigate, useParams } from 'react-router'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { Box, Columns2, Footprints, PencilRuler, Trash2 } from 'lucide-react'
 import type { AssessmentSession, Plane, PostureTrait } from '../domain/types'
 import { AREA_LABELS, confidenceLabel, fmtDate, fmtShortDate } from '../domain/format'
@@ -13,6 +13,8 @@ import { data } from '../data/repo'
 import { useCheckins, useLogs, useProfile, useSession, useSessions } from '../data/hooks'
 import { MetricList } from '../components/MetricList'
 import { GaugeTable, LoadShiftFeet } from '../components/Gauge'
+import { BurstNote } from '../components/BurstNote'
+import { ConsciousSection } from '../components/ConsciousSection'
 import { PhotoWithPose, PostureGrid, useStoredImageUrl } from '../components/PoseViews'
 import { RoutineItem } from '../components/RoutineItem'
 import { Badge, Button, ButtonLink, Dialog, IconButton, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
@@ -28,6 +30,7 @@ export function Result() {
 
 function ResultBody({ s }: { s: AssessmentSession }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const toast = useToast((t) => t.show)
   const profile = useProfile()
   const logs = useLogs()
@@ -68,6 +71,14 @@ function ResultBody({ s }: { s: AssessmentSession }) {
   const heightCm = profile?.heightCm
   const rows = useMemo(() => gaugeRows(s.computedMetrics, plane, prev?.computedMetrics), [s, plane, prev])
 
+  // 意識した姿勢を撮って戻ってきたときは、その比較まで移動する
+  const focus = (location.state as { focus?: string } | null)?.focus
+  useEffect(() => {
+    if (focus !== 'conscious') return
+    const t = setTimeout(() => document.getElementById('conscious')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+    return () => clearTimeout(t)
+  }, [focus])
+
   const del = async () => {
     await data.deleteSession(s.id)
     toast('記録を削除しました')
@@ -89,6 +100,8 @@ function ResultBody({ s }: { s: AssessmentSession }) {
         <Badge>信頼度 {confidenceLabel(s.confidenceScores.overall)}</Badge>
         {(s.front && correctedSet(s.front).size > 0) || (s.side && correctedSet(s.side).size > 0) ? <Badge tone="level">補正あり</Badge> : null}
         <Badge>{s.imagesSaved ? '写真を保存' : '写真は未保存'}</Badge>
+        {(s.front?.burst || s.side?.burst) && <Badge tone="measure">{(s.front?.burst ?? s.side?.burst)!.frames.length} 枚の平均</Badge>}
+        {s.conscious && <Badge tone="measure">意識した姿勢あり</Badge>}
       </div>
 
       {/* 1. サマリー */}
@@ -169,13 +182,14 @@ function ResultBody({ s }: { s: AssessmentSession }) {
         </div>
       )}
       {!imageUrl && rec && <p className="text-sm text-ink-3">写真は保存されていないため、骨格だけを表示しています。</p>}
+      <BurstNote rec={rec} heightCm={heightCm} onPhoto={!!imageUrl} />
       {plane === 'front' && <p className="mt-1 text-sm text-ink-3">左右は、写っている人自身から見た左右です。</p>}
 
       {/* 3b. ずれの向きと大きさ */}
       {rec && rec.landmarksRaw.length > 0 && (
         <>
           <SectionTitle sub="向きと大きさをひと目で。中央の帯は測定のばらつきの範囲です">ずれの向きと大きさ（{plane === 'front' ? '正面' : '横向き'}）</SectionTitle>
-          <GaugeTable rows={rows} heightCm={heightCm} pastLabel={prev ? fmtShortDate(prev.createdAt) : undefined} />
+          <GaugeTable rows={rows} heightCm={heightCm} pastLegend={prev ? `前回（${fmtShortDate(prev.createdAt)}）` : undefined} />
           {plane === 'front' && <LoadShiftFeet metric={planeMetrics.find((m) => m.key === 'front_load_shift')} heightCm={heightCm} />}
         </>
       )}
@@ -208,6 +222,9 @@ function ResultBody({ s }: { s: AssessmentSession }) {
       <SectionTitle sub="値・ばらつきの目安・信頼度。開くと計算方法と限界が見られます">項目別の指標</SectionTitle>
       <MetricList metrics={planeMetrics} rawMetrics={s.computedMetricsRaw} heightCm={heightCm} />
       {diffs.length > 0 && <p className="mt-2 text-sm text-ink-3">手動補正により {diffs.length} 項目の値が変わっています（補正前の値は各項目に表示）。</p>}
+
+      {/* 6b. いつもの姿勢と意識した姿勢 */}
+      <ConsciousSection s={s} plane={plane} heightCm={heightCm} profile={profile ?? undefined} logs={logs} />
 
       {/* 7. 生活習慣との関連仮説 */}
       <SectionTitle sub="可能性のひとつです。当てはまらなければ気にしなくて大丈夫です">考えられる要因（仮説）</SectionTitle>

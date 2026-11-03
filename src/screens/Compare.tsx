@@ -189,7 +189,7 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
           <SectionTitle sub="塗りつぶしが今回、点線の枠が前回。中央の帯は測定のばらつきの範囲です">
             ずれの比較（{plane === 'front' ? '正面' : '横向き'}）
           </SectionTitle>
-          <GaugeTable rows={gaugeRows(c.after.computedMetrics, plane, c.before.computedMetrics)} heightCm={profile?.heightCm} pastLabel={fmtShortDate(c.before.createdAt)} />
+          <GaugeTable rows={gaugeRows(c.after.computedMetrics, plane, c.before.computedMetrics)} heightCm={profile?.heightCm} pastLegend={`前回（${fmtShortDate(c.before.createdAt)}）`} />
         </>
       )}
 

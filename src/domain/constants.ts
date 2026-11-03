@@ -80,3 +80,9 @@ export const COMPARE_WARN = {
 
 /** 補正: 元の位置に吸着する距離（画像の短辺に対する割合） */
 export const SNAP_FRACTION = 0.012
+
+/** 撮影位置を前回に合わせるときの目安（大きさの比と位置のずれ。体の高さに対する割合）。測定値の判定には使わない */
+export const FRAMING_TOLERANCE = 0.05
+
+/** 複数枚撮りで、次の 1 枚までに立ち直す時間（秒） */
+export const RESTAND_SEC = 5

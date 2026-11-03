@@ -52,6 +52,11 @@ export function MetricRow({ m, before, heightCm }: { m: ComputedMetric; before?:
           {cm.label}: 約 {fmtNum(Math.abs(cm.cm))}cm（身長からの目安{cm.sigmaCm !== null ? `、ばらつき ±${fmtNum(cm.sigmaCm)}cm` : ''}）
         </p>
       )}
+      {assessed && m.burstValues && m.burstValues.length > 1 && (
+        <p className="mt-0.5 text-sm text-ink-3 num">
+          {m.burstValues.length} 枚それぞれの値: {m.burstValues.map((v) => (v === null ? '—' : fmtValue(v, m.unit))).join(' / ')}
+        </p>
+      )}
       {!assessed && m.qualityNote && <p className="mt-1 text-[15px] text-ink-2">{m.qualityNote}</p>}
       {before && (
         <p className="mt-1 text-sm text-ink-3 num">補正前の値: {before.rawValue === null ? '評価不可' : fmtValue(before.rawValue, before.unit)}</p>

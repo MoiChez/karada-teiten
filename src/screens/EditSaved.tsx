@@ -1,6 +1,6 @@
 // 保存済みセッションのランドマークを補正し直す
 import { useEffect, useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router'
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router'
 import type { AssessmentSession, PlaneRecord } from '../domain/types'
 import { applyCorrection, correctionDiffs, recomputeSession, resetCorrection } from '../domain/session'
 import { LandmarkEditor } from '../components/LandmarkEditor'
@@ -8,10 +8,13 @@ import { QualityList } from '../components/QualityList'
 import { useStoredImageUrl } from '../components/PoseViews'
 import { Button, ButtonLink, EmptyState, Screen } from '../components/ui'
 import { data } from '../data/repo'
+import { refreshPlan } from '../data/actions'
 import { useDraft, useToast } from '../state/stores'
 
 export function EditSaved() {
   const { id, plane } = useParams()
+  const [search] = useSearchParams()
+  const conscious = search.get('pose') === 'conscious'
   const navigate = useNavigate()
   const toast = useToast((s) => s.show)
   const draft = useDraft()
@@ -24,12 +27,18 @@ export function EditSaved() {
     if (!id) return
     data.getSession(id).then((s) => {
       setSession(s ?? null)
-      setRec(s?.[p] ?? null)
+      setRec((conscious ? s?.conscious?.[p] : s?.[p]) ?? null)
     })
-  }, [id, p])
+  }, [id, p, conscious])
 
-  const storedUrl = useStoredImageUrl(session?.[p]?.imageMetadata.imageId)
-  const draftUrl = draft.editingSessionId === id ? draft[p]?.imageUrl : undefined
+  const storedUrl = useStoredImageUrl((conscious ? session?.conscious?.[p] : session?.[p])?.imageMetadata.imageId)
+  const draftUrl = conscious
+    ? draft.conscious.sessionId === id
+      ? draft.conscious[p]?.imageUrl
+      : undefined
+    : draft.editingSessionId === id
+      ? draft[p]?.imageUrl
+      : undefined
   const imageUrl = storedUrl ?? draftUrl ?? null
 
   if (plane !== 'front' && plane !== 'side') return <Navigate to={`/session/${id}`} replace />
@@ -38,16 +47,18 @@ export function EditSaved() {
 
   const save = async () => {
     setSaving(true)
-    const next = recomputeSession({ ...session, [p]: rec })
+    let next = recomputeSession(conscious ? { ...session, conscious: { ...session.conscious!, [p]: rec } } : { ...session, [p]: rec })
+    // 意識した姿勢の補正は、意識づけ / 体を動かすメニューの分け方に影響するため、おすすめも作り直す
+    if (conscious) next = await refreshPlan(next)
     await data.updateSession(next)
-    const changed = correctionDiffs(next).length
-    toast(changed ? `補正を保存し、${changed} 項目を計算し直しました` : '補正を保存しました')
+    const changed = conscious ? 0 : correctionDiffs(next).length
+    toast(conscious ? '補正を保存し、意識した姿勢の比較を計算し直しました' : changed ? `補正を保存し、${changed} 項目を計算し直しました` : '補正を保存しました')
     navigate(`/session/${id}`, { replace: true })
   }
 
   return (
     <Screen
-      title={`${p === 'front' ? '正面' : '横向き'}の点を補正`}
+      title={`${conscious ? '意識した姿勢：' : ''}${p === 'front' ? '正面' : '横向き'}の点を補正`}
       back={`/session/${id}`}
       footer={
         imageUrl ? (

@@ -77,6 +77,33 @@ export function repo(db: AppDB = defaultDb) {
     async updateSession(s: AssessmentSession) {
       await db.assessments.put(s)
     },
+    /** 「意識した姿勢」を付けたセッションを保存する。写真は渡したときだけ保存（id は <セッション>_conscious_<面>） */
+    async saveConscious(s: AssessmentSession, images?: { front?: Blob; side?: Blob }) {
+      await db.transaction('rw', db.assessments, db.images, async () => {
+        const copy: AssessmentSession = structuredClone(s)
+        // いつもの姿勢の写真の参照は、保存済みのものを引き継ぐ（古いコピーを渡されても消さない）
+        const stored = await db.assessments.get(s.id)
+        for (const plane of ['front', 'side'] as const) {
+          const id = stored?.[plane]?.imageMetadata.imageId
+          if (id && copy[plane]) copy[plane]!.imageMetadata.imageId = id
+        }
+        if (stored) copy.imagesSaved = stored.imagesSaved
+        // 撮り直したときは、前の意識した姿勢の写真を消す
+        const old = await db.images.where('assessmentId').equals(s.id).filter((im) => im.id.includes('_conscious_')).primaryKeys()
+        await db.images.bulkDelete(old)
+        for (const plane of ['front', 'side'] as const) {
+          const rec = copy.conscious?.[plane]
+          if (!rec) continue
+          delete rec.imageMetadata.imageId
+          const blob = images?.[plane]
+          if (!blob) continue
+          const id = `${s.id}_conscious_${plane}`
+          await db.images.put({ id, assessmentId: s.id, plane, blob, width: rec.imageMetadata.width, height: rec.imageMetadata.height, createdAt: copy.conscious!.capturedAt })
+          rec.imageMetadata.imageId = id
+        }
+        await db.assessments.put(copy)
+      })
+    },
     async deleteSession(id: string) {
       await db.transaction('rw', db.assessments, db.images, async () => {
         await db.images.where('assessmentId').equals(id).delete()
@@ -92,6 +119,8 @@ export function repo(db: AppDB = defaultDb) {
         for (const s of all) {
           if (s.front) delete s.front.imageMetadata.imageId
           if (s.side) delete s.side.imageMetadata.imageId
+          if (s.conscious?.front) delete s.conscious.front.imageMetadata.imageId
+          if (s.conscious?.side) delete s.conscious.side.imageMetadata.imageId
           s.imagesSaved = false
         }
         await db.assessments.bulkPut(all)

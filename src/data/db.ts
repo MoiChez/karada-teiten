@@ -54,5 +54,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   saveImages: false,
   model: 'full',
   timerSec: 5,
+  shots: 3,
   onboarded: false,
 }

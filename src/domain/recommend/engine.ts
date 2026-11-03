@@ -13,6 +13,7 @@ import type {
 } from '../types'
 import type { Comparison } from '../compare'
 import { METRIC_TO_TRAIT } from '../compare'
+import { consciousTraitEffects, type ConsciousComparison } from '../conscious'
 import { AREA_LABELS, GOAL_LABELS } from '../format'
 import { TRAIT_LABELS } from '../traits'
 import { newId } from '../session'
@@ -27,6 +28,8 @@ export interface RecommendInput {
   fatigue?: Rating
   basedOnAssessmentId?: string
   lastAssessmentAt?: string
+  /** いつもの姿勢と意識した姿勢の比較（あれば、意識づけと体を動かすメニューを分けて重みづけする） */
+  conscious?: ConsciousComparison | null
   now?: Date
   routines?: Routine[]
 }
@@ -65,6 +68,7 @@ export function scoreRoutines(input: RecommendInput): ScoredRoutine[] {
   const profile = input.profile
   const noticeable = input.traits.filter((t) => t.status === 'noticeable')
   const cmp = comparisonTraitWeights(input.comparison)
+  const consciousFx = consciousTraitEffects(input.conscious)
   const tired = isTired(input)
   const experience = profile?.exerciseExperience
   const recentCounts = new Map<string, number>()
@@ -89,6 +93,23 @@ export function scoreRoutines(input: RecommendInput): ScoredRoutine[] {
           score += w.weight
           traitScore += w.weight
           reasons.push(w.reason)
+        }
+      }
+      for (const [trait, fx] of consciousFx) {
+        if (!r.targetTags.includes(trait)) continue
+        if ((fx.habit.length || fx.adjust.length) && r.category === 'posture_tip') {
+          score += 1
+          traitScore += 1
+          reasons.push(
+            fx.habit.length
+              ? `意識すると「${fx.habit[0]}」の差が小さくなりました。ふだんの立ち方の意識づけに`
+              : `意識すると「${fx.adjust[0]}」の差が大きくなりました。意識の向け方を確かめるのに`,
+          )
+        }
+        if (fx.body.length && (r.category === 'stretch' || r.category === 'mobility' || r.category === 'light_exercise')) {
+          score += 0.75
+          traitScore += 0.75
+          reasons.push(`意識しても「${fx.body[0]}」の差が残りました。体を動かすメニューを組み合わせます`)
         }
       }
       for (const area of profile?.concernAreas ?? []) {
@@ -261,6 +282,23 @@ export function habitSuggestions(input: RecommendInput): HabitSuggestion[] {
   if (p?.lifestyle.includes('driving')) add('car_seat', '運転前に背もたれを起こし、頭がヘッドレストに近づく位置に座る', '車の運転が多いとのことなので')
   if ((p?.sleepRating ?? 0) >= 4) add('sleep', '寝る前の画面時間を少し減らし、起きる時間をそろえる（眠れない状態が続くときは医療機関に相談を）', '睡眠の自己評価から')
   if (p?.activityLevel === 'low') add('walk_more', '階段を使う・ひと駅分歩くなど、歩く時間を少し足す', '日常の活動量が少なめとのことなので')
+  const fx = [...consciousTraitEffects(input.conscious).values()]
+  const habitLabels = [...new Set(fx.flatMap((e) => e.habit))]
+  const adjustLabels = [...new Set(fx.flatMap((e) => e.adjust))]
+  if (habitLabels.length) {
+    add(
+      'conscious_habit',
+      `意識した姿勢で小さくなった「${habitLabels.slice(0, 2).join('」「')}」の立ち方を、歯みがきや信号待ちなど、1 日の決まった場面で思い出す`,
+      '意識すると差が小さくなったため（立ち方で変えられる差です）',
+    )
+  }
+  if (adjustLabels.length) {
+    add(
+      'conscious_adjust',
+      `良い姿勢をつくるとき、「${adjustLabels.slice(0, 2).join('」「')}」を動かしすぎていないか、鏡で確かめる`,
+      '意識すると差が大きくなった、または反対の向きになったため',
+    )
+  }
   if (isTired(input)) add('rest_day', '疲れている日は、呼吸と軽いストレッチだけでも十分です', '疲れやすさの記録から')
   add('same_conditions', '再測定は前回と同じ時間帯・服装・場所で行う', '比較の精度を上げるため')
   return out

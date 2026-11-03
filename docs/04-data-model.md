@@ -46,8 +46,17 @@
   qualityFlags: QualityFlag[]                // 正面・側面の品質判定をまとめたもの
   recommendationSnapshot?: { planId: string; routineIds: string[] }
   checkinId?: string
+  conscious?: ConsciousPose                  // 「意識した姿勢」。結果画面からあとで追加する
   imagesSaved: boolean
   modelVersion: string; appVersion: string; algorithmVersion: number
+}
+
+ConsciousPose {
+  capturedAt: string
+  front?: PlaneRecord; side?: PlaneRecord    // 写真を保存した場合の imageId は <セッション>_conscious_<面>
+  computedMetrics: ComputedMetric[]; computedMetricsRaw: ComputedMetric[]
+  confidenceScores: { overall: number; front?: number; side?: number }
+  qualityFlags: QualityFlag[]
 }
 
 PlaneRecord {
@@ -65,6 +74,12 @@ PlaneRecord {
   landmarksCorrected: Landmark[]             // 補正後（補正がなければ生と同じ）
   correctionLog: CorrectionEntry[]           // { index, from{x,y}, to{x,y}, at }
   qualityFlags: QualityFlag[]
+  burst?: {                                  // 複数枚撮り。landmarksRaw はこの平均
+    frames: Landmark[][]                     // 各撮影の点（代表の写真の位置と大きさにそろえたもの）
+    repIndex: number                         // 代表の写真（保存・表示する写真）が frames の何番目か
+    attempted: number                        // 撮影した枚数（検出できなかった分も含む）
+    spreadFrac: number | null                // 1 枚あたりの点のぶれ（H 比、1σ）
+  }
 }
 ```
 

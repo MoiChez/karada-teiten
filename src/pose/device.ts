@@ -58,3 +58,18 @@ export function vibrate(ms: number | number[]) {
     // 非対応
   }
 }
+
+/** 短い声の案内（対応ブラウザのみ。出せなくても撮影は続ける） */
+export function speak(text: string) {
+  try {
+    const synth = window.speechSynthesis
+    if (!synth) return
+    synth.cancel()
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'ja-JP'
+    u.rate = 1.05
+    synth.speak(u)
+  } catch {
+    // 非対応
+  }
+}

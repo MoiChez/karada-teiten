@@ -119,12 +119,12 @@ export function gaugeRows(metrics: ComputedMetric[], plane: Plane, past?: Comput
 }
 
 /** 読み上げ用の説明 */
-export function gaugeDescription(r: GaugeRow, value: string): string {
+export function gaugeDescription(r: GaugeRow, value: string, pastName = '前回'): string {
   if (r.cell === null) return `${r.label}: 評価できませんでした`
   const where =
     r.cell === 0
       ? `${value}、測定のばらつきの範囲内`
       : `${r.tag}へ${value}、ばらつきを超える差（外側へ 3 段階のうち ${Math.abs(r.cell)}）`
-  const past = r.pastCell === null ? '' : `。前回は${r.pastCell === 0 ? 'ばらつきの範囲内' : `${r.pastCell < 0 ? r.axis.left : r.axis.right}側の ${Math.abs(r.pastCell)} 段階目`}`
+  const past = r.pastCell === null ? '' : `。${pastName}は${r.pastCell === 0 ? 'ばらつきの範囲内' : `${r.pastCell < 0 ? r.axis.left : r.axis.right}側の ${Math.abs(r.pastCell)} 段階目`}`
   return `${r.label}: ${where}${past}`
 }

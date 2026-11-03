@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { AppDB } from '../src/data/db'
 import { repo } from '../src/data/repo'
 import { blobToDataUrl, dataUrlToBlob, exportJson, importJson, sessionsToCsv, validateExport } from '../src/data/exportImport'
-import { buildSession } from '../src/domain/session'
+import { buildConscious, buildSession } from '../src/domain/session'
 import { frontPose, record, sidePose } from './helpers'
 
 let n = 0
@@ -40,6 +40,31 @@ describe('保存と削除', () => {
     const got = (await r.getSession(s.id))!
     expect(got.imagesSaved).toBe(false)
     expect(got.computedMetrics.length).toBeGreaterThan(0)
+  })
+
+  it('意識した姿勢の写真は別の id で保存し、撮り直すと前の写真を消す。画像の全削除で参照も消える', async () => {
+    const r = freshRepo()
+    const s = makeSession('2026-10-01T09:00:00.000Z')
+    const img = () => new Blob([new Uint8Array([7])], { type: 'image/jpeg' })
+    await r.saveSession(s, { front: img() })
+    const withC = { ...s, conscious: buildConscious({ front: record('front', frontPose()), side: record('side', sidePose()) }) }
+    await r.saveConscious(withC, { front: img(), side: img() })
+    let got = (await r.getSession(s.id))!
+    expect(got.conscious!.front!.imageMetadata.imageId).toBe(`${s.id}_conscious_front`)
+    expect(got.front!.imageMetadata.imageId).toBe(`${s.id}_front`)
+    expect(await r.db.images.count()).toBe(3)
+
+    // 撮り直し（写真を保存しない設定）: 前の意識した姿勢の写真は消え、いつもの姿勢の写真は残る
+    await r.saveConscious({ ...got, conscious: buildConscious({ front: record('front', frontPose()) }) })
+    got = (await r.getSession(s.id))!
+    expect(got.conscious!.front!.imageMetadata.imageId).toBeUndefined()
+    expect(await r.db.images.count()).toBe(1)
+
+    await r.saveConscious(withC, { front: img() })
+    await r.deleteAllImages()
+    got = (await r.getSession(s.id))!
+    expect(got.conscious!.front!.imageMetadata.imageId).toBeUndefined()
+    expect(await r.db.images.count()).toBe(0)
   })
 
   it('計算ロジックの版が古いセッションは読み込み時に再計算される', async () => {

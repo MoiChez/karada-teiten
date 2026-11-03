@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { ArrowLeftRight, Ruler, Shirt, Smartphone, Sun, SquareDashed, User } from 'lucide-react'
+import { ArrowLeftRight, Footprints, Ruler, Shirt, Smartphone, Sun, SquareDashed, User } from 'lucide-react'
 import type { BodyArea } from '../domain/types'
 import { AREA_LABELS, localDateKey } from '../domain/format'
 import { newId } from '../domain/session'
@@ -13,7 +13,8 @@ const CHECKS = [
   { icon: Smartphone, title: 'スマホは腰の高さで、縦にまっすぐ', text: '棚や台に立てかけるのがおすすめです。画面の水準器で傾きを確認できます。' },
   { icon: Ruler, title: '2.5〜3m 離れて全身を入れる', text: '頭からつま先まで入り、上下に少し余白がある距離です。' },
   { icon: Shirt, title: '体の線が分かる服で', text: 'ゆったりした服は肩や膝の位置がずれる原因になります。裸足がおすすめです。' },
-  { icon: User, title: 'いつもどおりに立つ', text: '良い姿勢をつくろうとせず、腕は体の横で力を抜きます。' },
+  { icon: User, title: 'いつもどおりに立つ', text: '良い姿勢をつくろうとせず、腕は体の横で力を抜きます。3 枚撮りでは、1 枚ごとにその場で軽く足踏みして立ち直します。' },
+  { icon: Footprints, title: '立ち位置に目印を', text: '床にテープなどで足の位置の目印を付けると、毎回同じ距離で撮れます。撮影画面には前回の骨格が重なり、位置のずれを教えてくれます。' },
 ]
 
 export function CaptureGuide() {

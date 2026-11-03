@@ -27,10 +27,22 @@ function toBlocks(rows: GaugeRow[]): Block[] {
   return out
 }
 
-export function GaugeTable({ rows, heightCm, pastLabel }: { rows: GaugeRow[]; heightCm?: number; pastLabel?: string }) {
+export function GaugeTable({
+  rows,
+  heightCm,
+  pastLegend,
+  currentLegend = '今回',
+}: {
+  rows: GaugeRow[]
+  heightCm?: number
+  /** 点線の枠の凡例（例: 「前回（11/1）」「いつもの姿勢」）。なければ表示しない */
+  pastLegend?: string
+  currentLegend?: string
+}) {
   if (!rows.length) return <p className="text-ink-2">表示できる項目がありません。</p>
   const blocks = toBlocks(rows)
-  const hasPast = !!pastLabel && rows.some((r) => r.pastCell !== null)
+  const hasPast = !!pastLegend && rows.some((r) => r.pastCell !== null)
+  const pastName = pastLegend?.replace(/（.*）$/, '') ?? '前回'
   const hasOffset = rows.some((r) => r.metric.offset)
   return (
     <div>
@@ -40,7 +52,7 @@ export function GaugeTable({ rows, heightCm, pastLabel }: { rows: GaugeRow[]; he
             {!b.judged && (blocks[i - 1]?.judged ?? true) && (
               <p className="pb-1 text-sm font-medium text-ink-3">位置の記録（良し悪しは判定しません）</p>
             )}
-            <BlockView block={b} heightCm={heightCm} />
+            <BlockView block={b} heightCm={heightCm} pastName={pastName} />
           </div>
         ))}
       </div>
@@ -48,12 +60,12 @@ export function GaugeTable({ rows, heightCm, pastLabel }: { rows: GaugeRow[]; he
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="flex items-center gap-1.5">
             <span aria-hidden className="inline-block h-2.5 w-5 rounded-full bg-measure" />
-            今回
+            {currentLegend}
           </span>
           {hasPast && (
             <span className="flex items-center gap-1.5">
               <span aria-hidden className="inline-block h-2.5 w-5 rounded-full bg-line outline-2 outline-offset-2 outline-past outline-dashed" />
-              前回（{pastLabel}）
+              {pastLegend}
             </span>
           )}
           <span className="flex items-center gap-1.5">
@@ -80,7 +92,7 @@ export function GaugeTable({ rows, heightCm, pastLabel }: { rows: GaugeRow[]; he
   )
 }
 
-function BlockView({ block, heightCm }: { block: Block; heightCm?: number }) {
+function BlockView({ block, heightCm, pastName }: { block: Block; heightCm?: number; pastName: string }) {
   return (
     <div className="relative">
       {/* 中央の帯（ばらつきの範囲） */}
@@ -99,19 +111,19 @@ function BlockView({ block, heightCm }: { block: Block; heightCm?: number }) {
       </div>
       <ul className="relative">
         {block.rows.map((r) => (
-          <GaugeRowView key={r.key} r={r} heightCm={heightCm} />
+          <GaugeRowView key={r.key} r={r} heightCm={heightCm} pastName={pastName} />
         ))}
       </ul>
     </div>
   )
 }
 
-function GaugeRowView({ r, heightCm }: { r: GaugeRow; heightCm?: number }) {
+function GaugeRowView({ r, heightCm, pastName }: { r: GaugeRow; heightCm?: number; pastName: string }) {
   const value = primaryValue(r.metric, heightCm)
   return (
     <li className="grid items-center gap-x-3 py-1.5" style={{ gridTemplateColumns: `1fr ${GAUGE_W}px` }}>
       <span className="text-[15px] leading-snug">{r.label}</span>
-      <span role="img" aria-label={gaugeDescription(r, value)} className="block">
+      <span role="img" aria-label={gaugeDescription(r, value, pastName)} className="block">
         <ValueTag r={r} value={value} />
         <span className="mt-0.5 flex justify-between">
           {CELLS.map((i) => (

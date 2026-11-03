@@ -71,6 +71,8 @@ export function App() {
             <Route path="/measure/capture/:plane" element={<Capture />} />
             <Route path="/measure/review/:plane" element={<Review />} />
             <Route path="/measure/analyzing" element={<Analyzing />} />
+            <Route path="/measure/conscious/capture/:plane" element={<Capture pose="conscious" />} />
+            <Route path="/measure/conscious/review/:plane" element={<Review pose="conscious" />} />
             <Route path="/session/:id" element={<WithNav><Result /></WithNav>} />
             <Route path="/session/:id/edit/:plane" element={<EditSaved />} />
             <Route path="/session/:id/3d" element={<View3D />} />
