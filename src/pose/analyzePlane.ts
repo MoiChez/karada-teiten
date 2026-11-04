@@ -1,10 +1,45 @@
-// 画像 1 枚を分析して PlaneRecord を作る（推定 → 向き → 品質）
-import type { DeviceTilt, Landmark, Plane, PlaneRecord } from '../domain/types'
+// 画像 1 枚を分析して PlaneRecord を作る（推定 → 向き → 背中の輪郭 → 品質）
+import type { BodyOutline, DeviceTilt, EdgeLine, Landmark, Plane, PlaneRecord, Point } from '../domain/types'
 import { detectSideOrientation, estimateYawDeg } from '../domain/quality'
 import { requalify } from '../domain/session'
 import { mergeBurst } from '../domain/burst'
+import { extractEdge, mergeContours, type MaskData } from '../domain/backContour'
+import { bodyHeightPx, visibilityOf } from '../domain/metrics'
+import { sidePoints } from '../domain/landmarks'
+import { MIN_VISIBILITY } from '../domain/constants'
 import type { PreparedImage } from './image'
 import { detectImage, type DetectionResult, type ModelKind } from './landmarker'
+
+const usable = (l: Landmark | undefined) => !!l && l.x >= 0 && l.x <= 1 && l.y >= 0 && l.y <= 1 && visibilityOf(l) >= MIN_VISIBILITY
+
+/** 体の高さ（画像の高さに対する比）。求められなければ null */
+function heightFrac(landmarks: Landmark[], width: number, height: number, nearSide: 'left' | 'right' | undefined): number | null {
+  if (landmarks.length < 33) return null
+  const H = bodyHeightPx('side', (i) => ({ x: landmarks[i].x * width, y: landmarks[i].y * height }), (i) => usable(landmarks[i]), nearSide)
+  return H ? H / height : null
+}
+
+/**
+ * 横向きの写真の、体の左端と右端を取り出す（どちらが背中側かは、計算のときに顔の向きで決める）。
+ * 取れなければ理由つきの空の線
+ */
+function outlineOf(
+  mask: MaskData | undefined,
+  landmarks: Landmark[],
+  width: number,
+  height: number,
+  nearSide: 'left' | 'right' | undefined,
+): BodyOutline {
+  const fail = (note: string): BodyOutline => ({ left: { points: [], note }, right: { points: [], note } })
+  if (landmarks.length < 33) return fail('骨格を検出できなかったため、背中の輪郭を取れませんでした')
+  if (!mask) return fail('人の領域を取り出せなかったため、背中の輪郭を取れませんでした')
+  const s = sidePoints(nearSide ?? 'left')
+  if (!usable(landmarks[s.shoulder]) || !usable(landmarks[s.hip])) return fail('肩と股関節の位置を確認できないため、背中の輪郭を取れませんでした')
+  const hf = heightFrac(landmarks, width, height, nearSide)
+  if (!hf) return fail('頭と足元の位置が分からないため、背中の輪郭を取る範囲を決められませんでした')
+  const o = { shoulder: landmarks[s.shoulder], hip: landmarks[s.hip], heightFrac: hf }
+  return { left: extractEdge(mask, { ...o, side: 'left' }), right: extractEdge(mask, { ...o, side: 'right' }) }
+}
 
 export async function analyzePlane(params: {
   plane: Plane
@@ -16,7 +51,7 @@ export async function analyzePlane(params: {
   facingOverride?: 'left' | 'right'
 }): Promise<PlaneRecord> {
   const { plane, image } = params
-  const det = await detectImage(image.canvas, params.model)
+  const det = await detectImage(image.canvas, params.model, { withMask: plane === 'side' })
   const landmarks = det.landmarks ?? []
   let facing: 'left' | 'right' | undefined
   let nearSide: 'left' | 'right' | undefined
@@ -25,6 +60,7 @@ export async function analyzePlane(params: {
     facing = params.facingOverride ?? o.facing
     nearSide = o.nearSide
   }
+  const outline = plane === 'side' ? outlineOf(det.mask, landmarks, image.width, image.height, nearSide) : undefined
   return requalify({
     plane,
     imageMetadata: {
@@ -44,6 +80,7 @@ export async function analyzePlane(params: {
     landmarksCorrected: landmarks.map((l) => ({ ...l })),
     correctionLog: [],
     qualityFlags: [],
+    outline,
   })
 }
 
@@ -70,9 +107,17 @@ export async function analyzeBurst(params: {
 }): Promise<BurstAnalysis> {
   const { plane, images } = params
   const dets: DetectionResult[] = []
+  // 側面: 各写真の体の輪郭（その写真の座標）。マスクは大きいのですぐ捨てる
+  const outs: (BodyOutline | null)[] = []
   for (let i = 0; i < images.length; i++) {
     params.onProgress?.(i, images.length)
-    dets.push(await detectImage(images[i].canvas, params.model))
+    const det = await detectImage(images[i].canvas, params.model, { withMask: plane === 'side' })
+    if (plane === 'side') {
+      const lms = det.landmarks ?? []
+      const o = lms.length ? detectSideOrientation(lms, images[i].width, images[i].height) : null
+      outs.push(outlineOf(det.mask, lms, images[i].width, images[i].height, o?.nearSide))
+    }
+    dets.push({ ...det, mask: undefined })
   }
   params.onProgress?.(images.length, images.length)
 
@@ -123,6 +168,30 @@ export async function analyzeBurst(params: {
       }))
     : []
   const second = dets.map((d) => d.secondPersonScale).filter((v): v is number => v !== undefined)
+
+  // 体の輪郭: 各写真の左端・右端を、骨格と同じそろえ方で代表の写真の座標へ移し、高さごとに平均する
+  let outline: BodyOutline | undefined
+  let outlines: ({ left: Point[]; right: Point[] } | null)[] | undefined
+  if (plane === 'side') {
+    const toRep = (k: number, pts: Point[]) =>
+      pts.map((p) => {
+        const q = merged.toRep(k, p)
+        return { x: Math.round(q.x * 1e5) / 1e5, y: Math.round(q.y * 1e5) / 1e5 }
+      })
+    outlines = used.map((idx, k) => {
+      const o = outs[idx]
+      if (!o || (!o.left.points.length && !o.right.points.length)) return null
+      return { left: toRep(k, o.left.points), right: toRep(k, o.right.points) }
+    })
+    const hf = heightFrac(merged.landmarks, rep.width, rep.height, nearSide) ?? 0.7
+    const sideOf = (s: 'left' | 'right'): EdgeLine => {
+      const points = mergeContours(outlines!.map((o) => (o ? o[s] : null)), 0.03 * hf)
+      const note = outs.find((o) => o?.[s].note)?.[s].note
+      return points.length ? { points } : { points: [], note: note ?? '背中の輪郭を取れませんでした' }
+    }
+    outline = { left: sideOf('left'), right: sideOf('right') }
+  }
+
   const record = requalify({
     plane,
     imageMetadata: {
@@ -142,7 +211,8 @@ export async function analyzeBurst(params: {
     landmarksCorrected: merged.landmarks.map((l) => ({ ...l })),
     correctionLog: [],
     qualityFlags: [],
-    burst: { frames: merged.frames, repIndex: used.indexOf(r), attempted: images.length, spreadFrac: merged.spreadFrac },
+    burst: { frames: merged.frames, repIndex: used.indexOf(r), attempted: images.length, spreadFrac: merged.spreadFrac, outlines },
+    outline,
   })
   const dropped = images.length - used.length
   return {

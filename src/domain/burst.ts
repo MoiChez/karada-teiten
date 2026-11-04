@@ -25,6 +25,8 @@ export interface BurstMerge {
   repIndex: number
   /** 1 枚あたりの点のぶれ（体の高さ比、1σ）。点が足りなければ null */
   spreadFrac: number | null
+  /** frames の k 枚目の写真の点（その写真の正規化座標）を、代表の写真の座標へ移す */
+  toRep: (k: number, p: Point) => Point
 }
 
 /** ぶれの計算に使う点（腕と顔の細かい点は動きやすいので除く） */
@@ -109,6 +111,14 @@ export function mergeBurst(plane: Plane, inputs: BurstFrameInput[], nearSide: 'l
     usedIndices: valid.map((v) => v.index),
     repIndex: valid[repK].index,
     spreadFrac,
+    toRep: (k, p) => {
+      const f = valid[k].f
+      const sh = shapes[k]
+      return {
+        x: (cr.x + (sr * (p.x * f.width - sh.c.x)) / sh.s) / rep.width,
+        y: (cr.y + (sr * (p.y * f.height - sh.c.y)) / sh.s) / rep.height,
+      }
+    },
   }
 }
 

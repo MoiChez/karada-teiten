@@ -1,6 +1,7 @@
 // 姿勢指標の計算（docs/05-analysis-logic.md の定義どおり）
-import type { BurstInfo, ComputedMetric, Landmark, MetricKey, MetricUnit, Plane, PlaneRecord, Point } from './types'
+import type { BurstInfo, ComputedMetric, EdgeLine, Landmark, MetricKey, MetricUnit, Plane, PlaneRecord, Point } from './types'
 import {
+  BACK_EDGE_SIGMA_FRACTION,
   CONFIDENCE_CAP,
   COMPOSITE_SCALE,
   LANDMARK_SIGMA_FRACTION,
@@ -23,6 +24,7 @@ import {
   tiltDeg,
 } from './geometry'
 import { LM, landmarkName, sidePoints } from './landmarks'
+import { backLower, backSideOf, backUpper, type BackLower, type BackShapeInput, type BackUpper } from './backContour'
 
 // ---------- 入力 ----------
 
@@ -40,6 +42,10 @@ export interface PlaneInput {
   sigmaFraction?: number
   /** 複数枚撮りの各撮影の点（landmarks と同じ座標系）。1 枚ごとの値を出すのに使う */
   frames?: Landmark[][]
+  /** 側面: 背中側の輪郭（正規化座標）。この機能より前の記録にはなく、そのときは輪郭の指標を出さない */
+  back?: EdgeLine
+  /** 側面・複数枚撮り: 各撮影の背中側の輪郭（frames と同じ順） */
+  backFrames?: (Point[] | null)[]
 }
 
 type Getter = (i: number) => Point
@@ -54,6 +60,12 @@ interface Ctx {
   /** 体の高さ（ピクセル）。摂動の大きさと正規化に使う。摂動中も固定 */
   H: number
   isValid: (i: number) => boolean
+  /** 側面: 背中側の輪郭（ピクセル） */
+  back?: Point[]
+  /** 背中側の輪郭を取れなかった理由 */
+  backNote?: string
+  /** 不確かさの計算中だけ: 輪郭から取った点を後ろ向きにずらす量（ピクセル） */
+  backJitter?: (key: string) => number
 }
 
 /** len: 位置のずれ・高さの差などの長さ（ピクセル、raw と同じ向きで符号付き）。cm 換算に使う */
@@ -73,6 +85,8 @@ interface MetricDef {
   unsupportedNote?: string
   /** len を返す指標で、その長さが何を表すか（画面表示用） */
   offsetLabel?: string
+  /** 背中側の輪郭を使う指標 */
+  usesBack?: boolean
 }
 
 // ---------- 共通 ----------
@@ -91,6 +105,37 @@ const pctOf = (v: number, base: number) => (v / base) * 100
 function lateralSign(p: Getter): number {
   const s = p(LM.leftShoulder).x - p(LM.rightShoulder).x + (p(LM.leftHip).x - p(LM.rightHip).x)
   return s >= 0 ? 1 : -1
+}
+
+/** 背中の輪郭の計算に渡す値。腕・手の点（確認できたものだけ）は、輪郭に重なっていないかの確認に使う */
+function backInput(p: Getter, c: Ctx): BackShapeInput | { fail: string } {
+  if (!c.back || c.back.length === 0) return { fail: c.backNote ?? '背中の輪郭を取り出せませんでした' }
+  const arms: Point[] = []
+  for (const [sh, el, ...rest] of [
+    [LM.leftShoulder, 13, 15, 17, 19, 21],
+    [LM.rightShoulder, 14, 16, 18, 20, 22],
+  ]) {
+    if (c.isValid(el)) {
+      arms.push(p(el))
+      if (c.isValid(sh)) arms.push(mid(p(sh), p(el)))
+    }
+    for (const i of rest) if (c.isValid(i)) arms.push(p(i))
+  }
+  return { contour: c.back, shoulderY: p(c.side.shoulder).y, hipY: p(c.side.hip).y, H: c.H, f: c.f, arms, jitter: c.backJitter }
+}
+
+/** 記述のみの指標で、差の向きを言葉にする（「〜へ約 X 変わった」の「〜」） */
+export function towardPhrase(key: MetricKey, diff: number): string {
+  switch (key) {
+    case 'side_head_pitch':
+      return diff >= 0 ? '下向きの方向' : '上向きの方向'
+    case 'side_back_upper':
+      return diff >= 0 ? '丸みが強い方向' : '丸みが弱い方向'
+    case 'side_back_lower':
+      return diff >= 0 ? 'すき間が深い方向' : 'すき間が浅い方向'
+    default:
+      return diff >= 0 ? '前の方向' : '後ろの方向'
+  }
 }
 
 /** 体の高さ H（ピクセル）。耳（なければ鼻）からかかと（なければ足首）までの縦の距離 */
@@ -438,6 +483,47 @@ const SIDE: MetricDef[] = [
     direction: (v) => (v >= 0 ? '顔が下を向く方向' : '顔が上を向く方向'),
   },
   {
+    key: 'side_back_upper',
+    label: '背中上部の丸み（背中の輪郭）',
+    plane: 'side',
+    group: 'relative',
+    unit: '°',
+    normalizedUnit: '% (体の高さ比)',
+    kind: 'descriptive',
+    usesBack: true,
+    landmarks: (c) => [c.side.shoulder, c.side.hip],
+    compute: (p, c) => {
+      const inp = backInput(p, c)
+      if ('fail' in inp) return inp
+      const r = backUpper(inp)
+      if ('fail' in r) return r
+      return { raw: r.ok.angleDeg, norm: pctOf(r.ok.depth, c.H), len: r.ok.depth }
+    },
+    direction: (v) => (v >= 0 ? '背中上部の輪郭が後ろへ丸く出る形（数値が大きいほど丸い）' : '背中上部の輪郭が内側へ反る形'),
+    offsetLabel: '膨らみの深さ（肩の高さと胸の下を結ぶ線から）',
+  },
+  {
+    key: 'side_back_lower',
+    label: '腰のすき間の深さ（背中の輪郭）',
+    plane: 'side',
+    group: 'relative',
+    unit: '%',
+    normalizedUnit: '% (体の高さ比)',
+    kind: 'descriptive',
+    usesBack: true,
+    landmarks: (c) => [c.side.shoulder, c.side.hip],
+    compute: (p, c) => {
+      const inp = backInput(p, c)
+      if ('fail' in inp) return inp
+      const r = backLower(inp)
+      if ('fail' in r) return r
+      const v = pctOf(r.ok.depth, c.H)
+      return { raw: v, norm: v, len: r.ok.depth }
+    },
+    direction: () => '背中とお尻に後ろから定規を当てたときの、腰のすき間（数値が大きいほど深い）',
+    offsetLabel: 'すき間の深さ',
+  },
+  {
     key: 'side_pelvis_tilt',
     label: '骨盤の前後傾',
     plane: 'side',
@@ -598,6 +684,10 @@ export function planeInputFrom(record: PlaneRecord, useCorrected: boolean): Plan
     nearSide: record.imageMetadata.nearSide,
     sigmaFraction: burstSigmaFraction(record.burst),
     frames: record.burst && record.burst.frames.length >= 2 ? burstFramesCorrected(record, corrected) : undefined,
+    // 背中側は今の顔の向きで決める（確認画面で向きを切り替えても正しい側を使う）
+    back: record.plane === 'side' && record.outline ? backSideOf(record.outline, record.imageMetadata.facing) : undefined,
+    backFrames:
+      record.plane === 'side' ? record.burst?.outlines?.map((o) => (o ? backSideOf(o, record.imageMetadata.facing) : null)) : undefined,
   }
 }
 
@@ -637,6 +727,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
 
   const nearSide = input.nearSide ?? 'left'
   const H = bodyHeightPx(input.plane, base, isValid, nearSide)
+  const toPx = (list: Point[]) => list.map((q) => ({ x: q.x * width, y: q.y * height }))
   const ctx: Ctx = {
     plane: input.plane,
     sLat: input.plane === 'front' && landmarks.length >= 33 ? lateralSign(base) : 1,
@@ -644,13 +735,21 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     side: sidePoints(nearSide),
     H: H ?? height * 0.7,
     isValid,
+    back: input.back ? toPx(input.back.points) : undefined,
+    backNote: input.back?.note,
   }
   const sigmaPx = (input.sigmaFraction ?? LANDMARK_SIGMA_FRACTION) * ctx.H
-  const defs = METRIC_DEFS.filter((d) => d.plane === input.plane)
-  const framePts = (input.frames ?? []).map((fr) => ({
-    pts: fr.map((lm) => ({ x: lm.x * width, y: lm.y * height })),
-    valid: (i: number) => !!fr[i] && inFrame(fr[i]) && visibilityOf(fr[i]) >= MIN_VISIBILITY,
-  }))
+  const edgeSigmaPx = BACK_EDGE_SIGMA_FRACTION * ctx.H
+  // 背中の輪郭の指標は、輪郭を記録した測定だけで出す
+  const defs = METRIC_DEFS.filter((d) => d.plane === input.plane && (!d.usesBack || input.back !== undefined))
+  const framePts = (input.frames ?? []).map((fr, k) => {
+    const back = input.backFrames?.[k]
+    return {
+      pts: fr.map((lm) => ({ x: lm.x * width, y: lm.y * height })),
+      valid: (i: number) => !!fr[i] && inFrame(fr[i]) && visibilityOf(fr[i]) >= MIN_VISIBILITY,
+      back: back && back.length ? toPx(back) : null,
+    }
+  })
 
   return defs.map((def) => {
     const shell: ComputedMetric = {
@@ -692,7 +791,8 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       return { ...shell, usedLandmarks: used, qualityNote: result.fail }
     }
 
-    // 不確かさ: 使用点を σ だけ乱数でずらして再計算した標準偏差
+    // 不確かさ: 使用点を σ だけ乱数でずらして再計算した標準偏差。
+    // 背中の輪郭の指標は、輪郭から取った点（接点・頂点など）も、輪郭の想定誤差だけ前後にずらす
     const rand = rng(hashString(def.key))
     const samples: number[] = []
     const lenSamples: number[] = []
@@ -702,7 +802,18 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
         jitter.set(i, { x: pts[i].x + gaussian(rand) * sigmaPx, y: pts[i].y + gaussian(rand) * sigmaPx })
       }
       const getter: Getter = (i) => jitter.get(i) ?? pts[i]
-      const r = def.compute(getter, ctx)
+      let sctx = ctx
+      if (def.usesBack) {
+        const offs = new Map<string, number>()
+        sctx = {
+          ...ctx,
+          backJitter: (k) => {
+            if (!offs.has(k)) offs.set(k, gaussian(rand) * edgeSigmaPx)
+            return offs.get(k)!
+          },
+        }
+      }
+      const r = def.compute(getter, sctx)
       if (!('fail' in r) && Number.isFinite(r.raw)) {
         samples.push(r.raw)
         if (r.len !== undefined && Number.isFinite(r.len)) lenSamples.push(r.len)
@@ -739,15 +850,57 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       }
     }
     if (def.group === 'composite') metric.components = compositeComponents(def.key, base, ctx)
-    if (framePts.length >= 2) {
+    if (framePts.length >= 2 && (!def.usesBack || input.backFrames)) {
       metric.burstValues = framePts.map((fp) => {
         if (!used.every(fp.valid)) return null
-        const r = def.compute((i) => fp.pts[i], ctx)
+        if (def.usesBack && !fp.back) return null
+        const r = def.compute((i) => fp.pts[i], def.usesBack ? { ...ctx, back: fp.back!, backNote: undefined } : ctx)
         return 'fail' in r || !Number.isFinite(r.raw) ? null : round(r.raw, 2)
       })
+      // 輪郭の指標: 1 枚ごとの値の揺れ ÷ √枚数 が想定より大きければ、ばらつきをそれに広げる（狭めはしない）
+      const vals = metric.burstValues.filter((v): v is number => v !== null)
+      if (def.usesBack && vals.length >= 2 && metric.uncertainty !== null) {
+        const measured = std(vals) / Math.sqrt(vals.length)
+        if (measured > metric.uncertainty) {
+          const k = metric.uncertainty > 0 ? measured / metric.uncertainty : 1
+          metric.uncertainty = round(measured, 3)
+          if (metric.offset?.sigma != null) metric.offset.sigma = round(metric.offset.sigma * k, 5)
+        }
+      }
     }
     return metric
   })
+}
+
+export interface BackShapeView {
+  /** 背中側の輪郭（ピクセル） */
+  contour: Point[]
+  upper?: BackUpper
+  lower?: BackLower
+}
+
+/** 画面に描くための背中の輪郭と、丸み・すき間を求めた線（ピクセル）。輪郭がなければ null */
+export function backShapeFor(record: PlaneRecord, useCorrected = true): BackShapeView | null {
+  if (record.plane !== 'side' || !record.outline) return null
+  const input = planeInputFrom(record, useCorrected)
+  const { landmarks, width, height, correctedIdx } = input
+  if (!input.back?.points.length) return null
+  const contour = input.back.points.map((q) => ({ x: q.x * width, y: q.y * height }))
+  if (landmarks.length < 33) return { contour }
+  const pts: Point[] = landmarks.map((lm) => ({ x: lm.x * width, y: lm.y * height }))
+  const p: Getter = (i) => pts[i]
+  const isValid = (i: number) =>
+    !!landmarks[i] && inFrame(landmarks[i]) && (correctedIdx.has(i) ? 1 : visibilityOf(landmarks[i])) >= MIN_VISIBILITY
+  const nearSide = input.nearSide ?? 'left'
+  const H = bodyHeightPx('side', p, isValid, nearSide)
+  const side = sidePoints(nearSide)
+  if (!H || !isValid(side.shoulder) || !isValid(side.hip)) return { contour }
+  const ctx: Ctx = { plane: 'side', sLat: 1, f: input.facing === 'left' ? -1 : 1, side, H, isValid, back: contour }
+  const inp = backInput(p, ctx)
+  if ('fail' in inp) return { contour }
+  const u = backUpper(inp)
+  const l = backLower(inp)
+  return { contour, upper: 'ok' in u ? u.ok : undefined, lower: 'ok' in l ? l.ok : undefined }
 }
 
 function compositeComponents(key: MetricKey, p: Getter, c: Ctx): ComputedMetric['components'] {

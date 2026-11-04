@@ -1,10 +1,10 @@
 // 骨格の表示: 写真への重ね描きと、定点グリッド上の図
 import { useEffect, useId, useMemo, useState } from 'react'
-import type { Landmark, PlaneRecord } from '../domain/types'
+import type { Landmark, PlaneRecord, Point } from '../domain/types'
 import { DISPLAY_POINTS, LM, SKELETON_EDGES, sidePoints } from '../domain/landmarks'
-import { figurePose, sideEdges, type FigurePose } from '../domain/figure'
+import { figurePose, sideEdges, sideFigureTransform, type FigurePose } from '../domain/figure'
 import { correctedSet } from '../domain/session'
-import { visibilityOf } from '../domain/metrics'
+import { backShapeFor, visibilityOf, type BackShapeView } from '../domain/metrics'
 import { MIN_VISIBILITY } from '../domain/constants'
 import { data } from '../data/repo'
 import { cx } from './ui'
@@ -110,6 +110,55 @@ export function GuideLines({ record, landmarks, width, height }: { record: Plane
   )
 }
 
+/**
+ * 背中側の輪郭と、丸み・すき間を測った線。map で座標を移す（写真ならそのまま、方眼なら図の座標へ）。
+ * 輪郭は服や髪を含む外形。線の太さは表示の大きさによらず画面上で一定
+ */
+function BackShapeLines({ view, map, tone }: { view: BackShapeView; map: (p: Point) => Point; tone: 'photo' | 'figure' | 'past' }) {
+  const line = view.contour.map(map)
+  const d = line.map((p, i) => `${i ? 'L' : 'M'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ')
+  const main = tone === 'photo' ? '#F4B183' : tone === 'figure' ? 'var(--color-measure)' : 'var(--color-past)'
+  const sub = tone === 'photo' ? '#A8DDEE' : 'var(--color-measure)'
+  const seg = (a: Point, b: Point, key: string, dashed: boolean) => {
+    const p = map(a)
+    const q = map(b)
+    return (
+      <g key={key}>
+        {tone === 'photo' && (
+          <line x1={p.x} y1={p.y} x2={q.x} y2={q.y} stroke="#10282F" strokeOpacity={0.45} strokeWidth={3.5} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        )}
+        <line
+          x1={p.x}
+          y1={p.y}
+          x2={q.x}
+          y2={q.y}
+          stroke={sub}
+          strokeWidth={dashed ? 1.25 : 2}
+          strokeDasharray={dashed ? '4 3' : undefined}
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </g>
+    )
+  }
+  return (
+    <g aria-hidden>
+      {tone === 'photo' && <path d={d} fill="none" stroke="#10282F" strokeOpacity={0.45} strokeWidth={4.5} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />}
+      <path
+        d={d}
+        fill="none"
+        stroke={main}
+        strokeWidth={tone === 'past' ? 1.5 : 2.25}
+        strokeDasharray={tone === 'past' ? '5 4' : undefined}
+        strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+      {tone !== 'past' && view.upper && [seg(view.upper.top, view.upper.bottom, 'uc', true), seg(view.upper.apex, view.upper.foot, 'ud', false)]}
+      {tone !== 'past' && view.lower && [seg(view.lower.upperTouch, view.lower.lowerTouch, 'lc', true), seg(view.lower.deepest, view.lower.foot, 'ld', false)]}
+    </g>
+  )
+}
+
 /** 保存済み画像の URL を読み込む（なければ null） */
 export function useStoredImageUrl(imageId: string | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null)
@@ -154,6 +203,7 @@ export function PhotoWithPose({
   const { width, height } = record.imageMetadata
   const lms = useCorrected ? record.landmarksCorrected : record.landmarksRaw
   const corrected = useMemo(() => (useCorrected ? correctedSet(record) : new Set<number>()), [record, useCorrected])
+  const back = useMemo(() => backShapeFor(record, useCorrected), [record, useCorrected])
   return (
     <div className={cx('relative overflow-hidden rounded-[var(--radius-panel)] bg-ink', className)} style={{ aspectRatio: `${width} / ${height}` }}>
       {imageUrl ? (
@@ -164,6 +214,7 @@ export function PhotoWithPose({
       {(showSkeleton || showGuides) && (
         <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0 size-full">
           {showGuides && <GuideLines record={record} landmarks={lms} width={width} height={height} />}
+          {showGuides && back && <BackShapeLines view={back} map={(p) => p} tone={imageUrl ? 'photo' : 'figure'} />}
           {showSkeleton && <SkeletonLayer landmarks={lms} width={width} height={height} corrected={corrected} tone={imageUrl ? 'photo' : 'figure'} />}
         </svg>
       )}
@@ -201,6 +252,15 @@ export function PostureGrid({
   const uid = useId().replace(/:/g, '')
   const cur = figurePose(current, useCorrected)
   const prev = figurePose(past, useCorrected)
+  // 側面: 背中の輪郭（今回は測った線も、前回は輪郭だけ）
+  const backs = useMemo(() => {
+    const one = (rec: PlaneRecord | undefined) => {
+      const view = rec ? backShapeFor(rec, useCorrected) : null
+      const t = sideFigureTransform(rec, useCorrected)
+      return view && t ? { view, t } : null
+    }
+    return { cur: one(current), prev: one(past) }
+  }, [current, past, useCorrected])
   const plane = current?.plane ?? past?.plane ?? 'front'
   // 表示範囲（体の高さ = 1）
   const xMin = plane === 'front' ? -0.42 : -0.3
@@ -283,6 +343,8 @@ export function PostureGrid({
             const y = Y((p.y + q.y) / 2)
             return <line key={a} x1={0} x2={W} y1={y} y2={y} stroke="var(--color-measure)" strokeOpacity={0.6} strokeWidth={1} strokeDasharray="2 3" />
           })}
+        {backs.prev && <BackShapeLines view={backs.prev.view} map={(p) => { const q = backs.prev!.t(p); return { x: X(q.x), y: Y(q.y) } }} tone="past" />}
+        {backs.cur && <BackShapeLines view={backs.cur.view} map={(p) => { const q = backs.cur!.t(p); return { x: X(q.x), y: Y(q.y) } }} tone="figure" />}
         {prev && past && draw(prev, past, 'past')}
         {cur && current && draw(cur, current, 'current')}
         {!cur && !prev && (

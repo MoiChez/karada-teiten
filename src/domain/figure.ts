@@ -47,6 +47,22 @@ export function figurePose(rec: PlaneRecord | undefined, useCorrected = true): F
   return { plane: 'side', points, visible }
 }
 
+/** 側面: 写真のピクセル座標を、定点グリッドの座標（足首が原点、体の高さ 1、前方が +）へ移す関数 */
+export function sideFigureTransform(rec: PlaneRecord | undefined, useCorrected = true): ((p: Point) => Point) | null {
+  if (!rec || rec.plane !== 'side' || rec.landmarksRaw.length < 33) return null
+  const lms: Landmark[] = useCorrected ? rec.landmarksCorrected : rec.landmarksRaw
+  const { width, height } = rec.imageMetadata
+  const s = sidePoints(rec.imageMetadata.nearSide ?? 'left')
+  const corrected = useCorrected ? correctedSet(rec) : new Set<number>()
+  const ok = (i: number) => !!lms[i] && (corrected.has(i) || visibilityOf(lms[i]) >= MIN_VISIBILITY)
+  if (!ok(s.ankle) || !ok(s.ear)) return null
+  const a = { x: lms[s.ankle].x * width, y: lms[s.ankle].y * height }
+  const H = a.y - lms[s.ear].y * height
+  if (H <= 0) return null
+  const f = rec.imageMetadata.facing === 'left' ? -1 : 1
+  return (p) => ({ x: ((p.x - a.x) * f) / H, y: (a.y - p.y) / H })
+}
+
 /** 側面の骨格線（カメラ側の半身のみ） */
 export function sideEdges(nearSide: 'left' | 'right'): [number, number][] {
   const s = sidePoints(nearSide)

@@ -2,7 +2,7 @@
 import type { AssessmentSession, CheckIn, ComputedMetric, MetricKey, RoutineLog, TraitKey } from './types'
 import { COMPARE_WARN, NOTICEABLE_K, PRECISE_SHOTS } from './constants'
 import { fmtAbs, fmtValue } from './format'
-import { prefersTowardZero } from './metrics'
+import { prefersTowardZero, towardPhrase } from './metrics'
 import { correctedSet } from './session'
 
 export type ChangeLabel = 'improved' | 'stable' | 'worsened' | 'flipped' | 'changed'
@@ -12,7 +12,7 @@ export const CHANGE_LABELS: Record<ChangeLabel, string> = {
   stable: '横ばい',
   worsened: '悪化傾向',
   flipped: '向きが反対に',
-  changed: '位置が変化',
+  changed: '変化あり',
 }
 
 export interface MetricChange {
@@ -109,8 +109,7 @@ function compareMetric(a: ComputedMetric, b: ComputedMetric): MetricChange | nul
     if (Math.abs(diff) > threshold) {
       change = 'changed'
       significance = Math.abs(diff) / threshold
-      const toward = b.key === 'side_head_pitch' ? (diff >= 0 ? '下向き' : '上向き') : diff >= 0 ? '前' : '後ろ'
-      sentence = `${b.label}は前回より${toward}の方向へ約${fmtAbs(diff, unit)}変わっています。`
+      sentence = `${b.label}は前回より${towardPhrase(b.key, diff)}へ約${fmtAbs(diff, unit)}変わっています。`
     } else {
       change = 'stable'
       significance = Math.abs(diff) / threshold

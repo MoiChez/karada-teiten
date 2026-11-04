@@ -1,6 +1,7 @@
 // MediaPipe Pose Landmarker の読み込みと推定。WASM とモデルは自サイトから配信する
-import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
+import { FilesetResolver, PoseLandmarker, type MPMask } from '@mediapipe/tasks-vision'
 import type { Landmark } from '../domain/types'
+import type { MaskData } from '../domain/backContour'
 
 export type ModelKind = 'full' | 'heavy'
 
@@ -36,6 +37,8 @@ export function getLandmarker(model: ModelKind, mode: Mode): Promise<PoseLandmar
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
+      // 人の領域（背中の輪郭を取るため）。読み出すのは測定のときだけ
+      outputSegmentationMasks: mode === 'IMAGE',
     })
     try {
       const lm = await PoseLandmarker.createFromOptions(fileset, options('GPU'))
@@ -61,6 +64,8 @@ export interface DetectionResult {
   worldLandmarks: Landmark[] | null
   /** 2 人目の大きさ / 1 人目の大きさ */
   secondPersonScale?: number
+  /** 選んだ人の領域（0..1）。withMask のときだけ */
+  mask?: MaskData
 }
 
 const copy = (list: { x: number; y: number; z: number; visibility?: number; presence?: number }[]): Landmark[] =>
@@ -76,23 +81,38 @@ function poseHeight(lms: { y: number }[]) {
   return max - min
 }
 
-function pick(landmarks: { x: number; y: number; z: number; visibility?: number }[][], world: Landmark[][]): DetectionResult {
+function pick(landmarks: { x: number; y: number; z: number; visibility?: number }[][], world: Landmark[][], masks?: MPMask[]): DetectionResult {
   if (!landmarks.length) return { landmarks: null, worldLandmarks: null }
   const order = landmarks.map((l, i) => ({ i, h: poseHeight(l) })).sort((a, b) => b.h - a.h)
   const main = order[0]
   const second = order[1]
+  const m = masks?.[main.i]
+  let mask: MaskData | undefined
+  if (m) {
+    try {
+      // 結果を閉じると元の配列は使えなくなるので写す
+      mask = { data: m.getAsFloat32Array().slice(), width: m.width, height: m.height }
+    } catch {
+      mask = undefined
+    }
+  }
   return {
     landmarks: copy(landmarks[main.i]),
     worldLandmarks: world[main.i] ? copy(world[main.i]) : null,
     secondPersonScale: second && main.h > 0 ? second.h / main.h : undefined,
+    mask,
   }
 }
 
-export async function detectImage(source: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement | ImageBitmap, model: ModelKind): Promise<DetectionResult> {
+export async function detectImage(
+  source: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement | ImageBitmap,
+  model: ModelKind,
+  opts: { withMask?: boolean } = {},
+): Promise<DetectionResult> {
   const lm = await getLandmarker(model, 'IMAGE')
   const r = lm.detect(source)
   try {
-    return pick(r.landmarks, r.worldLandmarks)
+    return pick(r.landmarks, r.worldLandmarks, opts.withMask ? r.segmentationMasks : undefined)
   } finally {
     r.close()
   }

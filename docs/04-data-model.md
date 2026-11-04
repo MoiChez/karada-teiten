@@ -80,6 +80,11 @@ PlaneRecord {
     repIndex: number                         // 代表の写真（保存・表示する写真）が frames の何番目か
     attempted: number                        // 撮影した枚数（検出できなかった分も含む）
     spreadFrac: number | null                // 写真ごとの点の揺れ（H 比、1σ）
+    outlines?: ({ left: Point[]; right: Point[] } | null)[]  // 側面: 各撮影の体の左端・右端（frames と同じ順・同じそろえ方）
+  }
+  outline?: {                                // 側面: 体の輪郭（この機能より前の記録にはない）
+    left: { points: Point[]; note?: string } // 人の領域の左端（正規化座標、上から下へ）。取れなければ空と理由
+    right: { points: Point[]; note?: string }// 右端。顔が画像の右向きなら左端、左向きなら右端が背中側
   }
 }
 ```

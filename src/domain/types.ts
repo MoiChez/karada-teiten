@@ -152,6 +152,26 @@ export interface BurstInfo {
   attempted: number
   /** 1 枚あたりの点の揺れ（体の高さ H に対する比、1σ）。点が足りず求められなければ null */
   spreadFrac: number | null
+  /** 側面: 各撮影の体の左端・右端（frames と同じ順、代表の写真の位置と大きさにそろえてある）。取れなかった枚は null */
+  outlines?: ({ left: Point[]; right: Point[] } | null)[]
+}
+
+/** 体の端の線 */
+export interface EdgeLine {
+  /** 正規化画像座標、上から下へ。取れなかったときは空 */
+  points: Point[]
+  /** 取れなかった理由 */
+  note?: string
+}
+
+/**
+ * 側面: 人の領域の左端と右端（肩より少し上から、股関節より下まで）。
+ * どちらが背中側かは顔の向きで決まる（顔が画像の右向きなら左端）。顔の向きをあとから切り替えても使えるよう両方を残す。
+ * 服・髪・体つきを含んだ外形で、背骨の形ではない
+ */
+export interface BodyOutline {
+  left: EdgeLine
+  right: EdgeLine
 }
 
 export interface PlaneRecord {
@@ -163,6 +183,8 @@ export interface PlaneRecord {
   correctionLog: CorrectionEntry[]
   qualityFlags: QualityFlag[]
   burst?: BurstInfo
+  /** 側面: 体の輪郭の左端・右端（この機能より前の記録にはない） */
+  outline?: BodyOutline
 }
 
 // ---------- 指標 ----------
@@ -189,6 +211,8 @@ export type MetricKey =
   | 'side_plumb_knee'
   | 'side_head_pitch'
   | 'side_pelvis_tilt'
+  | 'side_back_upper'
+  | 'side_back_lower'
   | 'composite_kyphosis'
   | 'composite_swayback'
 

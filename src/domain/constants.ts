@@ -2,10 +2,17 @@
 // 測定の品質や「ばらつきを超える差か」を判断するための工学的な目安（docs/05-analysis-logic.md）
 
 /** 計算ロジックの版。変えたら保存済みセッションは読み込み時に再計算される */
-export const ALGORITHM_VERSION = 3
+export const ALGORITHM_VERSION = 4
 
 /** ランドマーク位置の想定誤差（体の高さ H に対する割合、1σ） */
 export const LANDMARK_SIGMA_FRACTION = 0.005
+
+/**
+ * 背中の輪郭（人の領域の端）の位置の想定誤差（体の高さ H に対する割合、1σ）。
+ * 端は画素より細かく求まるため骨格の点より小さくした工学的な目安で、体の高さが 1,000〜1,500 画素の写真で 2〜3 画素にあたる。
+ * 服・髪・立ち方の違いによる外形の変化は含まない
+ */
+export const BACK_EDGE_SIGMA_FRACTION = 0.002
 
 /** 不確かさを求める乱数摂動の回数 */
 export const PERTURBATION_SAMPLES = 150
@@ -61,6 +68,8 @@ export const CONFIDENCE_CAP: Partial<Record<string, number>> = {
   side_arm_forward: 0.5,
   side_hip_forward: 0.7,
   side_knee_extension: 0.7,
+  side_back_upper: 0.6,
+  side_back_lower: 0.5,
   composite_kyphosis: 0.7,
   composite_swayback: 0.6,
 }

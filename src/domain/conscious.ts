@@ -5,6 +5,7 @@ import type { AssessmentSession, ComputedMetric, MetricKey, Plane, TraitKey } fr
 import { NOTICEABLE_K } from './constants'
 import { METRIC_TO_TRAIT } from './compare'
 import { fmtAbs } from './format'
+import { towardPhrase } from './metrics'
 
 export type ConsciousEffect = 'resolved' | 'reduced' | 'remains' | 'increased' | 'overshoot'
 
@@ -105,8 +106,7 @@ export function compareConscious(s: AssessmentSession): ConsciousComparison | nu
       const thr = Math.max(NOTICEABLE_K * Math.hypot(a.uncertainty ?? 0, b.uncertainty ?? 0), 1e-6)
       const diff = b.rawValue - a.rawValue
       if (Math.abs(diff) > thr) {
-        const toward = b.key === 'side_head_pitch' ? (diff >= 0 ? '下向き' : '上向き') : diff >= 0 ? '前' : '後ろ'
-        shifts.push({ key: b.key, label: b.label, plane: b.plane, sentence: `${b.label}は、意識すると${toward}の方向へ約${fmtAbs(diff, b.unit)}変わりました。` })
+        shifts.push({ key: b.key, label: b.label, plane: b.plane, sentence: `${b.label}は、意識すると${towardPhrase(b.key, diff)}へ約${fmtAbs(diff, b.unit)}変わりました。` })
       }
       continue
     }

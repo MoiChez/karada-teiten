@@ -14,6 +14,7 @@ import { useCheckins, useLogs, useProfile, useSession, useSessions } from '../da
 import { MetricList } from '../components/MetricList'
 import { GaugeTable, LoadShiftFeet } from '../components/Gauge'
 import { BurstNote } from '../components/BurstNote'
+import { backSideOf } from '../domain/backContour'
 import { ConsciousSection } from '../components/ConsciousSection'
 import { PhotoWithPose, PostureGrid, useStoredImageUrl } from '../components/PoseViews'
 import { RoutineItem } from '../components/RoutineItem'
@@ -46,6 +47,7 @@ function ResultBody({ s }: { s: AssessmentSession }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const rec = s[plane]
+  const backEdge = rec?.plane === 'side' && rec.outline ? backSideOf(rec.outline, rec.imageMetadata.facing) : null
   const storedUrl = useStoredImageUrl(rec?.imageMetadata.imageId)
   const draftUrl = draft.editingSessionId === s.id ? draft[plane]?.imageUrl : undefined
   const imageUrl = storedUrl ?? draftUrl ?? null
@@ -187,6 +189,13 @@ function ResultBody({ s }: { s: AssessmentSession }) {
       )}
       {!imageUrl && rec && <p className="text-sm text-ink-3">写真は保存されていないため、骨格だけを表示しています。</p>}
       <BurstNote rec={rec} heightCm={heightCm} onPhoto={!!imageUrl} />
+      {backEdge && (
+        <p className="mt-1 text-sm text-ink-3">
+          {backEdge.points.length
+            ? '背中側の線は、写真から取り出した体の輪郭です（服や髪を含む外形で、背骨の形ではありません）。点線は、背中上部の丸みと腰のすき間を測った線です。'
+            : backEdge.note}
+        </p>
+      )}
       {plane === 'front' && <p className="mt-1 text-sm text-ink-3">左右は、写っている人自身から見た左右です。</p>}
 
       {/* 3b. ずれの向きと大きさ */}
