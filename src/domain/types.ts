@@ -141,7 +141,7 @@ export interface CorrectionEntry {
 }
 
 /**
- * 立ち直しながら複数枚撮ったときの情報。landmarksRaw はこの平均。
+ * 続けて複数枚撮ったときの情報。landmarksRaw はこの平均。
  * 各撮影の点は、代表の写真の位置と大きさにそろえてある（正規化座標）
  */
 export interface BurstInfo {
@@ -150,7 +150,7 @@ export interface BurstInfo {
   repIndex: number
   /** 撮影した枚数（骨格を検出できなかった分も含む） */
   attempted: number
-  /** 1 枚あたりの点のぶれ（体の高さ H に対する比、1σ）。点が足りず求められなければ null */
+  /** 1 枚あたりの点の揺れ（体の高さ H に対する比、1σ）。点が足りず求められなければ null */
   spreadFrac: number | null
 }
 
@@ -280,6 +280,9 @@ export interface ConsciousPose {
   qualityFlags: QualityFlag[]
 }
 
+/** 測定のモード。simple = 1 枚ずつ、precise = 5 枚の平均・横向き必須・意識した姿勢も続けて撮る */
+export type CaptureMode = 'simple' | 'precise'
+
 export interface AssessmentSession {
   id: string
   createdAt: string
@@ -293,6 +296,8 @@ export interface AssessmentSession {
   qualityFlags: QualityFlag[]
   recommendationSnapshot?: { planId: string; routineIds: string[] }
   checkinId?: string
+  /** 測定のモード（この機能より前の記録にはない） */
+  captureMode?: CaptureMode
   conscious?: ConsciousPose
   imagesSaved: boolean
   modelVersion: string
@@ -377,9 +382,8 @@ export interface CheckIn {
 
 export interface AppSettings {
   saveImages: boolean
-  model: 'full' | 'heavy'
   timerSec: 0 | 3 | 5 | 10
-  /** 1 回の撮影で撮る枚数（3 = 立ち直しながら 3 枚撮って平均する） */
-  shots: 1 | 3
+  /** 前回選んだ測定のモード（次の測定の初期値） */
+  captureMode: CaptureMode
   onboarded: boolean
 }

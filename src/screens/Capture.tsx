@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router'
-import { ChevronLeft, History, ImageUp, Layers, Loader2, RefreshCcw, SwitchCamera, Timer } from 'lucide-react'
-import type { DeviceTilt, Landmark, Plane, PlaneRecord } from '../domain/types'
-import { MIN_VISIBILITY, RESTAND_SEC } from '../domain/constants'
+import { ChevronLeft, History, ImageUp, Loader2, RefreshCcw, SwitchCamera, Timer } from 'lucide-react'
+import type { CaptureMode, DeviceTilt, Landmark, Plane, PlaneRecord } from '../domain/types'
+import { MIN_VISIBILITY, PRECISE_INTERVAL_MS, PRECISE_SHOTS } from '../domain/constants'
 import { visibilityOf } from '../domain/metrics'
 import { SKELETON_EDGES } from '../domain/landmarks'
 import { sideEdges } from '../domain/figure'
 import { framingAdvice, framingOf } from '../domain/framing'
 import { analyzeBurst, analyzePlane } from '../pose/analyzePlane'
-import { prepareFromFile, prepareFromVideo, type PreparedImage } from '../pose/image'
-import { detectVideoFrame, getLandmarker } from '../pose/landmarker'
+import { grabVideoFrame, prepareFromCanvas, prepareFromFile, type PreparedImage } from '../pose/image'
+import { POSE_MODEL, detectImage, getLandmarker } from '../pose/landmarker'
 import { beep, speak, useDeviceTilt, vibrate } from '../pose/device'
 import { useSessions } from '../data/hooks'
 import { useDraft, useSettings, type PlaneDraft, type Pose } from '../state/stores'
@@ -41,8 +41,9 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   const [cam, setCam] = useState<CamState>('starting')
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
   const [timer, setTimer] = useState<number>(settings.timerSec)
-  const [phase, setPhase] = useState<{ n: number; shot: number; total: number; restand: boolean } | null>(null)
+  const [phase, setPhase] = useState<{ kind: 'count'; n: number } | { kind: 'shoot'; k: number; total: number } | null>(null)
   const [running, setRunning] = useState(false)
+  const runningRef = useRef(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState<LiveCheck>('loading')
@@ -53,7 +54,10 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   const cancelRef = useRef(false)
 
   const conscious = pose === 'conscious'
-  const shots = settings.shots ?? 3
+  const draftMode = useDraft((s) => s.mode)
+  // 意識した姿勢は、いつもの姿勢と同じモードで撮る
+  const mode: CaptureMode = conscious ? (sessions?.find((s) => s.id === sessionId)?.captureMode ?? 'simple') : draftMode
+  const shots = mode === 'precise' ? PRECISE_SHOTS : 1
   const mirrored = facingMode === 'user'
   const title = conscious ? `意識した姿勢（${plane === 'front' ? '正面' : '横向き'}）` : plane === 'front' ? '正面を撮る' : '横向きを撮る'
   const base = conscious ? '/measure/conscious' : '/measure'
@@ -125,12 +129,13 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
     const near = plane === 'front' ? [7, 8, 29, 30, 31, 32] : null
     const tick = async () => {
       const v = videoRef.current
-      if (!alive || !v || v.readyState < 2 || busy) {
+      // 撮影中・推定中は止める（推定は同じモデルを使うため）
+      if (!alive || !v || v.readyState < 2 || busy || runningRef.current) {
         timerId = setTimeout(tick, 500)
         return
       }
       try {
-        const r = await detectVideoFrame(v, settings.model, performance.now())
+        const r = await detectImage(v, POSE_MODEL)
         if (!alive) return
         setLiveLms(r.landmarks)
         if (!r.landmarks) setLive('none')
@@ -143,19 +148,19 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
       } catch {
         if (alive) setLive('none')
       }
-      timerId = setTimeout(tick, 450)
+      timerId = setTimeout(tick, 600)
     }
     tick()
     return () => {
       alive = false
       clearTimeout(timerId)
     }
-  }, [cam, plane, settings.model, busy])
+  }, [cam, plane, busy])
 
   // 推定モデルを先に読み込んでおく
   useEffect(() => {
-    getLandmarker(settings.model, 'IMAGE').catch(() => undefined)
-  }, [settings.model])
+    getLandmarker(POSE_MODEL, 'IMAGE').catch(() => undefined)
+  }, [])
 
   const advice = useMemo(() => {
     if (!guideOn || !vdims || !liveLms) return null
@@ -171,14 +176,14 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
       try {
         let draft: PlaneDraft
         if (images.length === 1) {
-          const record = await analyzePlane({ plane, image: images[0], source, model: settings.model, deviceTilt: tilts?.[0] })
+          const record = await analyzePlane({ plane, image: images[0], source, model: POSE_MODEL, deviceTilt: tilts?.[0] })
           draft = { record, imageBlob: images[0].blob, imageUrl: URL.createObjectURL(images[0].blob), notice: extraNotice }
         } else {
           const r = await analyzeBurst({
             plane,
             images,
             source,
-            model: settings.model,
+            model: POSE_MODEL,
             deviceTilts: tilts,
             onProgress: (d, t) => setBusy(`骨格を推定しています（${Math.min(d + 1, t)} / ${t} 枚）`),
           })
@@ -186,7 +191,6 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
             record: r.record,
             imageBlob: r.repImage.blob,
             imageUrl: URL.createObjectURL(r.repImage.blob),
-            frameBlobs: images.map((i) => i.blob),
             notice: [extraNotice, r.notice].filter(Boolean).join(' ') || undefined,
           }
         }
@@ -201,47 +205,58 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         )
       }
     },
-    [plane, pose, base, settings.model, setPlane, navigate],
+    [plane, pose, base, setPlane, navigate],
   )
 
-  /** n 秒数える。中止されたら false */
-  const wait = async (n: number, shot: number, total: number, restand: boolean) => {
-    for (let k = n; k > 0; k--) {
-      if (cancelRef.current) return false
-      setPhase({ n: k, shot, total, restand })
-      beep(restand ? 660 : 880)
-      await new Promise((r) => setTimeout(r, 1000))
-    }
-    setPhase(null)
-    return !cancelRef.current
-  }
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
   const shoot = async () => {
     const v = videoRef.current
     if (!v || cam !== 'live') return
     if (needsPermission) request()
     cancelRef.current = false
+    runningRef.current = true
     setRunning(true)
-    const images: PreparedImage[] = []
+    const frames: HTMLCanvasElement[] = []
     const tilts: (DeviceTilt | undefined)[] = []
     try {
-      for (let k = 0; k < shots; k++) {
-        if (k > 0) speak(conscious ? 'その場で軽く足踏みをして、もう一度、良い姿勢で立ってください' : 'その場で軽く足踏みをして、楽に立ち直してください')
-        const ok = await wait(k === 0 ? timer : RESTAND_SEC, k + 1, shots, k > 0)
-        if (!ok) return
-        beep(1320, 140)
-        vibrate(60)
-        images.push(await prepareFromVideo(v))
-        tilts.push(latest.current ?? undefined)
+      for (let n = timer; n > 0; n--) {
+        if (cancelRef.current) return
+        setPhase({ kind: 'count', n })
+        beep(880)
+        await sleep(1000)
       }
+      // 高精度: 動かずに立ったまま、一定の間隔で続けて撮る（圧縮はあとでまとめて行い、間隔を保つ）
+      const t0 = performance.now()
+      for (let k = 0; k < shots; k++) {
+        const wait = t0 + k * PRECISE_INTERVAL_MS - performance.now()
+        if (wait > 0) await sleep(wait)
+        if (cancelRef.current) return
+        if (shots > 1) setPhase({ kind: 'shoot', k: k + 1, total: shots })
+        frames.push(grabVideoFrame(v))
+        tilts.push(latest.current ?? undefined)
+        const last = k === shots - 1
+        beep(last ? 1320 : 1100, last ? 140 : 50)
+      }
+      vibrate(60)
     } catch {
       setError('写真を撮れませんでした。もう一度お試しください。')
       return
     } finally {
       setPhase(null)
+      runningRef.current = false
       setRunning(false)
     }
     if (shots > 1) speak('撮影が終わりました')
+    let images: PreparedImage[]
+    try {
+      setBusy('写真を準備しています')
+      images = await Promise.all(frames.map(prepareFromCanvas))
+    } catch {
+      setBusy(null)
+      setError('写真を撮れませんでした。もう一度お試しください。')
+      return
+    }
     await processImages(images, 'camera', tilts)
   }
 
@@ -284,7 +299,15 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         </button>
         <h1 className="flex-1 text-[17px] font-bold">{title}</h1>
         <span className="pr-3 text-sm text-paper/75 num">{plane === 'front' ? '1 / 2' : '2 / 2'}</span>
+        {conscious && (
+          <button type="button" onClick={() => navigate(`/session/${sessionId}`)} disabled={running} className="mr-1 min-h-11 rounded-full px-3 text-sm text-paper/90 underline hover:bg-white/10 disabled:opacity-40">
+            あとで
+          </button>
+        )}
       </header>
+      {conscious && plane === 'front' && (
+        <p className="px-4 pb-2 text-sm text-paper/80">続けて、自分が良いと思う姿勢で撮ります。いつもの姿勢との違いから、意識で変えられる差かどうかが分かります。</p>
+      )}
 
       <div className="relative min-h-0 flex-1">
         {cam === 'live' || cam === 'starting' ? (
@@ -351,19 +374,19 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         )}
 
         {phase && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink/40 px-6 text-center">
-            {phase.restand && (
-              <p className="max-w-[22ch] text-[22px] leading-snug font-bold">
-                {conscious ? 'その場で軽く足踏みして、もう一度意識した姿勢で立つ' : 'その場で軽く足踏みして、楽に立ち直す'}
-              </p>
-            )}
-            <span className="text-[120px] leading-none font-bold text-level num" aria-live="assertive">
-              {phase.n}
-            </span>
-            {phase.total > 1 && (
-              <p className="text-[17px] num">
-                {phase.shot} / {phase.total} 枚目
-              </p>
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink/40 px-6 text-center" aria-live="assertive">
+            {phase.kind === 'count' ? (
+              <>
+                <span className="text-[120px] leading-none font-bold text-level num">{phase.n}</span>
+                {shots > 1 && <p className="max-w-[24ch] text-[17px]">このあと {shots} 枚を続けて撮ります。動かずに立っていてください</p>}
+              </>
+            ) : (
+              <>
+                <p className="text-[22px] font-bold">そのまま動かずに</p>
+                <span className="text-[64px] leading-none font-bold text-level num">
+                  {phase.k} / {phase.total}
+                </span>
+              </>
             )}
           </div>
         )}
@@ -406,14 +429,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
           ))}
         </div>
         <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-          <div className="flex items-center gap-1" role="group" aria-label="撮影枚数">
-            <Layers aria-hidden className="mr-1 size-4 text-paper/75" />
-            {([1, 3] as const).map((n) => (
-              <Pill key={n} pressed={shots === n} disabled={running} onClick={() => updateSetting('shots', n)}>
-                {n === 1 ? '1枚' : '3枚で平均'}
-              </Pill>
-            ))}
-          </div>
+          <span className="text-sm text-paper/80">{mode === 'precise' ? `高精度モード（${shots} 枚の平均）` : 'シンプルモード（1 枚）'}</span>
           {guideRec && (
             <Pill pressed={showGuide} onClick={() => setShowGuide(!showGuide)}>
               <History aria-hidden className="mr-1 inline size-4 align-[-3px]" />
@@ -422,7 +438,9 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
           )}
         </div>
         {shots > 1 && !running && (
-          <p className="-mt-2 mb-3 text-center text-xs text-paper/70">1 枚ごとに足踏みして立ち直し、3 枚の平均で測ります（約 {timer + RESTAND_SEC * 2} 秒）</p>
+          <p className="-mt-2 mb-3 text-center text-xs text-paper/70">
+            {timer ? `${timer} 秒後から` : 'すぐに'}約 {((shots - 1) * PRECISE_INTERVAL_MS) / 1000} 秒かけて {shots} 枚撮ります。その間は動かずに立っていてください
+          </p>
         )}
         <div className="flex items-center justify-between">
           <button
@@ -578,7 +596,7 @@ function CameraProblem({ state, onUpload }: { state: CamState; onUpload: () => v
     <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
       <p className="text-[17px] font-bold">{m.title}</p>
       <p className="text-[15px] text-paper/80">{m.text}</p>
-      <p className="text-sm text-paper/70">同じ姿勢を立ち直して撮った写真を 2〜3 枚選ぶと、平均して測ります。</p>
+      <p className="text-sm text-paper/70">同じ姿勢で続けて撮った写真を 2〜3 枚選ぶと、平均して測ります。</p>
       <div className="mt-2 flex gap-2">
         <Button variant="primary" onClick={onUpload} icon={<ImageUp aria-hidden className="size-5" />}>
           写真を選ぶ

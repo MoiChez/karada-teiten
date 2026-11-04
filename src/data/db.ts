@@ -52,8 +52,7 @@ export const db = new AppDB()
 
 export const DEFAULT_SETTINGS: AppSettings = {
   saveImages: false,
-  model: 'full',
   timerSec: 5,
-  shots: 3,
+  captureMode: 'precise',
   onboarded: false,
 }

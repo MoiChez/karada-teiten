@@ -1,15 +1,13 @@
 import { useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router'
 import { Camera } from 'lucide-react'
-import type { Plane, PlaneRecord } from '../domain/types'
+import type { CaptureMode, Plane, PlaneRecord } from '../domain/types'
 import { applyCorrection, correctedSet, requalify, resetCorrection } from '../domain/session'
 import { hasBlocking, hasMajor } from '../domain/quality'
 import { LandmarkEditor } from '../components/LandmarkEditor'
 import { QualityList } from '../components/QualityList'
 import { BurstNote } from '../components/BurstNote'
-import { Button, Dialog, Notice, Screen, Segmented } from '../components/ui'
-import { analyzeBurst, analyzePlane } from '../pose/analyzePlane'
-import { blobToImageBitmapCanvas, computeImageStats, type PreparedImage } from '../pose/image'
+import { Button, Notice, Screen, Segmented } from '../components/ui'
 import { useProfile, useSession } from '../data/hooks'
 import { attachConscious } from '../data/actions'
 import { useDraft, usePlaneDraft, useSettings, type Pose } from '../state/stores'
@@ -22,74 +20,28 @@ export function Review({ pose = 'habitual' }: { pose?: Pose }) {
   return <ReviewInner key={`${pose}-${plane}`} plane={plane} pose={pose} sessionId={sessionId} />
 }
 
-async function blobToPrepared(blob: Blob): Promise<PreparedImage> {
-  const canvas = await blobToImageBitmapCanvas(blob)
-  return { canvas, blob, width: canvas.width, height: canvas.height, stats: computeImageStats(canvas) }
-}
-
 function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; sessionId?: string }) {
   const navigate = useNavigate()
   const draft = usePlaneDraft(pose, plane)
   const consciousDraft = useDraft((s) => s.conscious)
+  const draftMode = useDraft((s) => s.mode)
   const updateRecord = useDraft((s) => s.updateRecord)
-  const setPlane = useDraft((s) => s.setPlane)
   const saveImages = useSettings((s) => s.settings.saveImages)
   const profile = useProfile()
   const session = useSession(pose === 'conscious' ? sessionId : undefined)
-  const [redetecting, setRedetecting] = useState(false)
-  const [confirmRedetect, setConfirmRedetect] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const conscious = pose === 'conscious'
   const base = conscious ? '/measure/conscious' : '/measure'
+  // 意識した姿勢は、いつもの姿勢と同じモード
+  const mode: CaptureMode = conscious ? (session?.captureMode ?? 'simple') : draftMode
   if (!draft) return <Navigate to={`${base}/capture/${plane}`} replace />
   const rec = draft.record
   const blocked = hasBlocking(rec.qualityFlags)
   const nCorrected = correctedSet(rec).size
 
   const set = (r: PlaneRecord) => updateRecord(plane, r, pose)
-
-  const redetect = async () => {
-    setConfirmRedetect(false)
-    setRedetecting(true)
-    setError(null)
-    try {
-      if (draft.frameBlobs && draft.frameBlobs.length > 1) {
-        const images = await Promise.all(draft.frameBlobs.map(blobToPrepared))
-        const r = await analyzeBurst({
-          plane,
-          images,
-          source: rec.imageMetadata.source,
-          model: 'heavy',
-          deviceTilts: images.map(() => rec.imageMetadata.deviceTilt),
-          facingOverride: rec.imageMetadata.facing,
-        })
-        const record = { ...r.record, imageMetadata: { ...r.record.imageMetadata, capturedAt: rec.imageMetadata.capturedAt } }
-        const sameImage = r.repImage.blob === draft.imageBlob
-        setPlane(
-          plane,
-          { ...draft, record, imageBlob: r.repImage.blob, imageUrl: sameImage ? draft.imageUrl : URL.createObjectURL(r.repImage.blob), notice: r.notice },
-          pose,
-        )
-      } else {
-        const image = await blobToPrepared(draft.imageBlob)
-        const next = await analyzePlane({
-          plane,
-          image: { ...image, stats: rec.imageMetadata.imageStats ?? image.stats },
-          source: rec.imageMetadata.source,
-          model: 'heavy',
-          deviceTilt: rec.imageMetadata.deviceTilt,
-          facingOverride: rec.imageMetadata.facing,
-        })
-        set({ ...next, imageMetadata: { ...next.imageMetadata, capturedAt: rec.imageMetadata.capturedAt } })
-      }
-    } catch {
-      setError('再検出できませんでした。通信状態を確認して、もう一度お試しください。')
-    } finally {
-      setRedetecting(false)
-    }
-  }
 
   const finishConscious = async () => {
     if (!sessionId) return
@@ -105,7 +57,9 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
   }
 
   const correctedLabel = nCorrected > 0 ? '補正を保存して' : ''
+  // 高精度モードは横向きを省略しない（意識した姿勢は、いつもの姿勢に横向きがある場合のみ）
   const sideAvailable = !conscious || !!session?.side
+  const sideRequired = mode === 'precise' && sideAvailable
   const title = conscious
     ? `意識した姿勢：${plane === 'front' ? '正面' : '横向き'}の骨格`
     : plane === 'front'
@@ -116,34 +70,22 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
     <Button variant="primary" size="lg" block icon={<Camera aria-hidden className="size-5" />} onClick={() => navigate(`${base}/capture/${plane}`)}>
       撮り直す
     </Button>
-  ) : conscious ? (
-    plane === 'front' && sideAvailable ? (
-      <>
-        <Button variant="primary" size="lg" block onClick={() => navigate('/measure/conscious/capture/side')}>
-          {correctedLabel}次へ：横向きを撮る
-        </Button>
-        <Button variant="quiet" block onClick={finishConscious} loading={saving}>
-          横向きは撮らずに比べる
-        </Button>
-      </>
-    ) : (
-      <Button variant="primary" size="lg" block onClick={finishConscious} loading={saving}>
-        {correctedLabel}いつもの姿勢と比べる
-      </Button>
-    )
-  ) : plane === 'front' ? (
+  ) : plane === 'front' && sideAvailable ? (
     <>
-      <Button variant="primary" size="lg" block onClick={() => navigate('/measure/capture/side')}>
+      <Button variant="primary" size="lg" block onClick={() => navigate(`${base}/capture/side`)}>
         {correctedLabel}次へ：横向きを撮る
       </Button>
-      <Button variant="quiet" block onClick={() => navigate('/measure/analyzing')}>
-        横向きは撮らずに分析する
-      </Button>
+      {!sideRequired && (
+        <Button variant="quiet" block onClick={conscious ? finishConscious : () => navigate('/measure/analyzing')} loading={saving}>
+          {conscious ? '横向きは撮らずに比べる' : '横向きは撮らずに分析する'}
+        </Button>
+      )}
     </>
   ) : (
     <>
-      <Button variant="primary" size="lg" block onClick={() => navigate('/measure/analyzing')}>
-        {correctedLabel}分析する
+      <Button variant="primary" size="lg" block onClick={conscious ? finishConscious : () => navigate('/measure/analyzing')} loading={saving}>
+        {correctedLabel}
+        {conscious ? 'いつもの姿勢と比べる' : '分析する'}
       </Button>
       {hasMajor(rec.qualityFlags) && (
         <Button variant="quiet" block onClick={() => navigate(`${base}/capture/${plane}`)}>
@@ -194,32 +136,12 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
             imageUrl={draft.imageUrl}
             onMove={(i, to, o) => set(applyCorrection(rec, i, to, undefined, o.snap))}
             onReset={(i) => set(resetCorrection(rec, i))}
-            onRedetect={() => (nCorrected > 0 ? setConfirmRedetect(true) : redetect())}
-            redetecting={redetecting}
           />
           <BurstNote rec={rec} heightCm={profile?.heightCm} onPhoto />
         </div>
       ) : (
         <img src={draft.imageUrl} alt="撮影した写真" className="mt-4 w-full rounded-[var(--radius-panel)]" />
       )}
-
-      <Dialog
-        open={confirmRedetect}
-        onClose={() => setConfirmRedetect(false)}
-        title="再検出しますか"
-        actions={
-          <>
-            <Button variant="primary" block onClick={redetect}>
-              補正を破棄して再検出する
-            </Button>
-            <Button variant="quiet" block onClick={() => setConfirmRedetect(false)}>
-              やめる
-            </Button>
-          </>
-        }
-      >
-        高精度モデルで骨格を推定し直します。今までの補正（{nCorrected} 点）は破棄されます。
-      </Dialog>
     </Screen>
   )
 }

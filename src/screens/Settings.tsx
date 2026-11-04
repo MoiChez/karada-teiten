@@ -7,7 +7,7 @@ import { localDateKey } from '../domain/format'
 import { db } from '../data/db'
 import { data } from '../data/repo'
 import { exportJson, importJson, sessionsToCsv, validateExport } from '../data/exportImport'
-import { modelVersion } from '../pose/landmarker'
+import { POSE_MODEL, modelVersion } from '../pose/landmarker'
 import { Button, Details, Dialog, Notice, Screen, SectionTitle, Segmented } from '../components/ui'
 import { useSettings, useToast } from '../state/stores'
 
@@ -106,16 +106,6 @@ export function Settings() {
 
       <SectionTitle>測定</SectionTitle>
       <Segmented
-        legend="骨格推定のモデル"
-        columns={2}
-        value={settings.model}
-        onChange={(m) => update('model', m)}
-        options={[
-          { value: 'full', label: '標準', hint: '約 9MB・速い' },
-          { value: 'heavy', label: '高精度', hint: '約 29MB・時間がかかる' },
-        ]}
-      />
-      <Segmented
         legend="セルフタイマーの初期値"
         columns={4}
         value={settings.timerSec}
@@ -171,7 +161,7 @@ export function Settings() {
         アプリ本体・骨格推定のモデル・フォントはこのサイトから読み込み、写真や測定値を外部へ送ることはありません。
       </Details>
       <p className="mt-4 text-sm text-ink-3 num">
-        アプリ {APP_VERSION} ・ 計算ロジック v{ALGORITHM_VERSION} ・ {modelVersion(settings.model)}
+        アプリ {APP_VERSION} ・ 計算ロジック v{ALGORITHM_VERSION} ・ {modelVersion(POSE_MODEL)}
       </p>
 
       <Dialog

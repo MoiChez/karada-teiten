@@ -78,6 +78,13 @@ describe('過去比較', () => {
     expect(keys).toEqual(expect.arrayContaining(['front_correction', 'side_missing', 'model']))
   })
 
+  it('測り方（シンプル / 高精度）が違うと注意を出す。どちらかが記録前の測定なら出さない', () => {
+    const keys = (x: typeof a, y: typeof b) => compareSessions(x, y).warnings.map((w) => w.key)
+    expect(keys({ ...a, captureMode: 'simple' }, { ...b, captureMode: 'precise' })).toContain('mode')
+    expect(keys({ ...a, captureMode: 'precise' }, { ...b, captureMode: 'precise' })).not.toContain('mode')
+    expect(keys(a, { ...b, captureMode: 'precise' })).not.toContain('mode')
+  })
+
   it('推移: 期間で絞り込み、日付順に並ぶ', () => {
     const s = metricSeries([b, a], 'front_shoulder_tilt', 30, new Date('2026-10-20T00:00:00.000Z'))
     expect(s.map((p) => p.sessionId)).toEqual([a.id, b.id])

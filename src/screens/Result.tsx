@@ -100,7 +100,11 @@ function ResultBody({ s }: { s: AssessmentSession }) {
         <Badge>信頼度 {confidenceLabel(s.confidenceScores.overall)}</Badge>
         {(s.front && correctedSet(s.front).size > 0) || (s.side && correctedSet(s.side).size > 0) ? <Badge tone="level">補正あり</Badge> : null}
         <Badge>{s.imagesSaved ? '写真を保存' : '写真は未保存'}</Badge>
-        {(s.front?.burst || s.side?.burst) && <Badge tone="measure">{(s.front?.burst ?? s.side?.burst)!.frames.length} 枚の平均</Badge>}
+        {s.captureMode ? (
+          <Badge tone="measure">{s.captureMode === 'precise' ? '高精度モード' : 'シンプルモード'}</Badge>
+        ) : (
+          (s.front?.burst || s.side?.burst) && <Badge tone="measure">{(s.front?.burst ?? s.side?.burst)!.frames.length} 枚の平均</Badge>
+        )}
         {s.conscious && <Badge tone="measure">意識した姿勢あり</Badge>}
       </div>
 

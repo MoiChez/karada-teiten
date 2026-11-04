@@ -2,7 +2,7 @@
 // 測定の品質や「ばらつきを超える差か」を判断するための工学的な目安（docs/05-analysis-logic.md）
 
 /** 計算ロジックの版。変えたら保存済みセッションは読み込み時に再計算される */
-export const ALGORITHM_VERSION = 2
+export const ALGORITHM_VERSION = 3
 
 /** ランドマーク位置の想定誤差（体の高さ H に対する割合、1σ） */
 export const LANDMARK_SIGMA_FRACTION = 0.005
@@ -84,5 +84,6 @@ export const SNAP_FRACTION = 0.012
 /** 撮影位置を前回に合わせるときの目安（大きさの比と位置のずれ。体の高さに対する割合）。測定値の判定には使わない */
 export const FRAMING_TOLERANCE = 0.05
 
-/** 複数枚撮りで、次の 1 枚までに立ち直す時間（秒） */
-export const RESTAND_SEC = 5
+/** 高精度モードで続けて撮る枚数と間隔（ミリ秒） */
+export const PRECISE_SHOTS = 5
+export const PRECISE_INTERVAL_MS = 500

@@ -56,7 +56,7 @@ export interface BurstAnalysis {
 }
 
 /**
- * 立ち直しながら撮った複数枚を分析し、点を平均した PlaneRecord を作る。
+ * 続けて撮った複数枚を分析し、点を平均した PlaneRecord を作る。
  * 2 枚以上で骨格を検出できなければ、検出できた 1 枚（なければ 1 枚目）で分析する
  */
 export async function analyzeBurst(params: {

@@ -12,7 +12,7 @@
 | `routineLogs` | `id` | `date`, `routineId` | 運動の実施記録 |
 | `checkins` | `id` | `date` | その日のコンディション |
 | `plans` | `id` | `generatedAt`, `basedOnAssessmentId` | RecommendationPlan |
-| `settings` | `key` | — | 設定（画像保存・モデル等） |
+| `settings` | `key` | — | 設定（画像保存・セルフタイマー・前回選んだ測り方など） |
 
 ## 2. 主要な型
 
@@ -46,6 +46,7 @@
   qualityFlags: QualityFlag[]                // 正面・側面の品質判定をまとめたもの
   recommendationSnapshot?: { planId: string; routineIds: string[] }
   checkinId?: string
+  captureMode?: 'simple' | 'precise'         // 測り方（この機能より前の記録にはない）
   conscious?: ConsciousPose                  // 「意識した姿勢」。結果画面からあとで追加する
   imagesSaved: boolean
   modelVersion: string; appVersion: string; algorithmVersion: number
@@ -78,7 +79,7 @@ PlaneRecord {
     frames: Landmark[][]                     // 各撮影の点（代表の写真の位置と大きさにそろえたもの）
     repIndex: number                         // 代表の写真（保存・表示する写真）が frames の何番目か
     attempted: number                        // 撮影した枚数（検出できなかった分も含む）
-    spreadFrac: number | null                // 1 枚あたりの点のぶれ（H 比、1σ）
+    spreadFrac: number | null                // 写真ごとの点の揺れ（H 比、1σ）
   }
 }
 ```

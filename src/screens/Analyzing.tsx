@@ -5,7 +5,7 @@ import { buildSession } from '../domain/session'
 import { buildPlan } from '../domain/recommend/engine'
 import { hasBlocking } from '../domain/quality'
 import { data } from '../data/repo'
-import { modelVersion } from '../pose/landmarker'
+import { POSE_MODEL, modelVersion } from '../pose/landmarker'
 import { useDraft, useSettings } from '../state/stores'
 import { Button, Screen, cx } from '../components/ui'
 
@@ -33,8 +33,9 @@ export function Analyzing() {
           side: side?.record,
           checkinId: draft.checkin?.id,
           imagesSaved: false,
-          modelVersion: modelVersion(settings.model),
+          modelVersion: modelVersion(POSE_MODEL),
         })
+        session.captureMode = draft.mode
         setDone(3)
         const [profile, logs] = await Promise.all([data.getProfile(), data.listLogs()])
         const plan = buildPlan({
@@ -58,7 +59,11 @@ export function Analyzing() {
         setDone(5)
         // 画像を保存しない設定でも、アプリを開いている間は補正し直せるよう下書きを残す
         draft.setEditing(session.id)
-        navigate(`/session/${session.id}`, { replace: true })
+        if (draft.mode === 'precise') {
+          // 高精度モードは、続けて意識した姿勢も撮る（撮影画面の「あとで」で結果へ進める）
+          draft.startConscious(session.id)
+          navigate('/measure/conscious/capture/front', { replace: true })
+        } else navigate(`/session/${session.id}`, { replace: true })
       } catch (e) {
         setError(e instanceof Error ? e.message : '保存できませんでした')
       }

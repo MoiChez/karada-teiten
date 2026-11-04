@@ -48,9 +48,15 @@ export async function prepareFromFile(file: Blob): Promise<PreparedImage> {
 
 /** カメラの映像から 1 枚切り出す（鏡像にはしない） */
 export async function prepareFromVideo(video: HTMLVideoElement): Promise<PreparedImage> {
-  const canvas = drawScaled(video, video.videoWidth, video.videoHeight)
-  return finish(canvas)
+  return finish(grabVideoFrame(video))
 }
+
+/** 映像の今のコマをすぐに切り出す（続けて撮るときに間隔を保つため、圧縮はあとで prepareFromCanvas で行う） */
+export function grabVideoFrame(video: HTMLVideoElement): HTMLCanvasElement {
+  return drawScaled(video, video.videoWidth, video.videoHeight)
+}
+
+export const prepareFromCanvas = finish
 
 /** 短辺 256px に縮小したグレースケールで、輝度の平均・標準偏差・ラプラシアン分散を求める */
 export function computeImageStats(canvas: HTMLCanvasElement): ImageStats {

@@ -1,6 +1,6 @@
 // 画面をまたぐ状態。撮影中の下書き（メモリのみ）と設定
 import { create } from 'zustand'
-import type { AppSettings, CheckIn, Plane, PlaneRecord } from '../domain/types'
+import type { AppSettings, CaptureMode, CheckIn, Plane, PlaneRecord } from '../domain/types'
 import { DEFAULT_SETTINGS } from '../data/db'
 import { data } from '../data/repo'
 
@@ -9,8 +9,6 @@ export interface PlaneDraft {
   /** 代表の写真（保存・表示に使う） */
   imageBlob: Blob
   imageUrl: string
-  /** 複数枚撮りのすべての写真（再検出に使う。保存はしない） */
-  frameBlobs?: Blob[]
   /** 撮影について利用者に伝えること（平均に使えなかった枚数など） */
   notice?: string
 }
@@ -31,7 +29,10 @@ interface DraftState {
   checkin?: CheckIn
   /** 保存済みセッションを補正し直している場合の ID */
   editingSessionId?: string
+  /** いつもの姿勢の測定のモード（撮影ガイドで選ぶ） */
+  mode: CaptureMode
   conscious: ConsciousDraft
+  setMode: (m: CaptureMode) => void
   setPlane: (plane: Plane, draft: PlaneDraft, pose?: Pose) => void
   updateRecord: (plane: Plane, record: PlaneRecord, pose?: Pose) => void
   removePlane: (plane: Plane) => void
@@ -45,7 +46,9 @@ interface DraftState {
 const revoke = (d: PlaneDraft | undefined) => d && URL.revokeObjectURL(d.imageUrl)
 
 export const useDraft = create<DraftState>((set, get) => ({
+  mode: 'precise',
   conscious: {},
+  setMode: (mode) => set({ mode }),
   setPlane: (plane, draft, pose = 'habitual') => {
     const prev = pose === 'habitual' ? get()[plane] : get().conscious[plane]
     if (prev && prev.imageUrl !== draft.imageUrl) URL.revokeObjectURL(prev.imageUrl)

@@ -3,6 +3,9 @@ import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision'
 import type { Landmark } from '../domain/types'
 
 export type ModelKind = 'full' | 'heavy'
+
+/** 測定に使うモデル（シンプル・高精度のどちらのモードでも高精度モデル） */
+export const POSE_MODEL: ModelKind = 'heavy'
 type Mode = 'IMAGE' | 'VIDEO'
 
 const TASKS_VISION_VERSION = '1.2.0'
@@ -85,7 +88,7 @@ function pick(landmarks: { x: number; y: number; z: number; visibility?: number 
   }
 }
 
-export async function detectImage(source: HTMLCanvasElement | HTMLImageElement | ImageBitmap, model: ModelKind): Promise<DetectionResult> {
+export async function detectImage(source: HTMLCanvasElement | HTMLImageElement | HTMLVideoElement | ImageBitmap, model: ModelKind): Promise<DetectionResult> {
   const lm = await getLandmarker(model, 'IMAGE')
   const r = lm.detect(source)
   try {

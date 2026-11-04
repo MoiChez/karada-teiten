@@ -66,17 +66,18 @@ describe('複数枚撮りの平均', () => {
 })
 
 describe('複数枚撮りの判定', () => {
-  it('ぶれが想定より小さいときは、想定値を √枚数 で割ったばらつきを使う', () => {
+  it('平均しても、判定の幅は想定値より狭めない（続けて撮っても服や体格による推定のずれは減らないため）', () => {
     const base = frontPose({ leftShoulderDrop: 20 })
     const single = record('front', base)
-    const rec = burstRecord([base, transform(base, { dx: 20 }), transform(base, { dx: -20, scale: 1.02 })])
-    expect(burstSigmaFraction(rec.burst)).toBeCloseTo(LANDMARK_SIGMA_FRACTION / Math.sqrt(3), 6)
-    const u1 = metric(single, 'front_shoulder_tilt').uncertainty!
-    const u3 = metric(rec, 'front_shoulder_tilt').uncertainty!
-    expect(u3 / u1).toBeCloseTo(1 / Math.sqrt(3), 1)
+    const frames = [0, 1, 2, 3, 4].map((k) => transform(base, { dx: k * 6, noise: 2, seed: k + 1 }))
+    const rec = burstRecord(frames)
+    expect(burstSigmaFraction(rec.burst)).toBe(LANDMARK_SIGMA_FRACTION)
+    expect(metric(rec, 'front_shoulder_tilt').uncertainty!).toBeCloseTo(metric(single, 'front_shoulder_tilt').uncertainty!, 1)
+    // 写真ごとの揺れが想定より大きくても、平均した後の揺れが想定以下なら想定値のまま
+    expect(burstSigmaFraction({ ...rec.burst, spreadFrac: 0.008 })).toBe(LANDMARK_SIGMA_FRACTION)
   })
 
-  it('ぶれが想定より大きいときは、実測のぶれを使う', () => {
+  it('平均した後の揺れでも想定値を超えるときは、判定の幅を広げる', () => {
     const rec = { ...record('front', frontPose()), burst: { frames: [frontPose(), frontPose()], repIndex: 0, attempted: 2, spreadFrac: 0.02 } }
     expect(burstSigmaFraction(rec.burst)).toBeCloseTo(0.02 / Math.sqrt(2), 6)
     const single = record('front', frontPose())

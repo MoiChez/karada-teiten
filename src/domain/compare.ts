@@ -1,6 +1,6 @@
 // 2 回の測定の比較と、推移・行動記録のまとめ
 import type { AssessmentSession, CheckIn, ComputedMetric, MetricKey, RoutineLog, TraitKey } from './types'
-import { COMPARE_WARN, NOTICEABLE_K } from './constants'
+import { COMPARE_WARN, NOTICEABLE_K, PRECISE_SHOTS } from './constants'
 import { fmtAbs, fmtValue } from './format'
 import { prefersTowardZero } from './metrics'
 import { correctedSet } from './session'
@@ -230,6 +230,13 @@ export function conditionWarnings(a: AssessmentSession, b: AssessmentSession): C
     if (plane === 'side' && ra.imageMetadata.facing && rb.imageMetadata.facing && ra.imageMetadata.facing !== rb.imageMetadata.facing) {
       w.push({ key: 'side_facing', message: '側面の向き（左向き / 右向き）が前回と逆です。左右の半身で値が違う可能性があります。' })
     }
+  }
+  if (a.captureMode && b.captureMode && a.captureMode !== b.captureMode) {
+    const name = (m: string) => (m === 'precise' ? '高精度モード' : 'シンプルモード')
+    w.push({
+      key: 'mode',
+      message: `前回は${name(a.captureMode)}、今回は${name(b.captureMode)}で測りました。高精度モードは ${PRECISE_SHOTS} 枚の平均なので、値の揺れが小さくなっています。`,
+    })
   }
   if (a.imagesSaved !== b.imagesSaved) {
     w.push({ key: 'images', message: `${a.imagesSaved ? '今回' : '前回'}の写真は保存されていないため、写真の比較はできません（骨格で比べます）。` })

@@ -602,13 +602,14 @@ export function planeInputFrom(record: PlaneRecord, useCorrected: boolean): Plan
 }
 
 /**
- * 判定に使う点の誤差（H 比、1σ）。1 枚なら想定値。
- * 複数枚の平均なら、実測した 1 枚あたりのぶれと想定値の大きいほうを √枚数 で割る
- * （平均でぶれは小さくなるが、前提より小さいぶれは繰り返しでは見えない誤差を見落とすおそれがあるため使わない）
+ * 判定に使う点の誤差（H 比、1σ）。想定値を下限にする。
+ * 続けて撮った写真の平均で小さくなるのは、写真ごとの点の揺れだけ。服や体格による推定のずれは
+ * 何枚撮っても減らないため、平均しても想定値より小さくはしない。
+ * 平均した後の揺れ（1 枚あたりの揺れ ÷ √枚数）でも想定値を超えるときだけ、それを使う
  */
 export function burstSigmaFraction(b: BurstInfo | undefined): number {
   if (!b || b.frames.length < 2) return LANDMARK_SIGMA_FRACTION
-  return Math.max(b.spreadFrac ?? 0, LANDMARK_SIGMA_FRACTION) / Math.sqrt(b.frames.length)
+  return Math.max(LANDMARK_SIGMA_FRACTION, (b.spreadFrac ?? 0) / Math.sqrt(b.frames.length))
 }
 
 /** 各撮影の点に手動補正を反映する（平均に加えた補正と同じだけ動かす） */
