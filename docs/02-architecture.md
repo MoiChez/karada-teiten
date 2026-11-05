@@ -35,7 +35,8 @@
 | 状態 | Zustand | 撮影フローの下書き（画像・ランドマーク・補正）を画面間で受け渡す |
 | 保存 | Dexie（IndexedDB） | スキーマ版管理とインデックス検索が簡単 |
 | 姿勢推定 | @mediapipe/tasks-vision（PoseLandmarker） | 指定どおり。WASM とモデルを自サイトから配信 |
-| 3D | three + @react-three/fiber + drei（OrbitControls） | 3D 画面だけ遅延読み込みして初回表示を軽くする |
+| 3D | three + @react-three/fiber + drei（OrbitControls・環境光・接地影） | 3D 画面だけ遅延読み込みして初回表示を軽くする |
+| 人体モデル | Blender 5.2 + MPFB 2 で作った GLB（CC0） | 作るときだけ使う道具。アプリは GLB を読むだけで、Blender とはつながない |
 | グラフ | Recharts | 推移グラフ（折れ線）のみ |
 | PWA | vite-plugin-pwa（Workbox） | アプリ本体は事前キャッシュ、モデルと WASM は初回利用時にキャッシュ |
 | ルーティング | react-router（HashRouter） | GitHub Pages でリロードしても 404 にならない |
@@ -87,6 +88,7 @@ src/
     compare.ts      比較・推移
     recommend/      メニュー集・提案エンジン・習慣アドバイス
     fusion3d.ts     2 視点からの簡易 3D
+  three/          3D の人体（マネキン）を測った姿勢に曲げる
   pose/           MediaPipe と画像処理
   data/           Dexie・リポジトリ・エクスポート/インポート
   state/          Zustand ストア

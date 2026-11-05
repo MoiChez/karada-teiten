@@ -1,0 +1,242 @@
+// マネキン（MPFB の標準の人体、tools/blender/make_mannequins.py で作ったもの）を、
+// 正面と横向きの写真から合成した関節の位置（fusion3d）の「向き」に合わせて曲げる。
+// 骨の長さと体の形は標準のまま（体型は推定しない）。docs/07 の 3 章
+import * as THREE from 'three'
+import type { Pose3D, Vec3 } from '../domain/fusion3d'
+import type { BodyArea, UserProfile } from '../domain/types'
+
+export type MannequinKind = 'male' | 'female' | 'neutral'
+
+export const MANNEQUIN_LABELS: Record<MannequinKind, string> = {
+  male: '標準の男性の体',
+  female: '標準の女性の体',
+  neutral: '男女の中間の標準の体',
+}
+
+/** プロフィールの性別から体のモデルを選ぶ（未回答・その他は中間） */
+export function mannequinKindOf(sex: UserProfile['sex'] | undefined): MannequinKind {
+  return sex === 'male' ? 'male' : sex === 'female' ? 'female' : 'neutral'
+}
+
+/** MediaPipe の点と、その関節が付け根になる骨 */
+const JOINT_BONE: Record<number, string> = {
+  11: 'upperarm_l',
+  12: 'upperarm_r',
+  13: 'lowerarm_l',
+  14: 'lowerarm_r',
+  15: 'hand_l',
+  16: 'hand_r',
+  23: 'thigh_l',
+  24: 'thigh_r',
+  25: 'calf_l',
+  26: 'calf_r',
+  27: 'foot_l',
+  28: 'foot_r',
+}
+/** 骨の子として置いた目印（鼻・耳・かかと・つま先） */
+const MARKERS = [0, 7, 8, 29, 30, 31, 32]
+
+export interface PoseFit {
+  /** 体の高さ（耳〜かかと）を 1 にする倍率 */
+  scale: number
+  /** 向きを合わせた部位（説明・テスト用） */
+  fitted: string[]
+}
+
+const v = (p: Vec3) => new THREE.Vector3(p.x, p.y, p.z)
+
+/** 各マネキンの最初の姿勢（骨ごとの回転） */
+const REST = new WeakMap<THREE.Object3D, Map<string, THREE.Quaternion>>()
+const mid = (a: THREE.Vector3, b: THREE.Vector3) => a.clone().add(b).multiplyScalar(0.5)
+
+/** 骨を、ワールド座標での回転 dq だけ回す */
+function rotateWorld(bone: THREE.Object3D, dq: THREE.Quaternion) {
+  const parentQ = new THREE.Quaternion()
+  bone.parent?.getWorldQuaternion(parentQ)
+  const worldQ = bone.getWorldQuaternion(new THREE.Quaternion())
+  bone.quaternion.copy(parentQ.invert().multiply(dq.clone().multiply(worldQ)))
+  bone.updateMatrixWorld(true)
+}
+
+function swing(from: THREE.Vector3, to: THREE.Vector3) {
+  return new THREE.Quaternion().setFromUnitVectors(from.clone().normalize(), to.clone().normalize())
+}
+
+/** 主軸 a（正規化）と副軸 b（a に直交化）から作る正規直交基底 */
+function frame(a: THREE.Vector3, b: THREE.Vector3) {
+  const x = a.clone().normalize()
+  const y = b.clone().sub(x.clone().multiplyScalar(b.dot(x))).normalize()
+  const z = new THREE.Vector3().crossVectors(x, y)
+  return new THREE.Matrix4().makeBasis(x, y, z)
+}
+
+/** 基底 cur を基底 tgt に重ねる回転 */
+function frameRotation(curA: THREE.Vector3, curB: THREE.Vector3, tgtA: THREE.Vector3, tgtB: THREE.Vector3) {
+  const c = frame(curA, curB)
+  const t = frame(tgtA, tgtB)
+  return new THREE.Quaternion().setFromRotationMatrix(t.multiply(c.transpose()))
+}
+
+/**
+ * root（GLB の scene の複製）を pose に合わせる。何度呼んでもよい（毎回、最初の姿勢に戻してから曲げる）。
+ * 位置は、両足首の中点が pose の両足首の中点に重なるように置く
+ */
+export function poseMannequin(root: THREE.Object3D, pose: Pose3D): PoseFit {
+  const bones = new Map<string, THREE.Object3D>()
+  root.traverse((o) => {
+    if ((o as THREE.Bone).isBone || o.name.startsWith('lm_')) bones.set(o.name, o)
+  })
+  // 最初の姿勢を覚えておき、毎回そこから曲げる
+  let rest = REST.get(root)
+  if (!rest) REST.set(root, (rest = new Map()))
+  for (const [name, b] of bones) {
+    if (!rest.has(name)) rest.set(name, b.quaternion.clone())
+    b.quaternion.copy(rest.get(name)!)
+  }
+  root.position.set(0, 0, 0)
+  root.scale.setScalar(1)
+  root.quaternion.identity()
+  root.updateMatrixWorld(true)
+
+  const P = (i: number) => {
+    const name = JOINT_BONE[i] ?? (MARKERS.includes(i) ? `lm_${i}` : null)
+    const o = name ? bones.get(name) : undefined
+    if (!o) throw new Error(`mannequin: point ${i} not found`)
+    return o.getWorldPosition(new THREE.Vector3())
+  }
+  const T = (i: number) => (pose.points[i] ? v(pose.points[i]!) : null)
+  const has = (...ids: number[]) => ids.every((i) => pose.points[i])
+  const B = (name: string) => {
+    const b = bones.get(name)
+    if (!b) throw new Error(`mannequin: bone ${name} not found`)
+    return b
+  }
+  const fitted: string[] = []
+
+  // 体の高さ（耳の中点〜かかとの中点）。最初の姿勢で測る
+  const Hm = mid(P(7), P(8)).y - mid(P(29), P(30)).y
+
+  // 骨盤: 左右の股関節を結ぶ線（前後の傾きは測れないので変えない）
+  if (has(23, 24)) {
+    rotateWorld(B('pelvis'), swing(P(23).sub(P(24)), T(23)!.sub(T(24)!)))
+    fitted.push('pelvis')
+  }
+
+  // 胴: 股関節の中点→肩の中点の向きと、肩の線。背骨の 3 本に分けて少しずつ曲げる
+  if (has(11, 12, 23, 24)) {
+    const tUp = mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!))
+    const tSide = T(11)!.sub(T(12)!)
+    const parts: [string, number][] = [
+      ['spine_01', 1 / 3],
+      ['spine_02', 1 / 2],
+      ['spine_03', 1],
+    ]
+    for (const [name, frac] of parts) {
+      const cUp = mid(P(11), P(12)).sub(mid(P(23), P(24)))
+      const cSide = P(11).sub(P(12))
+      const q = frameRotation(cUp, cSide, tUp, tSide)
+      rotateWorld(B(name), new THREE.Quaternion().slerp(q, frac))
+    }
+    fitted.push('trunk')
+  }
+
+  // 首と頭: 肩の中点→耳の中点の向き、耳の線と鼻の向き（首と頭の付け根がずれているので数回くり返す）
+  if (has(7, 8, 11, 12)) {
+    const tNeck = mid(T(7)!, T(8)!).sub(mid(T(11)!, T(12)!))
+    for (let k = 0; k < 3; k++) {
+      rotateWorld(B('neck_01'), swing(mid(P(7), P(8)).sub(mid(P(11), P(12))), tNeck))
+      if (has(0)) {
+        const tEar = T(7)!.sub(T(8)!)
+        const tFwd = T(0)!.sub(mid(T(7)!, T(8)!))
+        rotateWorld(B('head'), frameRotation(P(7).sub(P(8)), P(0).sub(mid(P(7), P(8))), tEar, tFwd))
+      }
+    }
+    fitted.push(has(0) ? 'neck_head' : 'neck')
+  }
+
+  // 腕と脚: 関節から次の関節への向き
+  const limb = (bone: string, a: number, b: number, fallback: THREE.Vector3) => {
+    const dir = has(a, b) ? T(b)!.sub(T(a)!) : fallback
+    rotateWorld(B(bone), swing(P(b).sub(P(a)), dir))
+    if (has(a, b)) fitted.push(bone)
+  }
+  const down = new THREE.Vector3(0, -1, 0)
+  limb('upperarm_l', 11, 13, down)
+  limb('lowerarm_l', 13, 15, down)
+  limb('upperarm_r', 12, 14, down)
+  limb('lowerarm_r', 14, 16, down)
+  limb('thigh_l', 23, 25, down)
+  limb('calf_l', 25, 27, down)
+  limb('thigh_r', 24, 26, down)
+  limb('calf_r', 26, 28, down)
+  // 足: かかと→つま先の向き
+  for (const [bone, heel, toe] of [
+    ['foot_l', 29, 31],
+    ['foot_r', 30, 32],
+  ] as const) {
+    if (!has(heel, toe)) continue
+    rotateWorld(B(bone), swing(P(toe).sub(P(heel)), T(toe)!.sub(T(heel)!)))
+    fitted.push(bone)
+  }
+
+  // 大きさと位置: 体の高さを 1 にし、両足首の中点を合わせる
+  const scale = 1 / Hm
+  const ankle = mid(P(27), P(28))
+  const target = has(27, 28) ? mid(T(27)!, T(28)!) : new THREE.Vector3()
+  root.scale.setScalar(scale)
+  root.position.copy(target.sub(ankle.multiplyScalar(scale)))
+  root.updateMatrixWorld(true)
+  return { scale, fitted }
+}
+
+/** 部位ごとの色の重み（各頂点の骨の重みから求める。関節は隣り合う 2 本の骨の重みの重なり） */
+const AREA_WEIGHT: Partial<Record<BodyArea, (w: (bone: string) => number) => number>> = {
+  neck: (w) => w('neck_01'),
+  shoulders: (w) => w('clavicle_l') + w('clavicle_r') + 4 * w('upperarm_l') * w('clavicle_l') + 4 * w('upperarm_r') * w('clavicle_r'),
+  upper_back: (w) => w('spine_03') + w('spine_02'),
+  lower_back: (w) => w('spine_01'),
+  hips: (w) => w('pelvis') + 4 * w('pelvis') * (w('thigh_l') + w('thigh_r')),
+  knees: (w) => 4 * (w('thigh_l') * w('calf_l') + w('thigh_r') * w('calf_r')),
+  feet: (w) => w('foot_l') + w('foot_r') + w('ball_l') + w('ball_r'),
+}
+
+/** 色づけの最大の濃さ（体の陰影が見えるように、部位の色で塗りつぶさない） */
+const ACCENT_MAX = 0.75
+
+/** 体の色を頂点ごとに付ける（highlight の部位をなめらかに色づける） */
+export function paintMannequin(root: THREE.Object3D, base: string, accent: string, highlight: Set<BodyArea>) {
+  const c0 = new THREE.Color(base)
+  const c1 = new THREE.Color(accent)
+  root.traverse((o) => {
+    const mesh = o as THREE.SkinnedMesh
+    if (!mesh.isSkinnedMesh) return
+    const g = mesh.geometry
+    const idx = g.getAttribute('skinIndex')
+    const wt = g.getAttribute('skinWeight')
+    const n = g.getAttribute('position').count
+    const names = mesh.skeleton.bones.map((b) => b.name)
+    let color = g.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (!color || color.count !== n) {
+      color = new THREE.BufferAttribute(new Float32Array(n * 3), 3)
+      g.setAttribute('color', color)
+    }
+    const fns = [...highlight].map((a) => AREA_WEIGHT[a]).filter((f): f is NonNullable<typeof f> => !!f)
+    const weights = new Map<string, number>()
+    const w = (bone: string) => weights.get(bone) ?? 0
+    const c = new THREE.Color()
+    for (let i = 0; i < n; i++) {
+      let h = 0
+      if (fns.length) {
+        weights.clear()
+        for (let k = 0; k < 4; k++) {
+          const wk = wt.getComponent(i, k)
+          if (wk > 0) weights.set(names[idx.getComponent(i, k)], (weights.get(names[idx.getComponent(i, k)]) ?? 0) + wk)
+        }
+        for (const f of fns) h = Math.max(h, f(w))
+      }
+      c.copy(c0).lerp(c1, ACCENT_MAX * Math.min(1, h))
+      color.setXYZ(i, c.r, c.g, c.b)
+    }
+    color.needsUpdate = true
+  })
+}

@@ -18,7 +18,7 @@
 - 分析結果（観測された事実 / 考えられる要因 / 試してみるとよい行動 を分けて表示）
 - 過去比較（前回・日付指定・2 件選択・7 / 30 / 90 日の推移、条件差の注意、行動記録との関連）
 - ルールベースの運動・ストレッチ提案と実施記録
-- 正面と横向きから合成した簡易 3D と、過去との重ね表示
+- 正面と横向きから合成した関節の向きを、標準の人体（マネキン）にのせた 3D と、過去との重ね表示
 - 端末内保存（写真は同意した場合のみ）、JSON / CSV の書き出し、JSON の読み込み
 - PWA（ホーム画面に追加、オフライン）
 
@@ -82,4 +82,5 @@ tests         単体テスト（Vitest）
 ## ライセンスと出典
 
 - 骨格推定モデル: MediaPipe Pose Landmarker（Google、Apache License 2.0）。`public/models/` に同梱
+- 3D の人体モデル: Blender と MPFB 2（MakeHuman）で作成。出力は CC0。`public/models/mannequin-v1-*.glb`、作り方は `tools/blender/make_mannequins.py`
 - フォント: IBM Plex Sans JP（SIL Open Font License）

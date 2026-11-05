@@ -1,14 +1,18 @@
-// 3D ビュー（遅延読み込み）。正面と横向きの 2 枚から合成した簡易 3D を表示する
-import { useMemo, useRef, useState, type RefObject } from 'react'
+// 3D ビュー（遅延読み込み）。正面と横向きの 2 枚から合成した関節の向きを、標準の人体（マネキン）にのせて表示する。
+// 「骨格」に切り替えると、合成した関節の位置そのもの（棒と点）を表示する
+import { Component, Suspense, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router'
-import { Canvas, useThree } from '@react-three/fiber'
-import { Line, OrbitControls } from '@react-three/drei'
+import { Canvas, useLoader, useThree } from '@react-three/fiber'
+import { ContactShadows, Environment, Lightformer, Line, OrbitControls, useProgress } from '@react-three/drei'
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { AssessmentSession, BodyArea } from '../domain/types'
 import { fuse3D, type Pose3D, type Vec3 } from '../domain/fusion3d'
 import { fmtDate } from '../domain/format'
-import { useSession } from '../data/hooks'
+import { useProfile, useSession } from '../data/hooks'
+import { MANNEQUIN_LABELS, mannequinKindOf, paintMannequin, poseMannequin, type MannequinKind } from '../three/mannequin'
 import { PostureGrid } from '../components/PoseViews'
 import { Notice, Screen, Segmented, cx } from '../components/ui'
 
@@ -48,6 +52,8 @@ const JOINTS: { i: number; areas: BodyArea[] }[] = [
 const INK = '#3d555c'
 const HIGHLIGHT = '#e3a13b'
 const PAST = '#7c8d93'
+/** マネキンの色（明るいグレー） */
+const BODY = '#c9d2d4'
 
 function point(p: Pose3D, k: Bone['a']): Vec3 | null {
   if (typeof k === 'number') return p.points[k]
@@ -64,6 +70,8 @@ function point(p: Pose3D, k: Bone['a']): Vec3 | null {
 }
 
 const v3 = (p: Vec3) => new THREE.Vector3(p.x, p.y, p.z)
+
+// ---------- 骨格（合成した関節の位置そのもの） ----------
 
 function Capsule({ from, to, r, color, opacity = 1 }: { from: Vec3; to: Vec3; r: number; color: string; opacity?: number }) {
   const { position, quaternion, length } = useMemo(() => {
@@ -83,7 +91,7 @@ function Capsule({ from, to, r, color, opacity = 1 }: { from: Vec3; to: Vec3; r:
   )
 }
 
-function Mannequin({ pose, highlight }: { pose: Pose3D; highlight: Set<BodyArea> }) {
+function SkeletonFigure({ pose, highlight }: { pose: Pose3D; highlight: Set<BodyArea> }) {
   const head = point(pose, 'headTop')
   return (
     <group>
@@ -115,7 +123,7 @@ function Mannequin({ pose, highlight }: { pose: Pose3D; highlight: Set<BodyArea>
   )
 }
 
-function Ghost({ pose }: { pose: Pose3D }) {
+function SkeletonGhost({ pose }: { pose: Pose3D }) {
   return (
     <group>
       {BONES.map((b, i) => {
@@ -126,6 +134,54 @@ function Ghost({ pose }: { pose: Pose3D }) {
       })}
     </group>
   )
+}
+
+// ---------- 人体（標準の体を関節の向きに合わせて曲げたもの） ----------
+
+const mannequinUrl = (k: MannequinKind) => `${import.meta.env.BASE_URL}models/mannequin-v1-${k}.glb`
+
+function BodyModel({ kind, pose, highlight, tone }: { kind: MannequinKind; pose: Pose3D; highlight: Set<BodyArea>; tone: 'current' | 'past' }) {
+  const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
+  const root = useMemo(() => {
+    const r = cloneSkinned(gltf.scene)
+    r.traverse((o) => {
+      const m = o as THREE.SkinnedMesh
+      if (!m.isSkinnedMesh) return
+      // 曲げた後の形が元の範囲からはみ出しても消えないように
+      m.frustumCulled = false
+      m.geometry = m.geometry.clone()
+      m.material =
+        tone === 'current'
+          ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0 })
+          : new THREE.MeshStandardMaterial({ color: PAST, roughness: 0.8, transparent: true, opacity: 0.28, depthWrite: false })
+    })
+    return r
+  }, [gltf, tone])
+  useMemo(() => poseMannequin(root, pose), [root, pose])
+  useMemo(() => {
+    if (tone === 'current') paintMannequin(root, BODY, HIGHLIGHT, highlight)
+  }, [root, highlight, tone])
+  return <primitive object={root} />
+}
+
+/** 体のモデルを読み込めなかったとき（初回にオフラインなど）、骨格の表示に切り替える */
+class LoadBoundary extends Component<{ onError: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidCatch() {
+    this.props.onError()
+  }
+  render() {
+    return this.state.failed ? null : this.props.children
+  }
+}
+
+function LoadingNote() {
+  const { active } = useProgress()
+  if (!active) return null
+  return <p className="pointer-events-none absolute inset-x-0 top-3 text-center text-sm text-ink-3">体のモデルを読み込んでいます…</p>
 }
 
 const VIEWS = {
@@ -164,17 +220,20 @@ export default function View3D() {
   const vs = params.get('vs') ?? undefined
   const session = useSession(id)
   const past = useSession(vs)
-  // 比較相手の読み込みが終わるまで待ってから描く（重ね表示を初期状態にするため）
-  if (session === undefined || (vs && past === undefined)) return <Screen title="3D ビュー" back={`/session/${id}`}>{null}</Screen>
+  const profile = useProfile()
+  // 比較相手とプロフィールの読み込みが終わるまで待ってから描く（重ね表示と体のモデルを初期状態にするため）
+  if (session === undefined || (vs && past === undefined) || profile === undefined) return <Screen title="3D ビュー" back={`/session/${id}`}>{null}</Screen>
   if (!session) return <Navigate to="/history" replace />
-  return <View3DBody s={session} past={past ?? undefined} />
+  return <View3DBody s={session} past={past ?? undefined} kind={mannequinKindOf(profile?.sex)} />
 }
 
-function View3DBody({ s, past }: { s: AssessmentSession; past?: AssessmentSession }) {
+function View3DBody({ s, past, kind }: { s: AssessmentSession; past?: AssessmentSession; kind: MannequinKind }) {
   const pose = useMemo(() => fuse3D(s.front, s.side), [s])
   const pastPose = useMemo(() => (past ? fuse3D(past.front, past.side) : null), [past])
   const [show, setShow] = useState<'current' | 'past' | 'both'>(pastPose ? 'both' : 'current')
   const [view, setView] = useState<keyof typeof VIEWS>('oblique')
+  const [mode, setMode] = useState<'body' | 'skeleton'>('body')
+  const [loadFailed, setLoadFailed] = useState(false)
   const [highlightOn, setHighlightOn] = useState(true)
   const controls = useRef<OrbitControlsImpl | null>(null)
   const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -188,7 +247,9 @@ function View3DBody({ s, past }: { s: AssessmentSession; past?: AssessmentSessio
     () => new Set<BodyArea>(highlightOn ? topTraits.flatMap((t) => t.relatedAreas.slice(0, 2)).filter((a) => a !== 'whole_body') : []),
     [topTraits, highlightOn],
   )
+  const none = useMemo(() => new Set<BodyArea>(), [])
   const floorY = pose ? Math.min(...[29, 30, 31, 32].map((i) => pose.points[i]?.y ?? 0)) - 0.01 : 0
+  const body = mode === 'body' && !loadFailed
 
   return (
     <Screen title="3D ビュー" back={`/session/${s.id}`}>
@@ -217,18 +278,44 @@ function View3DBody({ s, past }: { s: AssessmentSession; past?: AssessmentSessio
               <Notice tone="info">横向きの写真がないため、奥行きは推定モデルの値を使っています。</Notice>
             </div>
           )}
+          {loadFailed && (
+            <div className="mt-2">
+              <Notice tone="info">体のモデルを読み込めなかったため、骨格で表示しています。通信できる状態で開き直すと表示されます。</Notice>
+            </div>
+          )}
           <div className="relative mt-3 h-[min(62dvh,520px)] overflow-hidden rounded-[var(--radius-panel)] bg-surface" style={{ touchAction: 'none' }}>
             <Canvas camera={{ position: [...VIEWS.oblique], fov: 35, near: 0.05, far: 50 }} dpr={[1, 2]} aria-label="姿勢の 3D 表示。ドラッグで回転、ピンチで拡大縮小できます">
-              <ambientLight intensity={0.75} />
-              <directionalLight position={[2, 3, 2]} intensity={1.2} />
-              <directionalLight position={[-2, 1.5, -1]} intensity={0.4} />
+              <ambientLight intensity={body ? 0.3 : 0.75} />
+              <directionalLight position={[2, 3, 2]} intensity={body ? 1.5 : 1.2} />
+              <directionalLight position={[-2, 1.5, -1.5]} intensity={body ? 0.55 : 0.4} />
+              {body && (
+                <Environment resolution={128}>
+                  <Lightformer form="rect" intensity={1.6} position={[2.5, 3, 3]} scale={[4, 3, 1]} />
+                  <Lightformer form="rect" intensity={0.7} position={[-3, 1.5, -2]} scale={[3, 2, 1]} />
+                  <Lightformer form="rect" intensity={0.9} position={[0, 4, 0]} rotation-x={Math.PI / 2} scale={[3, 3, 1]} />
+                </Environment>
+              )}
               <gridHelper args={[2, 20, '#cfd9d8', '#dfe7e6']} position={[0, floorY, 0]} />
               <Line points={[[0, floorY, 0], [0, 1.15, 0]]} color="#1c6e8c" lineWidth={1.5} dashed dashSize={0.03} gapSize={0.02} />
-              {(show === 'current' || show === 'both') && <Mannequin pose={pose} highlight={highlight} />}
-              {pastPose && (show === 'past' || show === 'both') && (show === 'past' ? <Mannequin pose={pastPose} highlight={new Set()} /> : <Ghost pose={pastPose} />)}
+              {body ? (
+                <LoadBoundary onError={() => setLoadFailed(true)}>
+                  <Suspense fallback={null}>
+                    {(show === 'current' || show === 'both') && <BodyModel kind={kind} pose={pose} highlight={highlight} tone="current" />}
+                    {pastPose && show === 'past' && <BodyModel kind={kind} pose={pastPose} highlight={none} tone="current" />}
+                    {pastPose && show === 'both' && <BodyModel kind={kind} pose={pastPose} highlight={none} tone="past" />}
+                    <ContactShadows position={[0, floorY + 0.002, 0]} opacity={0.4} scale={2} blur={2.2} far={1.2} resolution={512} />
+                  </Suspense>
+                </LoadBoundary>
+              ) : (
+                <>
+                  {(show === 'current' || show === 'both') && <SkeletonFigure pose={pose} highlight={highlight} />}
+                  {pastPose && (show === 'past' || show === 'both') && (show === 'past' ? <SkeletonFigure pose={pastPose} highlight={none} /> : <SkeletonGhost pose={pastPose} />)}
+                </>
+              )}
               <OrbitControls ref={controls} makeDefault target={[0, 0.5, 0]} enableDamping={!reduced} minDistance={0.8} maxDistance={6} />
               <ViewSetter view={view} controls={controls} />
             </Canvas>
+            {body && <LoadingNote />}
           </div>
           <div className="mt-3 grid grid-cols-4 gap-1.5" role="group" aria-label="視点">
             {(
@@ -250,8 +337,22 @@ function View3DBody({ s, past }: { s: AssessmentSession; past?: AssessmentSessio
               </button>
             ))}
           </div>
+          <div className="mt-4">
+            <Segmented
+              legend="表示"
+              value={loadFailed ? 'skeleton' : mode}
+              onChange={(m) => {
+                setMode(m)
+                if (m === 'body') setLoadFailed(false)
+              }}
+              options={[
+                { value: 'body', label: '人体' },
+                { value: 'skeleton', label: '骨格' },
+              ]}
+            />
+          </div>
           {pastPose && (
-            <div className="mt-4">
+            <div className="mt-2">
               <Segmented
                 legend="表示する姿勢"
                 value={show}
@@ -275,8 +376,12 @@ function View3DBody({ s, past }: { s: AssessmentSession; past?: AssessmentSessio
             </li>
             {pastPose && (
               <li className="flex items-center gap-2">
-                <svg aria-hidden width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke={PAST} strokeWidth="2" strokeDasharray="4 3" /></svg>
-                前回の姿勢
+                {body ? (
+                  <span aria-hidden className="size-3 rounded-full opacity-50" style={{ background: PAST }} />
+                ) : (
+                  <svg aria-hidden width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke={PAST} strokeWidth="2" strokeDasharray="4 3" /></svg>
+                )}
+                前回の姿勢{body ? '（半透明）' : ''}
               </li>
             )}
             <li className="flex items-center gap-2">
@@ -284,9 +389,15 @@ function View3DBody({ s, past }: { s: AssessmentSession; past?: AssessmentSessio
               足首の中央を通る鉛直線
             </li>
           </ul>
-          <p className="mt-3 text-sm text-ink-3">
-            正面と横向きの写真から合成した簡易的な 3D で、実際の体の形や骨の位置ではありません。大きさは体の高さを 1 としてそろえています。筋肉の状態や脂肪のつき方は表していません。
-          </p>
+          {body ? (
+            <p className="mt-3 text-sm text-ink-3">
+              体は{MANNEQUIN_LABELS[kind]}（プロフィールの性別から選んだ、全員に共通の形）で、正面と横向きの写真から合成した関節の向きだけを反映しています。あなたの体型・筋肉・脂肪のつき方や、骨・背骨の形は表していません。骨盤の前後の傾きと背中の丸みも反映していません。関節の位置そのものは「骨格」で見られます。
+            </p>
+          ) : (
+            <p className="mt-3 text-sm text-ink-3">
+              正面と横向きの写真から合成した関節の位置です。実際の骨の位置ではありません。大きさは体の高さを 1 としてそろえています。
+            </p>
+          )}
         </>
       )}
     </Screen>
