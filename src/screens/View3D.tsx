@@ -1,9 +1,9 @@
 // 3D ビュー（遅延読み込み）。正面と横向きの 2 枚から合成した関節の向きを、標準の人体（マネキン）にのせて表示する。
 // 「骨格」に切り替えると、合成した関節の位置そのもの（棒と点）を表示する
-import { Component, Suspense, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Suspense, useMemo, useRef, useState, type RefObject } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router'
 import { Canvas, useLoader, useThree } from '@react-three/fiber'
-import { ContactShadows, Environment, Lightformer, Line, OrbitControls, useProgress } from '@react-three/drei'
+import { ContactShadows, Environment, Lightformer, Line, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -13,6 +13,7 @@ import { fuse3D, type Pose3D, type Vec3 } from '../domain/fusion3d'
 import { fmtDate } from '../domain/format'
 import { useProfile, useSession } from '../data/hooks'
 import { MANNEQUIN_LABELS, mannequinKindOf, paintMannequin, poseMannequin, type MannequinKind } from '../three/mannequin'
+import { BODY_COLOR, LoadBoundary, LoadingNote, hasWebGL, mannequinUrl } from '../three/common'
 import { PostureGrid } from '../components/PoseViews'
 import { Notice, Screen, Segmented, cx } from '../components/ui'
 
@@ -52,8 +53,6 @@ const JOINTS: { i: number; areas: BodyArea[] }[] = [
 const INK = '#3d555c'
 const HIGHLIGHT = '#e3a13b'
 const PAST = '#7c8d93'
-/** マネキンの色（明るいグレー） */
-const BODY = '#c9d2d4'
 
 function point(p: Pose3D, k: Bone['a']): Vec3 | null {
   if (typeof k === 'number') return p.points[k]
@@ -138,8 +137,6 @@ function SkeletonGhost({ pose }: { pose: Pose3D }) {
 
 // ---------- 人体（標準の体を関節の向きに合わせて曲げたもの） ----------
 
-const mannequinUrl = (k: MannequinKind) => `${import.meta.env.BASE_URL}models/mannequin-v1-${k}.glb`
-
 function BodyModel({ kind, pose, highlight, tone }: { kind: MannequinKind; pose: Pose3D; highlight: Set<BodyArea>; tone: 'current' | 'past' }) {
   const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
   const root = useMemo(() => {
@@ -159,29 +156,9 @@ function BodyModel({ kind, pose, highlight, tone }: { kind: MannequinKind; pose:
   }, [gltf, tone])
   useMemo(() => poseMannequin(root, pose), [root, pose])
   useMemo(() => {
-    if (tone === 'current') paintMannequin(root, BODY, HIGHLIGHT, highlight)
+    if (tone === 'current') paintMannequin(root, BODY_COLOR, HIGHLIGHT, highlight)
   }, [root, highlight, tone])
   return <primitive object={root} />
-}
-
-/** 体のモデルを読み込めなかったとき（初回にオフラインなど）、骨格の表示に切り替える */
-class LoadBoundary extends Component<{ onError: () => void; children: ReactNode }, { failed: boolean }> {
-  state = { failed: false }
-  static getDerivedStateFromError() {
-    return { failed: true }
-  }
-  componentDidCatch() {
-    this.props.onError()
-  }
-  render() {
-    return this.state.failed ? null : this.props.children
-  }
-}
-
-function LoadingNote() {
-  const { active } = useProgress()
-  if (!active) return null
-  return <p className="pointer-events-none absolute inset-x-0 top-3 text-center text-sm text-ink-3">体のモデルを読み込んでいます…</p>
 }
 
 const VIEWS = {
@@ -203,15 +180,6 @@ function ViewSetter({ view, controls }: { view: keyof typeof VIEWS; controls: Re
     controls.current?.update()
   }
   return null
-}
-
-function hasWebGL() {
-  try {
-    const c = document.createElement('canvas')
-    return !!(c.getContext('webgl2') || c.getContext('webgl'))
-  } catch {
-    return false
-  }
 }
 
 export default function View3D() {

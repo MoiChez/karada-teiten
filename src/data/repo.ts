@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, db as defaultDb } from './db'
 import type { AppSettings, AssessmentSession, CheckIn, RecommendationPlan, RoutineLog, UserProfile } from '../domain/types'
 import { ALGORITHM_VERSION } from '../domain/constants'
 import { recomputeSession } from '../domain/session'
+import { upgradeGait, type GaitRecord } from '../domain/gait'
 
 export function repo(db: AppDB = defaultDb) {
   return {
@@ -127,6 +128,18 @@ export function repo(db: AppDB = defaultDb) {
       })
     },
 
+    // ---- 歩き方 ----
+    async listGaits(): Promise<GaitRecord[]> {
+      const list = await db.gaits.orderBy('createdAt').reverse().toArray()
+      return list.map(upgradeGait)
+    },
+    async getGait(id: string) {
+      const r = await db.gaits.get(id)
+      return r ? upgradeGait(r) : undefined
+    },
+    saveGait: (r: GaitRecord) => db.gaits.put(r),
+    deleteGait: (id: string) => db.gaits.delete(id),
+
     // ---- 記録 ----
     addLog: (l: RoutineLog) => db.routineLogs.put(l),
     listLogs: () => db.routineLogs.orderBy('date').toArray(),
@@ -137,8 +150,9 @@ export function repo(db: AppDB = defaultDb) {
 
     // ---- すべて削除 ----
     async wipeAll() {
-      await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings], async () => {
+      await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings, db.gaits], async () => {
         await Promise.all([
+          db.gaits.clear(),
           db.profile.clear(),
           db.assessments.clear(),
           db.images.clear(),

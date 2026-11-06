@@ -13,6 +13,22 @@
 | `checkins` | `id` | `date` | その日のコンディション |
 | `plans` | `id` | `generatedAt`, `basedOnAssessmentId` | RecommendationPlan |
 | `settings` | `key` | — | 設定（画像保存・セルフタイマー・前回選んだ撮り方など） |
+| `gaits` | `id` | `createdAt` | 歩き方の記録 GaitRecord（版 0.8 から。動画は保存せず、体の点の動きだけ） |
+
+### GaitRecord（[src/domain/gait.ts](../src/domain/gait.ts)）
+
+```ts
+{
+  id, createdAt, appVersion, modelVersion
+  source: 'camera' | 'upload'
+  footwear?: 'shoes' | 'socks' | 'barefoot'
+  video: { width, height, durationMs, frameCount, fps, quarterTurns, rollDeg? }
+  frames: { t: number; p: number[] }[]   // 人を検出できたコマ。p は 33 点 × [x, y, 見えている度合い]（小数 4 桁）
+  analysis: GaitAnalysis                 // algorithmVersion が古ければ frames から計算し直す
+}
+```
+
+JSON の書き出しに `gaits` として含める（ないファイルも読み込める）。
 
 ## 2. 主要な型
 

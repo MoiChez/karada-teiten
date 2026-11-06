@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Link } from 'react-router'
-import { Camera, ChevronRight, HeartPulse, Settings as SettingsIcon } from 'lucide-react'
+import { Camera, ChevronRight, Footprints, HeartPulse, Settings as SettingsIcon } from 'lucide-react'
 import { compareSessions } from '../domain/compare'
 import { buildPlan, reviewTiming } from '../domain/recommend/engine'
 import { routineById } from '../domain/recommend/routines'
@@ -157,6 +157,15 @@ export function Home() {
         </div>
         <ButtonLink to="/checkin" size="sm" variant="secondary">
           {todayCheckin ? '記録し直す' : '記録する'}
+        </ButtonLink>
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3">
+        <div className="flex items-center gap-2">
+          <Footprints aria-hidden className="size-5 text-measure" />
+          <span className="text-[15px]">歩き方を測る（試作）</span>
+        </div>
+        <ButtonLink to="/gait" size="sm" variant="secondary">
+          開く
         </ButtonLink>
       </div>
 

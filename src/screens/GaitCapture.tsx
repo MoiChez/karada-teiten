@@ -1,0 +1,419 @@
+// 歩き方の撮影（試作）。横から往復して歩く様子を撮り、撮り終わってから 1 コマずつ骨格を推定する。
+// 動画は保存しない（体の点の動きだけを保存する）
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router'
+import { ChevronLeft, FileVideo, Loader2, Video } from 'lucide-react'
+import { FOOTWEAR_LABELS, analyzeGait, fullBodyInFrame, gaitInputOf, turnsFromBody, type Footwear, type GaitRecord } from '../domain/gait'
+import { quarterTurnsOf, screenRollDeg } from '../domain/tilt'
+import type { DeviceTilt } from '../domain/types'
+import { APP_VERSION, newId } from '../domain/session'
+import { POSE_MODEL, detectImage, getLandmarker, modelVersion } from '../pose/landmarker'
+import { beep, speak, useDeviceTilt, vibrate } from '../pose/device'
+import { FILE_MAX_MS, detectRecorded, detectVideoFile, recordFrames, type DetectedClip, type Progress } from '../pose/gaitVideo'
+import { data } from '../data/repo'
+import { useGaits } from '../data/hooks'
+import { Button, Notice, Screen, Segmented, cx } from '../components/ui'
+
+type Phase = 'guide' | 'camera' | 'countdown' | 'recording' | 'analyzing' | 'failed'
+type CamState = 'starting' | 'live' | 'denied' | 'unavailable' | 'insecure' | 'error'
+
+/** 押してから撮り始めるまで（歩き始める位置へ移るため）と、撮る長さ */
+const COUNTDOWN_SEC = 10
+const RECORD_MS = 15_000
+
+function screenAngle() {
+  const a = screen.orientation?.angle
+  if (typeof a === 'number') return a
+  const legacy = (window as unknown as { orientation?: number }).orientation
+  return typeof legacy === 'number' ? (legacy + 360) % 360 : 0
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+export function GaitCapture() {
+  const navigate = useNavigate()
+  const gaits = useGaits()
+  const [phase, setPhase] = useState<Phase>('guide')
+  const [footwear, setFootwear] = useState<Footwear | null>(null)
+  const [cam, setCam] = useState<CamState>('starting')
+  const [count, setCount] = useState(0)
+  const [elapsed, setElapsed] = useState(0)
+  const [progress, setProgress] = useState<Progress | null>(null)
+  const [failure, setFailure] = useState<string[]>([])
+  const [live, setLive] = useState<'none' | 'partial' | 'ok' | null>(null)
+  const [vdims, setVdims] = useState<{ w: number; h: number } | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const stopRef = useRef(false)
+  const bodyTurns = useRef<number | null>(null)
+  const { tilt, latest, needsPermission, request } = useDeviceTilt()
+
+  // 足元は前回と同じものを初期値にする
+  const shownFootwear: Footwear = footwear ?? gaits?.[0]?.footwear ?? 'shoes'
+  const cameraOn = phase === 'camera' || phase === 'countdown' || phase === 'recording'
+
+  // カメラ
+  useEffect(() => {
+    if (!cameraOn) return
+    let stopped = false
+    async function start() {
+      if (!window.isSecureContext) return setCam('insecure')
+      if (!navigator.mediaDevices?.getUserMedia) return setCam('unavailable')
+      setCam('starting')
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        })
+        if (stopped) return stream.getTracks().forEach((t) => t.stop())
+        streamRef.current = stream
+        const v = videoRef.current
+        if (v) {
+          v.srcObject = stream
+          await v.play().catch(() => undefined)
+        }
+        setCam('live')
+      } catch (e) {
+        const name = e instanceof DOMException ? e.name : ''
+        setCam(name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : name === 'NotFoundError' || name === 'OverconstrainedError' ? 'unavailable' : 'error')
+      }
+    }
+    start()
+    return () => {
+      stopped = true
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+  }, [cameraOn])
+
+  // 撮影中は画面が消えないようにする（対応ブラウザのみ）
+  useEffect(() => {
+    if (!cameraOn) return
+    let lock: { release: () => Promise<void> } | null = null
+    const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }
+    nav.wakeLock
+      ?.request('screen')
+      .then((l) => (lock = l))
+      .catch(() => undefined)
+    return () => {
+      lock?.release().catch(() => undefined)
+    }
+  }, [cameraOn])
+
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || cam !== 'live') return
+    const update = () => v.videoWidth && setVdims({ w: v.videoWidth, h: v.videoHeight })
+    update()
+    v.addEventListener('loadedmetadata', update)
+    v.addEventListener('resize', update)
+    return () => {
+      v.removeEventListener('loadedmetadata', update)
+      v.removeEventListener('resize', update)
+    }
+  }, [cam])
+
+  // 全身が入っているか・体の向き（低頻度。撮影中は止める）
+  useEffect(() => {
+    if (phase !== 'camera' || cam !== 'live') return
+    let alive = true
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      const v = videoRef.current
+      if (!alive) return
+      if (v && v.readyState >= 2 && v.videoWidth) {
+        try {
+          const r = await detectImage(v, POSE_MODEL)
+          if (!alive) return
+          if (!r.landmarks) setLive('none')
+          else {
+            setLive(fullBodyInFrame(r.landmarks) ? 'ok' : 'partial')
+            const k = turnsFromBody(r.landmarks, v.videoWidth, v.videoHeight)
+            if (k !== null) bodyTurns.current = k
+          }
+        } catch {
+          if (alive) setLive(null)
+        }
+      }
+      timer = setTimeout(tick, 900)
+    }
+    tick()
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [phase, cam])
+
+  useEffect(() => {
+    getLandmarker(POSE_MODEL, 'IMAGE').catch(() => undefined)
+  }, [])
+
+  // 端末の傾きから、映像の回し方と残りの傾き（立てて置いているときだけ使う）
+  const sensorOf = (t: DeviceTilt | null) => (!t || t.pitchDeg < 45 || t.pitchDeg > 135 ? null : quarterTurnsOf(screenRollDeg(t.rollDeg, screenAngle())))
+  const sensor = sensorOf(tilt)
+  // 写っている人の向きを優先し、分からなければ端末の傾きで決める
+  const turnsNow = () => bodyTurns.current ?? sensorOf(latest.current)?.turns ?? 0
+  const turns = bodyTurns.current ?? sensor?.turns ?? 0
+  const residual = sensor && sensor.turns === turns ? sensor.residualDeg : null
+  const level = residual === null ? null : Math.abs(residual) <= 2
+  const portraitOut = vdims ? (Math.abs(turns) % 2 === 1 ? vdims.w < vdims.h : vdims.w > vdims.h) === false : false
+
+  const finishWith = async (clip: DetectedClip, source: GaitRecord['source'], rollDeg: number | undefined) => {
+    const base: Omit<GaitRecord, 'analysis'> = {
+      id: newId('g'),
+      createdAt: new Date().toISOString(),
+      appVersion: APP_VERSION,
+      source,
+      modelVersion: modelVersion(POSE_MODEL),
+      footwear: shownFootwear,
+      video: {
+        width: clip.width,
+        height: clip.height,
+        durationMs: Math.round(clip.durationMs),
+        frameCount: clip.frameCount,
+        fps: Math.round(clip.fps * 10) / 10,
+        quarterTurns: clip.quarterTurns,
+        rollDeg: rollDeg === undefined ? undefined : Math.round(rollDeg * 10) / 10,
+      },
+      frames: clip.frames,
+    }
+    const analysis = analyzeGait(gaitInputOf(base))
+    if (!analysis.metrics.some((m) => m.status === 'ok')) {
+      const reasons = analysis.warnings.length ? analysis.warnings : ['歩数が足りず、測れませんでした。画面を横切る距離を長くするか、往復してください。']
+      setFailure(reasons)
+      setPhase('failed')
+      return
+    }
+    const rec: GaitRecord = { ...base, analysis }
+    await data.saveGait(rec)
+    navigate(`/gait/${rec.id}`, { replace: true })
+  }
+
+  const fail = (e: unknown) => {
+    if (e instanceof Error && e.message === 'cancelled') {
+      setPhase('guide')
+      return
+    }
+    setFailure([
+      e instanceof Error && /fetch|load|network|wasm/i.test(e.message)
+        ? '骨格推定の準備に失敗しました。通信状態を確かめて、もう一度お試しください。'
+        : e instanceof Error && e.message
+          ? e.message
+          : '推定の途中で問題が起きました。もう一度お試しください。',
+    ])
+    setPhase('failed')
+  }
+
+  const start = async () => {
+    const v = videoRef.current
+    if (!v || cam !== 'live' || !v.videoWidth) return
+    if (needsPermission) request()
+    stopRef.current = false
+    setPhase('countdown')
+    speak(`${COUNTDOWN_SEC}秒後に撮影を始めます。画面の外の、歩き始める位置へ移ってください`)
+    for (let n = COUNTDOWN_SEC; n > 0; n--) {
+      if (stopRef.current) return setPhase('camera')
+      setCount(n)
+      if (n <= 3) beep(880)
+      await sleep(1000)
+    }
+    if (stopRef.current) return setPhase('camera')
+    // 撮り始めの向きで、映像の回し方を決める
+    const k = turnsNow()
+    const rolls: number[] = []
+    setElapsed(0)
+    setPhase('recording')
+    beep(1320, 200)
+    vibrate(80)
+    speak('歩いてください')
+    let lastShown = 0
+    const clip = await recordFrames(v, {
+      durationMs: RECORD_MS,
+      turns: k,
+      stopRef,
+      onTick: (ms) => {
+        const q = sensorOf(latest.current)
+        if (q && q.turns === k) rolls.push(q.residualDeg)
+        if (ms - lastShown > 250) {
+          lastShown = ms
+          setElapsed(ms)
+        }
+      },
+    })
+    beep(660, 250)
+    speak('撮影が終わりました')
+    const cancelled = stopRef.current && clip.durationMs < 2000
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    if (cancelled) return setPhase('guide')
+    stopRef.current = false
+    setProgress({ done: 0, total: clip.frames.length })
+    setPhase('analyzing')
+    const rollDeg = rolls.length >= clip.frames.length / 2 ? rolls.reduce((a, b) => a + b, 0) / rolls.length : undefined
+    try {
+      const detected = await detectRecorded(clip, k, setProgress, stopRef)
+      await finishWith(detected, 'camera', rollDeg)
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  const onFile = async (list: FileList | null) => {
+    const file = list?.[0]
+    if (fileRef.current) fileRef.current.value = ''
+    if (!file) return
+    stopRef.current = false
+    setProgress(null)
+    setPhase('analyzing')
+    try {
+      const detected = await detectVideoFile(file, setProgress, stopRef)
+      await finishWith(detected, 'upload', undefined)
+    } catch (e) {
+      fail(e)
+    }
+  }
+
+  if (phase === 'guide' || phase === 'failed' || phase === 'analyzing') {
+    return (
+      <Screen title="歩き方を撮る（試作）" back={phase === 'analyzing' ? undefined : '/gait'}>
+        {phase === 'analyzing' ? (
+          <div className="flex flex-col items-center py-12 text-center" role="status" aria-live="polite">
+            <Loader2 aria-hidden className="size-8 animate-spin text-measure" />
+            <p className="mt-4 text-[17px] font-bold">骨格を推定しています</p>
+            {progress ? (
+              <>
+                <p className="mt-1 text-ink-2 num">
+                  {progress.done} / {progress.total} コマ
+                </p>
+                <div className="mt-3 h-2 w-full max-w-xs overflow-hidden rounded-full bg-sunken">
+                  <div className="h-full bg-measure transition-[width]" style={{ width: `${progress.total ? (100 * progress.done) / progress.total : 0}%` }} />
+                </div>
+              </>
+            ) : (
+              <p className="mt-1 text-ink-2">動画を読み込んでいます</p>
+            )}
+            <p className="mt-4 max-w-[34ch] text-sm text-ink-3">1 コマずつ推定するため、スマホでは 30 秒〜1 分ほどかかります。この画面のままお待ちください。</p>
+            <Button variant="quiet" className="mt-4" onClick={() => (stopRef.current = true)}>
+              やめる
+            </Button>
+          </div>
+        ) : (
+          <>
+            {phase === 'failed' && (
+              <div className="mt-2">
+                <Notice tone="warn" title="測れませんでした">
+                  <ul className="list-disc space-y-1 pl-4">
+                    {failure.map((f) => (
+                      <li key={f}>{f}</li>
+                    ))}
+                  </ul>
+                </Notice>
+              </div>
+            )}
+            <p className="mt-2 text-[15px] text-ink-2">
+              横から歩く様子を撮って、歩くテンポ・歩幅・上体の傾き・頭の位置・腕の振りを測ります。動画は保存しません。保存するのは体の点の動きだけです。
+            </p>
+            <h2 className="mt-6 font-bold">撮る前に</h2>
+            <ol className="mt-2 list-decimal space-y-2 pl-5 text-[15px]">
+              <li>横に 4〜5 m 歩ける場所を用意します（廊下や部屋の端から端まで）。</li>
+              <li>スマホを横向きにして、腰の高さに置きます。歩く線から 3 m ほど離し、歩く線とまっすぐ向き合うようにします。</li>
+              <li>体の線が分かる服にします。足元は毎回そろえます。</li>
+              <li>合図のあと、画面の外から歩き始めて画面を横切り、外に出たら折り返して、もう一度横切ります（往復）。いつもの速さで、カメラは見ずに前を見て歩きます。</li>
+            </ol>
+            <div className="mt-5">
+              <Segmented
+                legend="今日の足元"
+                value={shownFootwear}
+                onChange={setFootwear}
+                options={(Object.keys(FOOTWEAR_LABELS) as Footwear[]).map((k) => ({ value: k, label: FOOTWEAR_LABELS[k] }))}
+              />
+            </div>
+            <div className="mt-6 flex flex-col gap-2">
+              <Button variant="primary" size="lg" block icon={<Video aria-hidden className="size-5" />} onClick={() => setPhase('camera')}>
+                カメラで撮る
+              </Button>
+              <Button variant="secondary" size="lg" block icon={<FileVideo aria-hidden className="size-5" />} onClick={() => fileRef.current?.click()}>
+                撮った動画を選ぶ
+              </Button>
+              <input ref={fileRef} type="file" accept="video/*" className="hidden" onChange={(e) => onFile(e.target.files)} />
+              <p className="text-sm text-ink-3">スマホのカメラで横向きに撮った、往復の動画も使えます（最初の {FILE_MAX_MS / 1000} 秒まで）。</p>
+            </div>
+          </>
+        )}
+      </Screen>
+    )
+  }
+
+  const camMessage: Record<Exclude<CamState, 'live' | 'starting'>, string> = {
+    denied: 'カメラの使用が許可されていません。ブラウザの設定で許可するか、撮った動画を選んでください。',
+    unavailable: 'カメラが見つかりませんでした。撮った動画を選んでください。',
+    insecure: 'この接続ではカメラを使えません（https で開いてください）。',
+    error: 'カメラを開けませんでした。撮った動画を選んでください。',
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex flex-col bg-ink text-paper">
+      <header className="safe-top flex items-center gap-1 px-2">
+        <button
+          type="button"
+          aria-label="戻る"
+          onClick={() => {
+            stopRef.current = true
+            setPhase('guide')
+          }}
+          className="inline-flex size-11 items-center justify-center rounded-full hover:bg-white/10"
+        >
+          <ChevronLeft aria-hidden className="size-6" />
+        </button>
+        <h1 className="flex-1 text-[17px] font-bold">歩き方を撮る</h1>
+      </header>
+      <div className="relative min-h-0 flex-1">
+        <video ref={videoRef} playsInline muted autoPlay aria-label="カメラの映像" className="absolute inset-0 size-full object-contain" />
+        {cam !== 'live' && cam !== 'starting' && <p className="absolute inset-x-6 top-1/3 text-center text-[15px]">{camMessage[cam]}</p>}
+        {phase === 'camera' && cam === 'live' && (
+          <div className="absolute inset-x-0 top-2 flex flex-wrap justify-center gap-2 px-3 text-sm">
+            <span className={cx('rounded-full px-3 py-1', live === 'ok' ? 'bg-good text-paper' : 'bg-black/60')}>
+              {live === 'ok' ? '全身が写っています' : live === 'partial' ? '頭から足まで入るように離れてください' : live === 'none' ? '歩く線の上に立つと、写り方を確かめられます' : '確認しています…'}
+            </span>
+            {residual !== null && (
+              <span className={cx('rounded-full px-3 py-1 num', level ? 'bg-good text-paper' : 'bg-attention text-paper')}>
+                傾き {Math.abs(residual).toFixed(1)}°{level ? '' : '（まっすぐに）'}
+              </span>
+            )}
+            {portraitOut && <span className="rounded-full bg-black/60 px-3 py-1">スマホを横向きにすると、広く写せます</span>}
+          </div>
+        )}
+        {phase === 'countdown' && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 text-center" role="status" aria-live="assertive">
+            <span className="text-[96px] leading-none font-bold num">{count}</span>
+            <p className="mt-3 px-6 text-[17px]">画面の外の、歩き始める位置へ移ってください</p>
+          </div>
+        )}
+        {phase === 'recording' && (
+          <div className="absolute inset-x-0 top-2 flex justify-center" role="status" aria-live="polite">
+            <span className="flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-[15px] num">
+              <span aria-hidden className="size-2.5 animate-pulse rounded-full bg-danger" />
+              撮影中 {Math.max(0, Math.ceil((RECORD_MS - elapsed) / 1000))} 秒
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="safe-bottom flex flex-col items-center gap-2 px-4 pt-3 pb-4">
+        {phase === 'camera' ? (
+          <>
+            <Button variant="primary" size="lg" block disabled={cam !== 'live'} onClick={start}>
+              撮影を始める
+            </Button>
+            <p className="text-center text-sm text-paper/80">
+              押すと {COUNTDOWN_SEC} 秒後に撮り始め、{RECORD_MS / 1000} 秒間撮ります。往復して歩いてください。
+            </p>
+          </>
+        ) : (
+          <Button variant="secondary" size="lg" block onClick={() => (stopRef.current = true)}>
+            {phase === 'countdown' ? 'やめる' : 'ここで止める'}
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}

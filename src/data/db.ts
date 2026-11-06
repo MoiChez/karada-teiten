@@ -9,6 +9,7 @@ import type {
   RoutineLog,
   UserProfile,
 } from '../domain/types'
+import type { GaitRecord } from '../domain/gait'
 
 export interface StoredImage {
   id: string
@@ -33,6 +34,7 @@ export class AppDB extends Dexie {
   checkins!: EntityTable<CheckIn, 'id'>
   plans!: EntityTable<RecommendationPlan, 'id'>
   settings!: EntityTable<SettingRow, 'key'>
+  gaits!: EntityTable<GaitRecord, 'id'>
 
   constructor(name = 'karada-teiten') {
     super(name)
@@ -44,6 +46,10 @@ export class AppDB extends Dexie {
       checkins: 'id, date',
       plans: 'id, generatedAt, basedOnAssessmentId',
       settings: 'key',
+    })
+    // 版 0.8: 歩き方の記録
+    this.version(2).stores({
+      gaits: 'id, createdAt',
     })
   }
 }

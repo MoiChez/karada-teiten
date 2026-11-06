@@ -118,6 +118,43 @@ export async function detectImage(
   }
 }
 
+/**
+ * 動画のコマを順に推定するための、使い捨ての推定器（前のコマの位置を手がかりに追う）。
+ * 使い終わったら close() する。時刻は呼ぶたびに増やす必要がある
+ */
+export async function createVideoLandmarker(model: ModelKind) {
+  filesetPromise ??= FilesetResolver.forVisionTasks(assetUrl('mediapipe/wasm'))
+  const fileset = await filesetPromise
+  const options = (delegate: 'GPU' | 'CPU') => ({
+    baseOptions: { modelAssetPath: assetUrl(`models/pose_landmarker_${model}.task`), delegate },
+    runningMode: 'VIDEO' as const,
+    numPoses: 2,
+    minPoseDetectionConfidence: 0.5,
+    minPosePresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  })
+  let lm: PoseLandmarker
+  try {
+    lm = await PoseLandmarker.createFromOptions(fileset, options('GPU'))
+  } catch {
+    lm = await PoseLandmarker.createFromOptions(fileset, options('CPU'))
+  }
+  let last = 0
+  return {
+    detect(source: TexImageSource, t: number): DetectionResult {
+      const ts = Math.max(last + 1, Math.round(t))
+      last = ts
+      const r = lm.detectForVideo(source, ts)
+      try {
+        return pick(r.landmarks, r.worldLandmarks)
+      } finally {
+        r.close()
+      }
+    },
+    close: () => lm.close(),
+  }
+}
+
 export async function detectVideoFrame(video: HTMLVideoElement, model: ModelKind, timestamp: number): Promise<DetectionResult> {
   const lm = await getLandmarker(model, 'VIDEO')
   const r = lm.detectForVideo(video, timestamp)

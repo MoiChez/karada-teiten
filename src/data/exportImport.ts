@@ -1,6 +1,7 @@
 // エクスポート（JSON / CSV）とインポート（JSON）
 import type { AppDB, StoredImage } from './db'
 import type { AssessmentSession, CheckIn, RecommendationPlan, RoutineLog, UserProfile } from '../domain/types'
+import type { GaitRecord } from '../domain/gait'
 import { fmtDate } from '../domain/format'
 
 export const SCHEMA_VERSION = 1
@@ -27,10 +28,12 @@ export interface ExportFile {
   plans: RecommendationPlan[]
   settings: { key: string; value: unknown }[]
   images: ExportedImage[]
+  /** 歩き方の記録（版 0.8 から。ないファイルもある） */
+  gaits?: GaitRecord[]
 }
 
 export async function exportJson(db: AppDB, opts: { includeImages: boolean }): Promise<ExportFile> {
-  const [profile, assessments, routineLogs, checkins, plans, settings, images] = await Promise.all([
+  const [profile, assessments, routineLogs, checkins, plans, settings, images, gaits] = await Promise.all([
     db.profile.get('me'),
     db.assessments.orderBy('createdAt').toArray(),
     db.routineLogs.toArray(),
@@ -38,6 +41,7 @@ export async function exportJson(db: AppDB, opts: { includeImages: boolean }): P
     db.plans.toArray(),
     db.settings.toArray(),
     opts.includeImages ? db.images.toArray() : Promise.resolve([] as StoredImage[]),
+    db.gaits.orderBy('createdAt').toArray(),
   ])
   return {
     app: APP_ID,
@@ -60,6 +64,7 @@ export async function exportJson(db: AppDB, opts: { includeImages: boolean }): P
         dataUrl: await blobToDataUrl(im.blob),
       })),
     ),
+    gaits,
   }
 }
 
@@ -88,6 +93,7 @@ export function validateExport(raw: unknown): string[] {
       else if (!Array.isArray(a.computedMetrics)) errors.push(`assessments[${i}] に computedMetrics がありません`)
     })
   }
+  if (f.gaits !== undefined && !Array.isArray(f.gaits)) errors.push('gaits が配列ではありません')
   if (f.profile !== null && f.profile !== undefined) {
     const p = f.profile as Partial<UserProfile>
     if (p.id !== 'me' || !Array.isArray(p.goals)) errors.push('profile の形式が正しくありません')
@@ -108,9 +114,9 @@ export async function importJson(db: AppDB, raw: unknown, mode: 'replace' | 'mer
       return { ok: false, errors: [`画像 ${im.id} を読み込めませんでした`] }
     }
   }
-  await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings], async () => {
+  await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings, db.gaits], async () => {
     if (mode === 'replace') {
-      await Promise.all([db.profile.clear(), db.assessments.clear(), db.images.clear(), db.routineLogs.clear(), db.checkins.clear(), db.plans.clear(), db.settings.clear()])
+      await Promise.all([db.gaits.clear(), db.profile.clear(), db.assessments.clear(), db.images.clear(), db.routineLogs.clear(), db.checkins.clear(), db.plans.clear(), db.settings.clear()])
     }
     if (f.profile) await db.profile.put(f.profile)
     await db.assessments.bulkPut(f.assessments)
@@ -119,6 +125,7 @@ export async function importJson(db: AppDB, raw: unknown, mode: 'replace' | 'mer
     await db.plans.bulkPut(f.plans)
     await db.settings.bulkPut(f.settings as never)
     await db.images.bulkPut(images)
+    if (f.gaits) await db.gaits.bulkPut(f.gaits)
   })
   return {
     ok: true,
