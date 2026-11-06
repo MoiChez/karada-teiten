@@ -46,6 +46,8 @@ export interface PlaneInput {
   back?: EdgeLine
   /** 側面・複数枚撮り: 各撮影の背中側の輪郭（frames と同じ順） */
   backFrames?: (Point[] | null)[]
+  /** 鏡の前で自撮りした写真（スマホを持つ腕の位置は評価しない） */
+  mirrorSelfie?: boolean
 }
 
 type Getter = (i: number) => Point
@@ -66,6 +68,8 @@ interface Ctx {
   backNote?: string
   /** 不確かさの計算中だけ: 輪郭から取った点を後ろ向きにずらす量（ピクセル） */
   backJitter?: (key: string) => number
+  /** 鏡の前で自撮りした写真 */
+  mirrorSelfie?: boolean
 }
 
 /** len: 位置のずれ・高さの差などの長さ（ピクセル、raw と同じ向きで符号付き）。cm 換算に使う */
@@ -105,6 +109,14 @@ const pctOf = (v: number, base: number) => (v / base) * 100
 function lateralSign(p: Getter): number {
   const s = p(LM.leftShoulder).x - p(LM.rightShoulder).x + (p(LM.leftHip).x - p(LM.rightHip).x)
   return s >= 0 ? 1 : -1
+}
+
+/** 鏡の前で自撮りした写真で、値の読み方に気をつけたい指標 */
+const MIRROR_NOTES: Partial<Record<MetricKey, string>> = {
+  front_shoulder_tilt: 'スマホを持つ側の肩が上がりやすいため、置いて撮った測定とは比べにくい値です。',
+  front_head_tilt: '撮る瞬間に画面を見ていると、頭の傾きが変わります。',
+  side_head_forward: '撮る瞬間に画面を見ていると、頭が前に出たり下を向いたりしやすくなります。',
+  side_head_pitch: '撮る瞬間に画面を見ていると、顔が下を向きやすくなります。',
 }
 
 /** 背中の輪郭の計算に渡す値。腕・手の点（確認できたものだけ）は、輪郭に重なっていないかの確認に使う */
@@ -408,6 +420,7 @@ const SIDE: MetricDef[] = [
     kind: 'judged',
     landmarks: (c) => [c.side.wrist, c.side.hip, c.side.shoulder],
     compute: (p, c) => {
+      if (c.mirrorSelfie) return { fail: '鏡の前で自撮りした写真では、スマホを持つ腕の位置が変わるため評価しません' }
       const T = dist(p(c.side.shoulder), p(c.side.hip))
       const len = (p(c.side.wrist).x - p(c.side.hip).x) * c.f
       const v = pctOf(len, T)
@@ -685,6 +698,7 @@ export function planeInputFrom(record: PlaneRecord, useCorrected: boolean): Plan
     sigmaFraction: burstSigmaFraction(record.burst),
     frames: record.burst && record.burst.frames.length >= 2 ? burstFramesCorrected(record, corrected) : undefined,
     // 背中側は今の顔の向きで決める（確認画面で向きを切り替えても正しい側を使う）
+    mirrorSelfie: record.imageMetadata.mirrorSelfie,
     back: record.plane === 'side' && record.outline ? backSideOf(record.outline, record.imageMetadata.facing) : undefined,
     backFrames:
       record.plane === 'side' ? record.burst?.outlines?.map((o) => (o ? backSideOf(o, record.imageMetadata.facing) : null)) : undefined,
@@ -737,6 +751,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     isValid,
     back: input.back ? toPx(input.back.points) : undefined,
     backNote: input.back?.note,
+    mirrorSelfie: input.mirrorSelfie,
   }
   const sigmaPx = (input.sigmaFraction ?? LANDMARK_SIGMA_FRACTION) * ctx.H
   const edgeSigmaPx = BACK_EDGE_SIGMA_FRACTION * ctx.H
@@ -830,6 +845,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     else if (uncertainty !== null && Math.abs(result.raw) > NOTICEABLE_K * uncertainty) status = 'noticeable'
     else status = 'within_noise'
 
+    const mirrorNote = input.mirrorSelfie ? MIRROR_NOTES[def.key] : undefined
     const metric: ComputedMetric = {
       ...shell,
       rawValue: round(result.raw, 2),
@@ -838,7 +854,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       uncertainty: uncertainty === null ? null : round(uncertainty, 3),
       status,
       confidence: round(confidence, 3),
-      qualityNote: result.note,
+      qualityNote: [result.note, mirrorNote].filter(Boolean).join(' ') || undefined,
       usedLandmarks: used,
       correctedLandmarks: used.filter((i) => correctedIdx.has(i)),
     }

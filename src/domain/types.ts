@@ -131,6 +131,8 @@ export interface ImageMetadata {
   secondPersonScale?: number
   /** ワールド座標の肩の線から推定した体の回旋（度）。正面なら 0 付近 */
   yawDeg?: number
+  /** 鏡の前で自撮りした写真（左右を戻してから分析・保存している） */
+  mirrorSelfie?: boolean
 }
 
 export interface CorrectionEntry {
@@ -304,8 +306,11 @@ export interface ConsciousPose {
   qualityFlags: QualityFlag[]
 }
 
-/** 測定のモード。simple = 1 枚ずつ、precise = 5 枚の平均・横向き必須・意識した姿勢も続けて撮る */
+/** 以前の測定のモード（版 0.6 まで）。simple = 1 枚ずつ、precise = 5 枚の平均。今は使わず、古い記録の表示と比較にだけ使う */
 export type CaptureMode = 'simple' | 'precise'
+
+/** 撮り方。placed = スマホを置いてタイマーで撮る、mirror = 鏡の前で自撮り */
+export type ShootStyle = 'placed' | 'mirror'
 
 export interface AssessmentSession {
   id: string
@@ -320,8 +325,10 @@ export interface AssessmentSession {
   qualityFlags: QualityFlag[]
   recommendationSnapshot?: { planId: string; routineIds: string[] }
   checkinId?: string
-  /** 測定のモード（この機能より前の記録にはない） */
+  /** 以前の測定のモード（版 0.6 までの記録だけ） */
   captureMode?: CaptureMode
+  /** 撮り方（版 0.7 から。ない記録はスマホを置いて撮ったもの） */
+  shootStyle?: ShootStyle
   conscious?: ConsciousPose
   imagesSaved: boolean
   modelVersion: string
@@ -407,7 +414,7 @@ export interface CheckIn {
 export interface AppSettings {
   saveImages: boolean
   timerSec: 0 | 3 | 5 | 10
-  /** 前回選んだ測定のモード（次の測定の初期値） */
-  captureMode: CaptureMode
+  /** 前回選んだ撮り方（次の測定の初期値） */
+  shootStyle: ShootStyle
   onboarded: boolean
 }

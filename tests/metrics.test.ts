@@ -212,3 +212,26 @@ describe('側面の指標', () => {
     expect(k.components?.length).toBe(2)
   })
 })
+
+describe('鏡の前で自撮りした写真', () => {
+  it('スマホを持つ腕の位置は評価せず、猫背傾向スコアは腕を除いて計算する', () => {
+    const lms = sidePose({ earForward: 80, shoulderForward: 20, wristForward: 60 })
+    const normal = computePlaneMetrics(planeInputFrom(record('side', lms), true))
+    const mirror = computePlaneMetrics(planeInputFrom(record('side', lms, { mirrorSelfie: true }), true))
+    const get = (list: typeof normal, key: string) => list.find((m) => m.key === key)!
+    expect(get(normal, 'side_arm_forward').rawValue).not.toBeNull()
+    expect(get(mirror, 'side_arm_forward').rawValue).toBeNull()
+    expect(get(mirror, 'side_arm_forward').qualityNote).toMatch('スマホを持つ腕')
+    expect(get(mirror, 'composite_kyphosis').rawValue).not.toBeNull()
+    expect(get(mirror, 'composite_kyphosis').components!.map((c) => c.key)).not.toContain('side_arm_forward')
+    // 頭の指標には、画面を見ると変わることを注記する
+    expect(get(mirror, 'side_head_forward').qualityNote).toMatch('画面')
+    expect(get(normal, 'side_head_forward').qualityNote ?? '').not.toMatch('画面')
+  })
+
+  it('正面の肩の高さには、スマホを持つ側の肩が上がりやすいことを注記する', () => {
+    const m = computePlaneMetrics(planeInputFrom(record('front', frontPose({ leftShoulderDrop: 20 }), { mirrorSelfie: true }), true)).find((x) => x.key === 'front_shoulder_tilt')!
+    expect(m.rawValue).not.toBeNull()
+    expect(m.qualityNote).toMatch('スマホを持つ側の肩')
+  })
+})

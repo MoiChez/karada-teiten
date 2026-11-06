@@ -1,25 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router'
 import { ChevronLeft, History, ImageUp, Loader2, RefreshCcw, SwitchCamera, Timer } from 'lucide-react'
-import type { CaptureMode, DeviceTilt, Landmark, Plane, PlaneRecord } from '../domain/types'
-import { MIN_VISIBILITY, PRECISE_INTERVAL_MS, PRECISE_SHOTS } from '../domain/constants'
+import type { DeviceTilt, Landmark, Plane, PlaneRecord, ShootStyle } from '../domain/types'
+import { MIN_VISIBILITY } from '../domain/constants'
 import { visibilityOf } from '../domain/metrics'
 import { SKELETON_EDGES } from '../domain/landmarks'
 import { sideEdges } from '../domain/figure'
 import { framingAdvice, framingOf } from '../domain/framing'
-import { analyzeBurst, analyzePlane } from '../pose/analyzePlane'
-import { grabVideoFrame, prepareFromCanvas, prepareFromFile, type PreparedImage } from '../pose/image'
+import { analyzePlane } from '../pose/analyzePlane'
+import { flipCanvas, grabVideoFrame, prepareFromCanvas, prepareFromFile, type PreparedImage } from '../pose/image'
 import { POSE_MODEL, detectImage, getLandmarker } from '../pose/landmarker'
-import { beep, speak, useDeviceTilt, vibrate } from '../pose/device'
+import { beep, useDeviceTilt, vibrate } from '../pose/device'
 import { useSessions } from '../data/hooks'
 import { useDraft, useSettings, type PlaneDraft, type Pose } from '../state/stores'
 import { Button, cx } from '../components/ui'
 
 type CamState = 'starting' | 'live' | 'denied' | 'unavailable' | 'insecure' | 'error'
 type LiveCheck = 'none' | 'partial' | 'ok' | 'loading'
-
-/** 1 回の撮影で選べる写真の最大枚数 */
-const MAX_FILES = 3
 
 /**
  * カメラに頼む映像の大きさ（順に試す）。スマホのカメラはもともと横長で、縦に持つとブラウザが回して縦長にする。
@@ -55,7 +52,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   const [camTry, setCamTry] = useState(0)
   const [landscapeOnly, setLandscapeOnly] = useState(false)
   const [timer, setTimer] = useState<number>(settings.timerSec)
-  const [phase, setPhase] = useState<{ kind: 'count'; n: number } | { kind: 'shoot'; k: number; total: number } | null>(null)
+  const [phase, setPhase] = useState<{ n: number } | null>(null)
   const [running, setRunning] = useState(false)
   const runningRef = useRef(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -68,10 +65,11 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   const cancelRef = useRef(false)
 
   const conscious = pose === 'conscious'
-  const draftMode = useDraft((s) => s.mode)
-  // 意識した姿勢は、いつもの姿勢と同じモードで撮る
-  const mode: CaptureMode = conscious ? (sessions?.find((s) => s.id === sessionId)?.captureMode ?? 'simple') : draftMode
-  const shots = mode === 'precise' ? PRECISE_SHOTS : 1
+  const draftStyle = useDraft((s) => s.style)
+  // 意識した姿勢は、いつもの姿勢と同じ撮り方で撮る
+  const style: ShootStyle = conscious ? (sessions?.find((s) => s.id === sessionId)?.shootStyle ?? 'placed') : draftStyle
+  // 鏡の前で自撮り: 画面には鏡に映った姿がそのまま出る。撮った写真は左右を戻してから分析・保存する
+  const mirrorSelfie = style === 'mirror'
   const mirrored = facingMode === 'user'
   const title = conscious ? `意識した姿勢（${plane === 'front' ? '正面' : '横向き'}）` : plane === 'front' ? '正面を撮る' : '横向きを撮る'
   const base = conscious ? '/measure/conscious' : '/measure'
@@ -84,6 +82,11 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
     const list = conscious ? sessions.filter((s) => s.id === sessionId) : sessions
     return list.find((s) => (s[plane]?.landmarksRaw.length ?? 0) >= 33)?.[plane]
   }, [sessions, conscious, sessionId, plane])
+  // 前回の骨格は左右を戻して保存してあるので、鏡の前では画面（鏡に映った姿）に合わせて左右を反転して重ねる
+  const guideLms = useMemo(
+    () => (guideRec ? (mirrorSelfie ? guideRec.landmarksCorrected.map((l) => ({ ...l, x: 1 - l.x })) : guideRec.landmarksCorrected) : undefined),
+    [guideRec, mirrorSelfie],
+  )
   const aspectOk =
     !!guideRec && !!vdims && Math.abs(guideRec.imageMetadata.width / guideRec.imageMetadata.height / (vdims.w / vdims.h) - 1) < 0.03
   const guideOn = showGuide && !!guideRec && aspectOk
@@ -191,36 +194,18 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
 
   const advice = useMemo(() => {
     if (!guideOn || !vdims || !liveLms) return null
-    const prev = framingOf(plane, guideRec!.landmarksCorrected, vdims.w, vdims.h, guideRec!.imageMetadata.nearSide)
+    const prev = framingOf(plane, guideLms!, vdims.w, vdims.h, guideRec!.imageMetadata.nearSide)
     const cur = framingOf(plane, liveLms, vdims.w, vdims.h)
     return prev && cur ? framingAdvice(prev, cur, mirrored) : null
-  }, [guideOn, guideRec, vdims, liveLms, plane, mirrored])
+  }, [guideOn, guideRec, guideLms, vdims, liveLms, plane, mirrored])
 
-  const processImages = useCallback(
-    async (images: PreparedImage[], source: 'camera' | 'upload', tilts?: (DeviceTilt | undefined)[], extraNotice?: string) => {
+  const processImage = useCallback(
+    async (image: PreparedImage, source: 'camera' | 'upload', tilt?: DeviceTilt, notice?: string) => {
       setBusy('骨格を推定しています')
       setError(null)
       try {
-        let draft: PlaneDraft
-        if (images.length === 1) {
-          const record = await analyzePlane({ plane, image: images[0], source, model: POSE_MODEL, deviceTilt: tilts?.[0] })
-          draft = { record, imageBlob: images[0].blob, imageUrl: URL.createObjectURL(images[0].blob), notice: extraNotice }
-        } else {
-          const r = await analyzeBurst({
-            plane,
-            images,
-            source,
-            model: POSE_MODEL,
-            deviceTilts: tilts,
-            onProgress: (d, t) => setBusy(`骨格を推定しています（${Math.min(d + 1, t)} / ${t} 枚）`),
-          })
-          draft = {
-            record: r.record,
-            imageBlob: r.repImage.blob,
-            imageUrl: URL.createObjectURL(r.repImage.blob),
-            notice: [extraNotice, r.notice].filter(Boolean).join(' ') || undefined,
-          }
-        }
+        const record = await analyzePlane({ plane, image, source, model: POSE_MODEL, deviceTilt: tilt, mirrorSelfie })
+        const draft: PlaneDraft = { record, imageBlob: image.blob, imageUrl: URL.createObjectURL(image.blob), notice }
         setPlane(plane, draft, pose)
         navigate(`${base}/review/${plane}`)
       } catch (e) {
@@ -232,7 +217,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         )
       }
     },
-    [plane, pose, base, setPlane, navigate],
+    [plane, pose, base, setPlane, navigate, mirrorSelfie],
   )
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -244,27 +229,19 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
     cancelRef.current = false
     runningRef.current = true
     setRunning(true)
-    const frames: HTMLCanvasElement[] = []
-    const tilts: (DeviceTilt | undefined)[] = []
+    let frame: HTMLCanvasElement
+    let tilt: DeviceTilt | undefined
     try {
       for (let n = timer; n > 0; n--) {
         if (cancelRef.current) return
-        setPhase({ kind: 'count', n })
+        setPhase({ n })
         beep(880)
         await sleep(1000)
       }
-      // 高精度: 動かずに立ったまま、一定の間隔で続けて撮る（圧縮はあとでまとめて行い、間隔を保つ）
-      const t0 = performance.now()
-      for (let k = 0; k < shots; k++) {
-        const wait = t0 + k * PRECISE_INTERVAL_MS - performance.now()
-        if (wait > 0) await sleep(wait)
-        if (cancelRef.current) return
-        if (shots > 1) setPhase({ kind: 'shoot', k: k + 1, total: shots })
-        frames.push(grabVideoFrame(v))
-        tilts.push(latest.current ?? undefined)
-        const last = k === shots - 1
-        beep(last ? 1320 : 1100, last ? 140 : 50)
-      }
+      if (cancelRef.current) return
+      frame = grabVideoFrame(v)
+      tilt = latest.current ?? undefined
+      beep(1320, 140)
       vibrate(60)
     } catch {
       setError('写真を撮れませんでした。もう一度お試しください。')
@@ -274,27 +251,25 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
       runningRef.current = false
       setRunning(false)
     }
-    if (shots > 1) speak('撮影が終わりました')
-    let images: PreparedImage[]
+    let image: PreparedImage
     try {
       setBusy('写真を準備しています')
-      images = await Promise.all(frames.map(prepareFromCanvas))
+      image = await prepareFromCanvas(mirrorSelfie ? flipCanvas(frame) : frame)
     } catch {
       setBusy(null)
       setError('写真を撮れませんでした。もう一度お試しください。')
       return
     }
-    await processImages(images, 'camera', tilts)
+    await processImage(image, 'camera', tilt)
   }
 
   const onFiles = async (list: FileList | null) => {
-    const files = [...(list ?? [])]
-    if (!files.length) return
+    const file = list?.[0]
+    if (!file) return
     try {
       setBusy('写真を読み込んでいます')
-      const images: PreparedImage[] = []
-      for (const f of files.slice(0, MAX_FILES)) images.push(await prepareFromFile(f))
-      await processImages(images, 'upload', undefined, files.length > MAX_FILES ? `写真は ${MAX_FILES} 枚まで使えるため、最初の ${MAX_FILES} 枚で分析しました。` : undefined)
+      // 鏡の前で撮った写真は、左右を戻してから使う
+      await processImage(await prepareFromFile(file, { flip: mirrorSelfie }), 'upload')
     } catch (e) {
       setBusy(null)
       setError(e instanceof Error ? e.message : '写真を読み込めませんでした')
@@ -306,7 +281,8 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   const roll = tilt?.rollDeg ?? null
   const level = roll === null ? null : Math.abs(roll) <= 3
   const prevFacing = plane === 'side' ? guideRec?.imageMetadata.facing : undefined
-  const shownFacing = prevFacing && (mirrored ? (prevFacing === 'left' ? 'right' : 'left') : prevFacing)
+  // 画面が鏡像（内カメラ）か、鏡に映った姿を撮っているときは、前回の向きを左右反転して案内する
+  const shownFacing = prevFacing && (mirrored !== mirrorSelfie ? (prevFacing === 'left' ? 'right' : 'left') : prevFacing)
   const bottomText = [
     conscious ? '自分が良いと思う姿勢で立ちます。' : '',
     plane === 'side'
@@ -354,7 +330,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
                 preserveAspectRatio="xMidYMid meet"
                 className={cx('pointer-events-none absolute inset-0 size-full', mirrored && '-scale-x-100')}
               >
-                <PoseLines lms={guideRec!.landmarksCorrected} plane={plane} nearSide={guideRec!.imageMetadata.nearSide} w={vdims.w} h={vdims.h} tone="prev" />
+                <PoseLines lms={guideLms!} plane={plane} nearSide={guideRec!.imageMetadata.nearSide} w={vdims.w} h={vdims.h} tone="prev" />
                 {liveLms && <PoseLines lms={liveLms} plane={plane} w={vdims.w} h={vdims.h} tone="live" />}
               </svg>
             ) : (
@@ -387,7 +363,6 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
                 {advice.ok ? `${conscious ? 'いつもの姿勢' : '前回'}と同じ位置です` : advice.messages[0]}
               </StatusChip>
             )}
-            {showGuide && guideRec && vdims && !aspectOk && <StatusChip>前回と写真の縦横比が違うため、前回の位置は表示できません</StatusChip>}
             {landscapeOnly && (
               <StatusChip warn>このスマホでは映像が横長になります。全身が入るまで離れるか、「写真を選ぶ」から縦に撮った写真を使ってください</StatusChip>
             )}
@@ -405,19 +380,8 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
 
         {phase && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink/40 px-6 text-center" aria-live="assertive">
-            {phase.kind === 'count' ? (
-              <>
-                <span className="text-[120px] leading-none font-bold text-level num">{phase.n}</span>
-                {shots > 1 && <p className="max-w-[24ch] text-[17px]">このあと {shots} 枚を続けて撮ります。動かずに立っていてください</p>}
-              </>
-            ) : (
-              <>
-                <p className="text-[22px] font-bold">そのまま動かずに</p>
-                <span className="text-[64px] leading-none font-bold text-level num">
-                  {phase.k} / {phase.total}
-                </span>
-              </>
-            )}
+            <span className="text-[120px] leading-none font-bold text-level num">{phase.n}</span>
+            {mirrorSelfie && <p className="max-w-[24ch] text-[17px]">{plane === 'front' ? '鏡の中の自分の目を見てください' : 'まっすぐ前を見てください'}</p>}
           </div>
         )}
         {busy && (
@@ -459,7 +423,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
           ))}
         </div>
         <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-          <span className="text-sm text-paper/80">{mode === 'precise' ? `高精度モード（${shots} 枚の平均）` : 'シンプルモード（1 枚）'}</span>
+          <span className="text-sm text-paper/80">{mirrorSelfie ? '鏡の前で自撮り' : 'スマホを置いて撮影'}</span>
           {vdims && cam === 'live' && <span className="text-xs text-paper/55 num">映像 {vdims.w}×{vdims.h}</span>}
           {guideRec && (
             <Pill pressed={showGuide} onClick={() => setShowGuide(!showGuide)}>
@@ -468,10 +432,11 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
             </Pill>
           )}
         </div>
-        {shots > 1 && !running && (
-          <p className="-mt-2 mb-3 text-center text-xs text-paper/70">
-            {timer ? `${timer} 秒後から` : 'すぐに'}約 {((shots - 1) * PRECISE_INTERVAL_MS) / 1000} 秒かけて {shots} 枚撮ります。その間は動かずに立っていてください
-          </p>
+        {showGuide && guideRec && vdims && !aspectOk && (
+          <p className="-mt-2 mb-2 text-center text-xs text-paper/70">前回と写真の縦横比が違うため、前回の位置は重ねられません</p>
+        )}
+        {mirrorSelfie && !running && (
+          <p className="-mt-2 mb-3 text-center text-xs text-paper/70">スマホは胸の前で縦にまっすぐ持ち、撮る瞬間は画面ではなく前を見ます</p>
         )}
         <div className="flex items-center justify-between">
           <button
@@ -490,7 +455,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
           ) : (
             <button
               type="button"
-              aria-label={`${timer ? `${timer}秒後に` : ''}${shots > 1 ? `${shots}枚` : ''}撮影`}
+              aria-label={`${timer ? `${timer}秒後に` : ''}撮影`}
               disabled={cam !== 'live' || !!busy}
               onClick={shoot}
               className="flex size-20 items-center justify-center rounded-full border-4 border-paper disabled:opacity-40"
@@ -512,7 +477,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
             {facingMode === 'environment' ? '内カメラ' : '外カメラ'}
           </button>
         </div>
-        <input ref={fileRef} type="file" accept="image/*" multiple className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => onFiles(e.target.files)} />
+        <input ref={fileRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => onFiles(e.target.files)} />
       </div>
     </div>
   )

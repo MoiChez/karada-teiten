@@ -102,11 +102,8 @@ function ResultBody({ s }: { s: AssessmentSession }) {
         <Badge>信頼度 {confidenceLabel(s.confidenceScores.overall)}</Badge>
         {(s.front && correctedSet(s.front).size > 0) || (s.side && correctedSet(s.side).size > 0) ? <Badge tone="level">補正あり</Badge> : null}
         <Badge>{s.imagesSaved ? '写真を保存' : '写真は未保存'}</Badge>
-        {s.captureMode ? (
-          <Badge tone="measure">{s.captureMode === 'precise' ? '高精度モード' : 'シンプルモード'}</Badge>
-        ) : (
-          (s.front?.burst || s.side?.burst) && <Badge tone="measure">{(s.front?.burst ?? s.side?.burst)!.frames.length} 枚の平均</Badge>
-        )}
+        {s.shootStyle === 'mirror' && <Badge tone="measure">鏡の前で自撮り</Badge>}
+        {(s.front?.burst || s.side?.burst) && <Badge tone="measure">{(s.front?.burst ?? s.side?.burst)!.frames.length} 枚の平均</Badge>}
         {s.conscious && <Badge tone="measure">意識した姿勢あり</Badge>}
       </div>
 
@@ -197,6 +194,9 @@ function ResultBody({ s }: { s: AssessmentSession }) {
         </p>
       )}
       {plane === 'front' && <p className="mt-1 text-sm text-ink-3">左右は、写っている人自身から見た左右です。</p>}
+      {rec?.imageMetadata.mirrorSelfie && (
+        <p className="mt-1 text-sm text-ink-3">鏡の前で自撮りした写真は、鏡に映った左右を戻して記録しています（写真も左右を反転して表示）。スマホを持つ腕の位置は評価していません。</p>
+      )}
 
       {/* 3b. ずれの向きと大きさ */}
       {rec && rec.landmarksRaw.length > 0 && (

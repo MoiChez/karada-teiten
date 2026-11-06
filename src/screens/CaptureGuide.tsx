@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { ArrowLeftRight, Footprints, Ruler, Shirt, Smartphone, Sun, SquareDashed, User } from 'lucide-react'
-import type { BodyArea, CaptureMode } from '../domain/types'
-import { PRECISE_SHOTS } from '../domain/constants'
+import { ArrowLeftRight, Eye, Footprints, Ruler, Shirt, Smartphone, Sun, SquareDashed, User } from 'lucide-react'
+import type { BodyArea, ShootStyle } from '../domain/types'
 import { AREA_LABELS, localDateKey } from '../domain/format'
 import { newId } from '../domain/session'
 import { Button, ChipGroup, Details, Notice, RatingScale, Screen, SectionTitle, Segmented } from '../components/ui'
@@ -19,26 +18,40 @@ const CHECKS = [
   { icon: Footprints, title: '立ち位置に目印を', text: '床にテープなどで足の位置の目印を付けると、毎回同じ距離で撮れます。撮影画面には前回の骨格が重なり、位置のずれを教えてくれます。' },
 ]
 
+/** 鏡の前で自撮りするときの条件 */
+const MIRROR_CHECKS = [
+  { icon: SquareDashed, title: '全身が映る、まっすぐな鏡で', text: '壁に掛けた姿見がおすすめです。立てかけて傾いた鏡だと、体が傾いて写ります。' },
+  { icon: Ruler, title: '鏡から 1.2〜1.5m 離れる', text: '鏡に映った姿は、鏡までの距離の 2 倍の位置にあるように写ります。頭からつま先まで入る距離に立ちます。' },
+  { icon: Smartphone, title: 'スマホは胸の前で、縦にまっすぐ', text: 'あごより下で持ち、顔を隠さないようにします。画面の水準器で傾きを確認できます。' },
+  { icon: Eye, title: 'タイマーを使い、撮る瞬間は前を見る', text: '正面は鏡の中の自分の目を、横向きはまっすぐ前を見ます。画面を見ていると頭が下を向きます。' },
+  { icon: User, title: 'スマホを持たない腕は体の横に', text: '力を抜いて下ろします。スマホを持つ腕の位置は評価しません。' },
+  { icon: Shirt, title: '体の線が分かる服で', text: 'ゆったりした服は肩や膝の位置がずれ、横向きの背中の輪郭も変わります。長い髪は背中にかからないようまとめます。' },
+  { icon: Footprints, title: '立ち位置に目印を', text: '床にテープなどで足の位置の目印を付けると、毎回同じ距離で撮れます。' },
+]
+
+const STYLE_LABEL: Record<ShootStyle, string> = { placed: 'スマホを置いて撮る', mirror: '鏡の前で自撮り' }
+
 export function CaptureGuide() {
   const navigate = useNavigate()
   const draft = useDraft()
   const timerSec = useSettings((s) => s.settings.timerSec)
-  const savedMode = useSettings((s) => s.settings.captureMode)
+  const savedStyle = useSettings((s) => s.settings.shootStyle)
   const updateSetting = useSettings((s) => s.update)
   const sessions = useSessions()
   const last = sessions?.[0]
   const hasDraft = !!(draft.front || draft.side) && !draft.editingSessionId
-  // 前回選んだモードが初期値。撮影の続きでは、そのときのモードのまま
-  const [mode, setMode] = useState<CaptureMode>(hasDraft ? draft.mode : (savedMode ?? 'precise'))
-  const chooseMode = (m: CaptureMode) => {
-    setMode(m)
-    updateSetting('captureMode', m)
+  // 前回選んだ撮り方が初期値。撮影の続きでは、そのときの撮り方のまま
+  const [style, setStyle] = useState<ShootStyle>(hasDraft ? draft.style : (savedStyle ?? 'placed'))
+  const chooseStyle = (s: ShootStyle) => {
+    setStyle(s)
+    updateSetting('shootStyle', s)
   }
+  const checks = style === 'mirror' ? MIRROR_CHECKS : CHECKS
   const checkin = draft.checkin ?? { id: newId('c'), date: new Date().toISOString(), discomfortAreas: [] as BodyArea[] }
 
   const start = () => {
     if (!hasDraft) draft.clear()
-    draft.setMode(mode)
+    draft.setStyle(style)
     if (!draft.checkin || draft.checkin.date.slice(0, 10) !== localDateKey()) draft.setCheckin({ ...checkin, date: new Date().toISOString() })
     navigate('/measure/capture/front')
   }
@@ -67,27 +80,26 @@ export function CaptureGuide() {
       }
     >
       {hasDraft ? (
-        <p className="mt-2 font-medium">測り方: {mode === 'precise' ? '高精度' : 'シンプル'}（撮影の続き）</p>
+        <p className="mt-2 font-medium">撮り方: {STYLE_LABEL[style]}（撮影の続き）</p>
       ) : (
         <div className="mt-2">
           <Segmented
-            legend="測り方"
+            legend="撮り方"
             columns={2}
-            value={mode}
-            onChange={chooseMode}
+            value={style}
+            onChange={chooseStyle}
             options={[
-              { value: 'simple', label: 'シンプル', hint: '1 枚ずつ・手早く' },
-              { value: 'precise', label: '高精度', hint: `${PRECISE_SHOTS} 枚の平均・意識した姿勢も` },
+              { value: 'placed', label: 'スマホを置いて', hint: 'タイマーで撮る' },
+              { value: 'mirror', label: '鏡の前で自撮り', hint: '姿見に映して撮る' },
             ]}
           />
         </div>
       )}
       <p className="mt-2 text-ink-2">
-        {mode === 'precise'
-          ? `正面と横向きを、それぞれ ${PRECISE_SHOTS} 枚続けて撮って平均します（約 2 秒、動かずに立つだけ）。続けて、自分が良いと思う姿勢でも同じように撮り、いつもの姿勢と比べます。`
-          : '正面と横向きを 1 枚ずつ撮ります。横向きは省略もできます。意識した姿勢は、あとで結果画面から撮れます。'}
+        正面と横向きを 1 枚ずつ撮ります。
+        {style === 'mirror' && '鏡に映った姿は左右が反対なので、アプリが左右を戻して記録します。'}
       </p>
-      <p className="mt-1 text-sm text-ink-3">どちらも同じ高精度の推定モデルを使います。毎回同じ条件で撮ると、変化を比べやすくなります。</p>
+      <p className="mt-1 text-sm text-ink-3">毎回同じ撮り方・同じ条件で撮ると、変化を比べやすくなります。自分が良いと思う姿勢との比較は、あとで結果画面から撮れます。</p>
       {last && (
         <Notice tone="info" title="前回と条件をそろえましょう">
           前回は {new Date(last.createdAt).getHours()} 時台に測りました。近い時間帯・同じ服装・同じ場所がおすすめです。
@@ -96,7 +108,7 @@ export function CaptureGuide() {
 
       <SectionTitle>撮影の条件</SectionTitle>
       <ul className="divide-y divide-line">
-        {CHECKS.map(({ icon: Icon, title, text }) => (
+        {checks.map(({ icon: Icon, title, text }) => (
           <li key={title} className="flex gap-3 py-3">
             <Icon aria-hidden className="mt-0.5 size-5 shrink-0 text-measure" />
             <div>
@@ -108,7 +120,7 @@ export function CaptureGuide() {
         <li className="flex gap-3 py-3">
           <ArrowLeftRight aria-hidden className="mt-0.5 size-5 shrink-0 text-measure" />
           <div>
-            <p className="font-medium">一人で撮るときはタイマーを使う</p>
+            <p className="font-medium">{style === 'mirror' ? 'タイマーは 3 秒がおすすめ' : '一人で撮るときはタイマーを使う'}</p>
             <p className="text-[15px] text-ink-2">セルフタイマーは {timerSec ? `${timerSec} 秒` : 'オフ'} に設定されています（撮影画面で変えられます）。</p>
           </div>
         </li>

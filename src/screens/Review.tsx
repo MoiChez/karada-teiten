@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router'
 import { Camera } from 'lucide-react'
-import type { CaptureMode, Plane, PlaneRecord } from '../domain/types'
+import type { Plane, PlaneRecord } from '../domain/types'
 import { applyCorrection, correctedSet, requalify, resetCorrection } from '../domain/session'
 import { hasBlocking, hasMajor } from '../domain/quality'
 import { LandmarkEditor } from '../components/LandmarkEditor'
@@ -24,7 +24,6 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
   const navigate = useNavigate()
   const draft = usePlaneDraft(pose, plane)
   const consciousDraft = useDraft((s) => s.conscious)
-  const draftMode = useDraft((s) => s.mode)
   const updateRecord = useDraft((s) => s.updateRecord)
   const saveImages = useSettings((s) => s.settings.saveImages)
   const profile = useProfile()
@@ -35,7 +34,6 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
   const conscious = pose === 'conscious'
   const base = conscious ? '/measure/conscious' : '/measure'
   // 意識した姿勢は、いつもの姿勢と同じモード
-  const mode: CaptureMode = conscious ? (session?.captureMode ?? 'simple') : draftMode
   if (!draft) return <Navigate to={`${base}/capture/${plane}`} replace />
   const rec = draft.record
   const blocked = hasBlocking(rec.qualityFlags)
@@ -57,9 +55,9 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
   }
 
   const correctedLabel = nCorrected > 0 ? '補正を保存して' : ''
-  // 高精度モードは横向きを省略しない（意識した姿勢は、いつもの姿勢に横向きがある場合のみ）
+  // いつもの姿勢は正面と横向きの両方を撮る（意識した姿勢は任意なので、横向きを省ける。いつもの姿勢に横向きがある場合のみ撮る）
   const sideAvailable = !conscious || !!session?.side
-  const sideRequired = mode === 'precise' && sideAvailable
+  const sideRequired = !conscious
   const title = conscious
     ? `意識した姿勢：${plane === 'front' ? '正面' : '横向き'}の骨格`
     : plane === 'front'

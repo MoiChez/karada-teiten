@@ -49,6 +49,8 @@ export async function analyzePlane(params: {
   deviceTilt?: DeviceTilt
   /** 側面の向きをユーザーが指定した場合 */
   facingOverride?: 'left' | 'right'
+  /** 鏡の前で自撮りした写真（左右はすでに戻してある） */
+  mirrorSelfie?: boolean
 }): Promise<PlaneRecord> {
   const { plane, image } = params
   const det = await detectImage(image.canvas, params.model, { withMask: plane === 'side' })
@@ -74,6 +76,7 @@ export async function analyzePlane(params: {
       imageStats: image.stats,
       secondPersonScale: det.secondPersonScale,
       yawDeg: plane === 'front' ? estimateYawDeg(det.worldLandmarks) : undefined,
+      mirrorSelfie: params.mirrorSelfie || undefined,
     },
     landmarksRaw: landmarks,
     worldLandmarksRaw: det.worldLandmarks ?? [],

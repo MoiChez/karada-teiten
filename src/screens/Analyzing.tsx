@@ -35,7 +35,7 @@ export function Analyzing() {
           imagesSaved: false,
           modelVersion: modelVersion(POSE_MODEL),
         })
-        session.captureMode = draft.mode
+        session.shootStyle = draft.style
         setDone(3)
         const [profile, logs] = await Promise.all([data.getProfile(), data.listLogs()])
         const plan = buildPlan({
@@ -59,11 +59,7 @@ export function Analyzing() {
         setDone(5)
         // 画像を保存しない設定でも、アプリを開いている間は補正し直せるよう下書きを残す
         draft.setEditing(session.id)
-        if (draft.mode === 'precise') {
-          // 高精度モードは、続けて意識した姿勢も撮る（撮影画面の「あとで」で結果へ進める）
-          draft.startConscious(session.id)
-          navigate('/measure/conscious/capture/front', { replace: true })
-        } else navigate(`/session/${session.id}`, { replace: true })
+        navigate(`/session/${session.id}`, { replace: true })
       } catch (e) {
         setError(e instanceof Error ? e.message : '保存できませんでした')
       }

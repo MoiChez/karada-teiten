@@ -93,6 +93,5 @@ export const SNAP_FRACTION = 0.012
 /** 撮影位置を前回に合わせるときの目安（大きさの比と位置のずれ。体の高さに対する割合）。測定値の判定には使わない */
 export const FRAMING_TOLERANCE = 0.05
 
-/** 高精度モードで続けて撮る枚数と間隔（ミリ秒） */
+/** 以前の高精度モード（版 0.6 まで）で続けて撮った枚数。古い記録との比較の説明に使う */
 export const PRECISE_SHOTS = 5
-export const PRECISE_INTERVAL_MS = 500

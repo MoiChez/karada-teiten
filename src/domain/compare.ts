@@ -237,6 +237,13 @@ export function conditionWarnings(a: AssessmentSession, b: AssessmentSession): C
       message: `前回は${name(a.captureMode)}、今回は${name(b.captureMode)}で測りました。高精度モードは ${PRECISE_SHOTS} 枚の平均なので、値の揺れが小さくなっています。`,
     })
   }
+  if ((a.shootStyle ?? 'placed') !== (b.shootStyle ?? 'placed')) {
+    const name = (s: string | undefined) => (s === 'mirror' ? '鏡の前での自撮り' : 'スマホを置いての撮影')
+    w.push({
+      key: 'style',
+      message: `前回は${name(a.shootStyle)}、今回は${name(b.shootStyle)}でした。カメラの高さやスマホを持つ腕の位置が違うため、値が変わりやすくなります。`,
+    })
+  }
   if (a.imagesSaved !== b.imagesSaved) {
     w.push({ key: 'images', message: `${a.imagesSaved ? '今回' : '前回'}の写真は保存されていないため、写真の比較はできません（骨格で比べます）。` })
   }

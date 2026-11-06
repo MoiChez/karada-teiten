@@ -78,6 +78,13 @@ describe('過去比較', () => {
     expect(keys).toEqual(expect.arrayContaining(['front_correction', 'side_missing', 'model']))
   })
 
+  it('撮り方（置いて撮る / 鏡の前で自撮り）が違うと注意を出す。撮り方のない古い記録は置いて撮ったものとして扱う', () => {
+    const keys = (x: typeof a, y: typeof b) => compareSessions(x, y).warnings.map((w) => w.key)
+    expect(keys(a, { ...b, shootStyle: 'mirror' })).toContain('style')
+    expect(keys({ ...a, shootStyle: 'mirror' }, { ...b, shootStyle: 'mirror' })).not.toContain('style')
+    expect(keys(a, { ...b, shootStyle: 'placed' })).not.toContain('style')
+  })
+
   it('測り方（シンプル / 高精度）が違うと注意を出す。どちらかが記録前の測定なら出さない', () => {
     const keys = (x: typeof a, y: typeof b) => compareSessions(x, y).warnings.map((w) => w.key)
     expect(keys({ ...a, captureMode: 'simple' }, { ...b, captureMode: 'precise' })).toContain('mode')

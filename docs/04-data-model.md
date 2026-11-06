@@ -12,7 +12,7 @@
 | `routineLogs` | `id` | `date`, `routineId` | 運動の実施記録 |
 | `checkins` | `id` | `date` | その日のコンディション |
 | `plans` | `id` | `generatedAt`, `basedOnAssessmentId` | RecommendationPlan |
-| `settings` | `key` | — | 設定（画像保存・セルフタイマー・前回選んだ測り方など） |
+| `settings` | `key` | — | 設定（画像保存・セルフタイマー・前回選んだ撮り方など） |
 
 ## 2. 主要な型
 
@@ -46,7 +46,8 @@
   qualityFlags: QualityFlag[]                // 正面・側面の品質判定をまとめたもの
   recommendationSnapshot?: { planId: string; routineIds: string[] }
   checkinId?: string
-  captureMode?: 'simple' | 'precise'         // 測り方（この機能より前の記録にはない）
+  captureMode?: 'simple' | 'precise'         // 以前の測り方（版 0.6 までの記録だけ）
+  shootStyle?: 'placed' | 'mirror'            // 撮り方（版 0.7 から。ない記録は置いて撮ったもの）
   conscious?: ConsciousPose                  // 「意識した姿勢」。結果画面からあとで追加する
   imagesSaved: boolean
   modelVersion: string; appVersion: string; algorithmVersion: number
@@ -68,6 +69,7 @@ PlaneRecord {
     capturedAt: string
     facing?: 'left' | 'right'                // 側面のみ。被写体の顔が画像のどちらを向いているか
     deviceTilt?: { rollDeg: number; pitchDeg: number }  // カメラ撮影時の端末の傾き
+    mirrorSelfie?: boolean                   // 鏡の前で自撮りした写真（左右を戻してある）
     imageId?: string                         // 画像を保存した場合
   }
   landmarksRaw: Landmark[]                   // 33 点。x,y は 0..1、z は相対深度、visibility, presence

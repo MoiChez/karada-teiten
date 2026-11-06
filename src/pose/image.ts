@@ -32,8 +32,20 @@ async function finish(canvas: HTMLCanvasElement): Promise<PreparedImage> {
   return { canvas, blob, width: canvas.width, height: canvas.height, stats: computeImageStats(canvas) }
 }
 
-/** ファイルを読み込み、向き（EXIF）を反映して縮小する */
-export async function prepareFromFile(file: Blob): Promise<PreparedImage> {
+/** 左右を反転した複製（鏡の前で自撮りした写真を、ふつうに撮った写真の向きに戻す） */
+export function flipCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = src.width
+  c.height = src.height
+  const ctx = c.getContext('2d')!
+  ctx.translate(src.width, 0)
+  ctx.scale(-1, 1)
+  ctx.drawImage(src, 0, 0)
+  return c
+}
+
+/** ファイルを読み込み、向き（EXIF）を反映して縮小する。flip なら左右を反転する */
+export async function prepareFromFile(file: Blob, opts: { flip?: boolean } = {}): Promise<PreparedImage> {
   if (!file.type.startsWith('image/')) throw new Error('画像ファイルを選んでください')
   let bitmap: ImageBitmap
   try {
@@ -43,7 +55,7 @@ export async function prepareFromFile(file: Blob): Promise<PreparedImage> {
   }
   const canvas = drawScaled(bitmap, bitmap.width, bitmap.height)
   bitmap.close()
-  return finish(canvas)
+  return finish(opts.flip ? flipCanvas(canvas) : canvas)
 }
 
 /** カメラの映像から 1 枚切り出す（鏡像にはしない） */
