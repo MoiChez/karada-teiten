@@ -21,6 +21,17 @@ type LiveCheck = 'none' | 'partial' | 'ok' | 'loading'
 /** 1 回の撮影で選べる写真の最大枚数 */
 const MAX_FILES = 3
 
+/**
+ * カメラに頼む映像の大きさ（順に試す）。スマホのカメラはもともと横長で、縦に持つとブラウザが回して縦長にする。
+ * 縦長の大きさを頼むと、機種によっては横長の帯を切り出してしまい、頭や足が入らない。
+ * 縦に持っているのに横長の映像が来たら、次の頼み方を試す
+ */
+const CAMERA_SIZES: MediaTrackConstraints[] = [
+  { width: { ideal: 1920 }, height: { ideal: 1440 } },
+  { width: { ideal: 1440 }, height: { ideal: 1920 } },
+  { aspectRatio: { ideal: 3 / 4 }, height: { ideal: 1920 } },
+]
+
 export function Capture({ pose = 'habitual' }: { pose?: Pose }) {
   const { plane } = useParams()
   const sessionId = useDraft((s) => s.conscious.sessionId)
@@ -40,6 +51,9 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   const fileRef = useRef<HTMLInputElement>(null)
   const [cam, setCam] = useState<CamState>('starting')
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
+  // 何番目の頼み方で開いているか。どれでも横長だったら、いちばん高解像度の頼み方に戻して知らせる
+  const [camTry, setCamTry] = useState(0)
+  const [landscapeOnly, setLandscapeOnly] = useState(false)
   const [timer, setTimer] = useState<number>(settings.timerSec)
   const [phase, setPhase] = useState<{ kind: 'count'; n: number } | { kind: 'shoot'; k: number; total: number } | null>(null)
   const [running, setRunning] = useState(false)
@@ -81,10 +95,11 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
       if (!window.isSecureContext) return setCam('insecure')
       if (!navigator.mediaDevices?.getUserMedia) return setCam('unavailable')
       setCam('starting')
+      setVdims(null)
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode, width: { ideal: 1440 }, height: { ideal: 1920 } },
+          video: { facingMode, ...CAMERA_SIZES[camTry] },
         })
         if (stopped) return stream.getTracks().forEach((t) => t.stop())
         streamRef.current = stream
@@ -105,7 +120,19 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
       streamRef.current?.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
-  }, [facingMode])
+  }, [facingMode, camTry])
+
+  // 縦に持っているのに横長の映像なら、次の頼み方で開き直す
+  useEffect(() => {
+    if (cam !== 'live' || !vdims || landscapeOnly) return
+    if (!window.matchMedia('(orientation: portrait)').matches || vdims.h >= vdims.w) return
+    if (camTry < CAMERA_SIZES.length - 1) {
+      setCamTry(camTry + 1)
+    } else {
+      setLandscapeOnly(true)
+      setCamTry(0)
+    }
+  }, [cam, vdims, camTry, landscapeOnly])
 
   // 映像の縦横の大きさ（前回の骨格を重ねる座標に使う）
   useEffect(() => {
@@ -361,6 +388,9 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
               </StatusChip>
             )}
             {showGuide && guideRec && vdims && !aspectOk && <StatusChip>前回と写真の縦横比が違うため、前回の位置は表示できません</StatusChip>}
+            {landscapeOnly && (
+              <StatusChip warn>このスマホでは映像が横長になります。全身が入るまで離れるか、「写真を選ぶ」から縦に撮った写真を使ってください</StatusChip>
+            )}
           </div>
         )}
         {cam === 'live' && bottomText && !phase && (
@@ -430,6 +460,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         </div>
         <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
           <span className="text-sm text-paper/80">{mode === 'precise' ? `高精度モード（${shots} 枚の平均）` : 'シンプルモード（1 枚）'}</span>
+          {vdims && cam === 'live' && <span className="text-xs text-paper/55 num">映像 {vdims.w}×{vdims.h}</span>}
           {guideRec && (
             <Pill pressed={showGuide} onClick={() => setShowGuide(!showGuide)}>
               <History aria-hidden className="mr-1 inline size-4 align-[-3px]" />
@@ -469,7 +500,11 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
           )}
           <button
             type="button"
-            onClick={() => setFacingMode(facingMode === 'environment' ? 'user' : 'environment')}
+            onClick={() => {
+              setFacingMode(facingMode === 'environment' ? 'user' : 'environment')
+              setCamTry(0)
+              setLandscapeOnly(false)
+            }}
             disabled={running || (cam !== 'live' && cam !== 'starting')}
             className="flex min-h-14 min-w-16 flex-col items-center justify-center gap-0.5 rounded-xl text-xs text-paper/90 hover:bg-white/10 disabled:opacity-40"
           >
