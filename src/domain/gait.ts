@@ -4,7 +4,7 @@ import type { Landmark, Point } from './types'
 import { MIN_VISIBILITY, NOTICEABLE_K } from './constants'
 import { RAD2DEG, dist, mean } from './geometry'
 
-export const GAIT_ALGORITHM_VERSION = 1
+export const GAIT_ALGORITHM_VERSION = 2
 
 export interface GaitFrame {
   /** 撮影の開始からの時刻（ミリ秒） */
@@ -224,17 +224,31 @@ function splitByDirection(run: Prepared[]): Prepared[][] {
   const hx = smooth3(run.map((f) => midP(f.p[23], f.p[24]).x))
   const legs = run.map((f) => legLength(f.p))
   const leg = quantile(legs, 0.9)
-  const minSpeed = 0.3 * leg // 脚の長さ / 秒
+  const minSpeed = 0.2 * leg // 脚の長さ / 秒
+  // 前後 0.5 秒の腰の進み（1 歩の中の速さの揺れをならす）
   const sgn: number[] = run.map((f, i) => {
     let j0 = i
     let j1 = i
-    while (j0 > 0 && f.t - run[j0 - 1].t <= 250) j0--
-    while (j1 < run.length - 1 && run[j1 + 1].t - f.t <= 250) j1++
+    while (j0 > 0 && f.t - run[j0 - 1].t <= 500) j0--
+    while (j1 < run.length - 1 && run[j1 + 1].t - f.t <= 500) j1++
     const dt = (run[j1].t - run[j0].t) / 1000
     if (dt <= 0) return 0
     const v = (hx[j1] - hx[j0]) / dt
     return Math.abs(v) < minSpeed ? 0 : Math.sign(v)
   })
+  // 同じ向きに挟まれた、0.4 秒未満の遅い区間は、通過の続きとみなす
+  for (let i = 0; i < sgn.length; ) {
+    if (sgn[i] !== 0) {
+      i++
+      continue
+    }
+    let j = i
+    while (j < sgn.length && sgn[j] === 0) j++
+    const before = i > 0 ? sgn[i - 1] : 0
+    const after = j < sgn.length ? sgn[j] : 0
+    if (before !== 0 && before === after && run[j].t - run[i - 1].t < 400) for (let k = i; k < j; k++) sgn[k] = before
+    i = j
+  }
   const out: Prepared[][] = []
   let cur: Prepared[] = []
   let curSign = 0
@@ -367,8 +381,8 @@ function stepValues(pd: PassData, typical: number): StepValues[] {
   const intervals = pass.strikes.slice(1).map((t, k) => ({ a: pass.strikes[k], b: t }))
   for (const { a, b } of intervals) {
     const ms = b - a
-    // 山を 1 つ見落とした区間（ほかの歩の 1.6 倍以上）は使わない
-    if (ms < STEP_MS.min || ms > STEP_MS.max || ms > 1.6 * typical) continue
+    // 山を 1 つ見落とした区間（ほかの歩の 1.6 倍以上）と、推定の乱れで余分な山が入った区間（0.6 倍以下）は使わない
+    if (ms < STEP_MS.min || ms > STEP_MS.max || ms > 1.6 * typical || ms < 0.6 * typical) continue
     const fs = frames.filter((f) => f.t >= a && f.t <= b)
     if (fs.length < 2) continue
     const leans: number[] = []
@@ -460,7 +474,13 @@ export function analyzeGait(input: GaitInput): GaitAnalysis {
   const warnings: string[] = []
   const used = passes.filter((p) => !p.pass.excluded)
   if (!validFrames) warnings.push('全身が画面に写ったコマが見つかりませんでした。カメラから離れて、頭から足まで入るようにしてください。')
-  else if (!used.length) warnings.push('全身が写った状態で、画面を横切って歩く場面が見つかりませんでした。')
+  else if (!used.length) {
+    const reasons = [...new Set(passes.map((p) => p.pass.excluded).filter(Boolean))]
+    if (reasons.some((r) => r?.includes('近づく')))
+      warnings.push('画面を横切る場面はありましたが、カメラに近づく・遠ざかる向きに歩いていたため使えませんでした。歩く線とカメラがまっすぐ向き合うように置いてください。')
+    else if (reasons.length) warnings.push('画面を横切る場面はありましたが、横切った距離が短く使えませんでした。カメラから離れて、画面の端から端まで歩いてください。')
+    else warnings.push('全身が写った状態で、画面を横切って歩く場面が見つかりませんでした。')
+  }
   if (fps < 20) warnings.push(`1 秒あたり ${Math.round(fps)} コマのため、テンポと歩幅の誤差が大きくなります。`)
   for (const p of used) {
     if (Math.abs(p.pass.scaleChange) > SCALE_WARN) {
@@ -579,10 +599,36 @@ export function upgradeGait(r: GaitRecord): GaitRecord {
 export function turnsFromBody(lm: Landmark[], width: number, height: number): number | null {
   if (lm.length < 33) return null
   const ok = (a: number, b: number) => Math.max(vis(lm[a]), vis(lm[b])) >= MIN_VISIBILITY
-  if (!ok(11, 12) || !ok(23, 24)) return null
-  const S = { x: ((lm[11].x + lm[12].x) / 2) * width, y: ((lm[11].y + lm[12].y) / 2) * height }
-  const P = { x: ((lm[23].x + lm[24].x) / 2) * width, y: ((lm[23].y + lm[24].y) / 2) * height }
-  const theta = Math.atan2(S.x - P.x, -(S.y - P.y)) * RAD2DEG
-  const k = Math.round(-theta / 90)
+  if (!ok(11, 12) || !ok(23, 24) || !ok(27, 28)) return null
+  const at = (a: number, b: number) => ({ x: ((lm[a].x + lm[b].x) / 2) * width, y: ((lm[a].y + lm[b].y) / 2) * height })
+  const S = at(11, 12)
+  const P = at(23, 24)
+  const A = at(27, 28)
+  const angle = (from: Point, to: Point) => Math.atan2(to.x - from.x, -(to.y - from.y)) * RAD2DEG
+  const trunk = angle(P, S)
+  const legs = angle(A, P)
+  // 胴と脚の向きが食い違う（推定が乱れている）ときは決めない
+  let diff = Math.abs(trunk - legs) % 360
+  if (diff > 180) diff = 360 - diff
+  if (diff > 45) return null
+  const k = Math.round(-trunk / 90)
   return (((k % 4) + 5) % 4) - 1
+}
+
+/**
+ * 何コマかの体の向きから、映像を回す回数を決める。過半数（3 コマ以上）が同じ向きを示したときだけ回す。
+ * 1 コマの推定の乱れ（骨格が逆さに出るなど）で、映像全体を回してしまわないため
+ */
+export function voteTurns(votes: (number | null)[]): number {
+  const counts = new Map<number, number>()
+  for (const k of votes) if (k !== null) counts.set(k, (counts.get(k) ?? 0) + 1)
+  let best = 0
+  let bestCount = 0
+  for (const [k, c] of counts) {
+    if (c > bestCount) {
+      best = k
+      bestCount = c
+    }
+  }
+  return best !== 0 && bestCount >= 3 ? best : 0
 }

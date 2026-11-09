@@ -1,7 +1,7 @@
 // 歩き方の撮影と推定。カメラの映像をコマごとに JPEG で一時的にため、撮り終わってから 1 コマずつ骨格を推定する
 // （その場で推定すると、スマホでは 1 秒あたりのコマ数が足りないため）。動画ファイルからも同じようにコマを取り出す。
 // ためたコマは推定が終われば捨てる（保存しない）
-import { packLandmarks, turnsFromBody } from '../domain/gait'
+import { packLandmarks, turnsFromBody, voteTurns } from '../domain/gait'
 import { POSE_MODEL, createVideoLandmarker, detectImage } from './landmarker'
 
 /** 推定にかけるコマの長い辺（ピクセル）。推定モデルの入力より十分に大きい */
@@ -198,23 +198,20 @@ const normTurns = (k: number) => (((k % 4) + 5) % 4) - 1
 
 /** ためたコマを順に推定する。写っている人が横に倒れていれば、さらに回して起こす */
 export async function detectRecorded(clip: RecordedClip, turns: number, onProgress: (p: Progress) => void, stopRef?: { current: boolean }): Promise<DetectedClip> {
-  let extra = 0
   const n = clip.frames.length
+  const votes: (number | null)[] = []
   for (const frac of [0.5, 0.3, 0.7, 0.15, 0.85]) {
     const f = clip.frames[Math.floor((n - 1) * frac)]
     if (!f) break
     const bmp = await createImageBitmap(f.blob)
     try {
       const r = await detectImage(bmp, POSE_MODEL)
-      const k = r.landmarks ? turnsFromBody(r.landmarks, clip.width, clip.height) : null
-      if (k !== null) {
-        extra = k
-        break
-      }
+      votes.push(r.landmarks ? turnsFromBody(r.landmarks, clip.width, clip.height) : null)
     } finally {
       bmp.close()
     }
   }
+  const extra = voteTurns(votes)
   const fix = extra ? rotatedCanvas(clip.width, clip.height, extra) : null
   const lm = await createVideoLandmarker(POSE_MODEL)
   const out: { t: number; p: number[] }[] = []
@@ -278,17 +275,14 @@ export async function detectVideoFile(file: File, onProgress: (p: Progress) => v
     const vw = video.videoWidth
     const vh = video.videoHeight
 
-    // 人が横向きに写っていないか（横に倒れて写っていれば回す）
-    let turns = 0
+    // 人が横向きに写っていないか（5 コマのうち 3 コマ以上が横倒しを示したときだけ回す）
+    const votes: (number | null)[] = []
     for (const frac of [0.5, 0.3, 0.7, 0.15, 0.85]) {
       await seek(video, end * frac)
       const r = await detectImage(video, POSE_MODEL)
-      const k = r.landmarks ? turnsFromBody(r.landmarks, vw, vh) : null
-      if (k !== null) {
-        turns = k
-        break
-      }
+      votes.push(r.landmarks ? turnsFromBody(r.landmarks, vw, vh) : null)
     }
+    const turns = voteTurns(votes)
 
     const { canvas, draw } = rotatedCanvas(vw, vh, turns)
     const total = Math.floor(end / step) + 1

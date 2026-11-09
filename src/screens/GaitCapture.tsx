@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ChevronLeft, FileVideo, Loader2, Video } from 'lucide-react'
-import { FOOTWEAR_LABELS, analyzeGait, fullBodyInFrame, gaitInputOf, turnsFromBody, type Footwear, type GaitRecord } from '../domain/gait'
+import { FOOTWEAR_LABELS, analyzeGait, fullBodyInFrame, gaitInputOf, turnsFromBody, voteTurns, type Footwear, type GaitRecord } from '../domain/gait'
 import { quarterTurnsOf, screenRollDeg } from '../domain/tilt'
 import type { DeviceTilt } from '../domain/types'
 import { APP_VERSION, newId } from '../domain/session'
@@ -47,6 +47,7 @@ export function GaitCapture() {
   const fileRef = useRef<HTMLInputElement>(null)
   const stopRef = useRef(false)
   const bodyTurns = useRef<number | null>(null)
+  const turnVotes = useRef<(number | null)[]>([])
   const { tilt, latest, needsPermission, request } = useDeviceTilt()
 
   // 足元は前回と同じものを初期値にする
@@ -129,8 +130,10 @@ export function GaitCapture() {
           if (!r.landmarks) setLive('none')
           else {
             setLive(fullBodyInFrame(r.landmarks) ? 'ok' : 'partial')
+            // 直近 5 回の推定の多数決で、映像の回し方を決める（1 回の乱れで回さない）
             const k = turnsFromBody(r.landmarks, v.videoWidth, v.videoHeight)
-            if (k !== null) bodyTurns.current = k
+            if (k !== null) turnVotes.current = [...turnVotes.current, k].slice(-5)
+            if (turnVotes.current.length >= 3) bodyTurns.current = voteTurns(turnVotes.current)
           }
         } catch {
           if (alive) setLive(null)
@@ -336,7 +339,9 @@ export function GaitCapture() {
                 撮った動画を選ぶ
               </Button>
               <input ref={fileRef} type="file" accept="video/*" className="hidden" onChange={(e) => onFile(e.target.files)} />
-              <p className="text-sm text-ink-3">スマホのカメラで横向きに撮った、往復の動画も使えます（最初の {FILE_MAX_MS / 1000} 秒まで）。</p>
+              <p className="text-sm text-ink-3">
+                スマホのカメラで横向きに撮った、往復の動画も使えます（最初の {FILE_MAX_MS / 1000} 秒まで）。カメラは動かさずに置いて撮り、スローモーションにしないでください。
+              </p>
             </div>
           </>
         )}

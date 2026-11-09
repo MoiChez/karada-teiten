@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Landmark } from '../src/domain/types'
-import { analyzeGait, compareGait, gaitMetric, packLandmarks, unpackLandmarks, type GaitFrame } from '../src/domain/gait'
+import { analyzeGait, compareGait, gaitMetric, packLandmarks, turnsFromBody, unpackLandmarks, voteTurns, type GaitFrame } from '../src/domain/gait'
 import { fixSwaps, gaitClips } from '../src/domain/gaitPose'
 import { quarterTurnsOf, screenRollDeg, tiltFromOrientation } from '../src/domain/tilt'
 import { gaussian, rng } from '../src/domain/geometry'
@@ -155,6 +155,17 @@ describe('歩き方の計算', () => {
     expect(changes.find((c) => c.key === 'trunk_lean')?.noticeable).toBe(false)
   })
 
+  it('カメラに近づく・遠ざかる向きに歩いたときは、その理由を出す', () => {
+    // 歩くにつれて体が小さくなる（遠ざかる）
+    const frames = simulate({ dirs: [1] }).map((f) => {
+      const s = 1 - 0.5 * (f.t / 5000)
+      return { ...f, lm: f.lm.map((l) => ({ ...l, x: 0.5 + (l.x - 0.5) * s, y: 0.9 - (0.9 - l.y) * s })) }
+    })
+    const a = analyzeGait({ frames, width: W, height: H })
+    expect(a.metrics.every((m) => m.status === 'unavailable')).toBe(true)
+    expect(a.warnings[0]).toContain('近づく・遠ざかる')
+  })
+
   it('全身が写っていない・横切っていないときは測定不可にする', () => {
     const none = analyzeGait({ frames: [], width: W, height: H })
     expect(none.metrics.every((m) => m.status === 'unavailable')).toBe(true)
@@ -211,6 +222,39 @@ describe('歩き方の計算', () => {
     expect(back[0].x).toBeCloseTo(0.1235, 4)
     expect(back[0].y).toBeCloseTo(0.9877, 4)
     expect(back[0].visibility).toBeCloseTo(0.88, 2)
+  })
+})
+
+describe('映像の向き', () => {
+  const lmOf = (pts: { x: number; y: number }[]) => pts.map((p) => ({ x: p.x / W, y: p.y / H, z: 0, visibility: 0.95 }))
+  const rot = (p: { x: number; y: number }, deg: number) => {
+    // 中身を時計回りに deg 回す
+    const r = rad(deg)
+    const dx = p.x - W / 2
+    const dy = p.y - H / 2
+    return { x: W / 2 + dx * Math.cos(r) - dy * Math.sin(r), y: H / 2 + dx * Math.sin(r) + dy * Math.cos(r) }
+  }
+
+  it('立っている人ならそのまま、横倒しなら起こす向きを返す', () => {
+    const pts = walkerPoints(BASE, 0.2, 1, 640)
+    expect(turnsFromBody(lmOf(pts), W, H)).toBe(0)
+    // 中身が時計回りに 90° 倒れている（頭が右）→ 反時計回りに 1 回（-1）
+    expect(turnsFromBody(lmOf(pts.map((p) => rot(p, 90))), W, H)).toBe(-1)
+    expect(turnsFromBody(lmOf(pts.map((p) => rot(p, -90))), W, H)).toBe(1)
+  })
+
+  it('胴と脚の向きが食い違うコマでは決めない', () => {
+    const pts = walkerPoints(BASE, 0.2, 1, 640)
+    // 足首だけ頭の上に出た、乱れた推定
+    const broken = pts.map((p, i) => (i === 27 || i === 28 ? { x: p.x, y: 20 } : p))
+    expect(turnsFromBody(lmOf(broken), W, H)).toBeNull()
+  })
+
+  it('3 コマ以上がそろったときだけ回す', () => {
+    expect(voteTurns([2, null, 0, 0, null])).toBe(0)
+    expect(voteTurns([2, 2, 0, null, null])).toBe(0)
+    expect(voteTurns([-1, -1, -1, 0, null])).toBe(-1)
+    expect(voteTurns([null, null, null])).toBe(0)
   })
 })
 
