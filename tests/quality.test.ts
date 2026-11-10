@@ -23,6 +23,39 @@ describe('品質チェック', () => {
     expect(flags.find((f) => f.key === 'body_cut_off')!.message).toContain('足先が写真の外に出ています')
   })
 
+  it('かかとが隠れているときは「かかと」と伝え、ほかの点で数値を出せるので撮り直しをすすめるだけにする', () => {
+    const flags = assessQuality({ plane: 'front', landmarks: frontPose({ vis: { 29: 0.3, 30: 0.3 } }), width: W, height: H })
+    const f = flags.find((x) => x.key === 'body_cut_off')!
+    expect(f.severity).toBe('major')
+    expect(f.message).toContain('かかとがはっきり写っていません')
+    expect(f.message).toContain('ズボンの裾')
+    expect(f.message).not.toContain('足先')
+    expect(hasBlocking(flags)).toBe(false)
+  })
+
+  it('足元が写っておらず頭から足元までの長さを測れないときは、分析できないと先に伝える', () => {
+    const lms = frontPose()
+    for (const i of [27, 28, 29, 30, 31, 32]) lms[i] = { ...lms[i], y: 1.03 }
+    const flags = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
+    const f = flags.find((x) => x.key === 'body_cut_off')!
+    expect(f.severity).toBe('blocking')
+    expect(f.message).toContain('かかと・足先が写真の外に出ていて')
+    expect(f.message).toContain('数値を出せません')
+    expect(hasBlocking(flags)).toBe(true)
+    // そのまま進めても、どの値も出ない
+    const s = buildSession({ front: record('front', lms), imagesSaved: false, modelVersion: 'test' })
+    expect(s.computedMetrics.filter((m) => m.plane === 'front' && m.rawValue !== null)).toEqual([])
+  })
+
+  it('写真の中で隠れて分析できないときも、点を合わせれば計算できる', () => {
+    const lms = frontPose({ vis: { 27: 0.2, 28: 0.2, 29: 0.2, 30: 0.2 } })
+    const before = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
+    expect(before.find((x) => x.key === 'body_cut_off')!.severity).toBe('blocking')
+    expect(before.find((x) => x.key === 'body_cut_off')!.message).toContain('点をドラッグして')
+    const after = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H, correctedIdx: new Set([29, 30]) })
+    expect(hasBlocking(after)).toBe(false)
+  })
+
   it('頭が写真の中にあっても、はっきり写っていなければ、隠れや暗さを確かめるよう伝える', () => {
     const flags = assessQuality({ plane: 'front', landmarks: frontPose({ vis: { 7: 0.2 } }), width: W, height: H })
     const f = flags.find((x) => x.key === 'body_cut_off')!

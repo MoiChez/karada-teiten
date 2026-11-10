@@ -78,11 +78,22 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
   const cut = extremities.filter((i) => !ok(i))
   if (cut.length > 0) {
     const isHead = (i: number) => i === LM.leftEar || i === LM.rightEar
-    const part = cut.every(isHead) ? '頭' : cut.some(isHead) ? '頭と足先' : '足先'
+    const isHeel = (i: number) => i === LM.leftHeel || i === LM.rightHeel
+    const part = [cut.some(isHead) && '頭', cut.some(isHeel) && 'かかと', cut.some((i) => !isHead(i) && !isHeel(i)) && '足先']
+      .filter(Boolean)
+      .join('・')
+    const hiders = cut.every(isHead) ? '髪や物' : cut.some(isHead) ? '髪・ズボンの裾・物' : 'ズボンの裾や物'
+    // 頭（耳か鼻）と足元（かかとか足首）の両方がないと体の高さ H が決まらず、どの値も計算できない。
+    // そのまま進めると全項目が「評価できません」の記録になるため、先に分析できないと伝える
+    const noScale = bodyHeightPx(plane, px, ok, input.nearSide) === null
     const message = cut.some((i) => !inFrame(i))
-      ? `${part}が写真の外に出ています。頭からつま先まで入るように撮ってください`
-      : `${part}がはっきり写っていません。髪・服・物で隠れていないか、暗すぎないかを確かめてください`
-    flags.push(flag(plane, 'body_cut_off', 'major', message, cut.length))
+      ? noScale
+        ? `${part}が写真の外に出ていて、頭から足元までの長さを測れないため、数値を出せません。頭からつま先まで入るように撮り直してください`
+        : `${part}が写真の外に出ています。頭からつま先まで入るように撮ってください`
+      : noScale
+        ? `${part}がはっきり写っていないため、頭から足元までの長さを測れず、数値を出せません。${hiders}で隠れていないか、暗すぎないかを確かめてください。写っている場合は、点をドラッグして位置を合わせると計算できます`
+        : `${part}がはっきり写っていません。${hiders}で隠れていないか、暗すぎないかを確かめてください`
+    flags.push(flag(plane, 'body_cut_off', noScale ? 'blocking' : 'major', message, cut.length))
   }
 
   const core =
