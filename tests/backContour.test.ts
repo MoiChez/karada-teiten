@@ -180,7 +180,7 @@ describe('指標として計算する', () => {
 
   it('ばらつきは輪郭の想定誤差から求め、1 枚ごとの値の揺れ ÷ √枚数 のほうが大きければそれに広げる', () => {
     const single = metric(sideRecord(contour(30)), 'side_back_upper')!
-    // 想定誤差（体の高さの 0.2%）での角度のばらつきは数度
+    // 想定誤差（体の高さの 0.3%）での角度のばらつきは数度
     expect(single.uncertainty!).toBeGreaterThan(1)
     expect(single.uncertainty!).toBeLessThan(10)
     const pose = sidePose()

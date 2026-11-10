@@ -6,6 +6,7 @@ import { AREA_LABELS, confidenceLabel, fmtDate, fmtShortDate } from '../domain/f
 import { gaugeRows } from '../domain/gauge'
 import { deriveHypotheses } from '../domain/hypotheses'
 import { buildPlan } from '../domain/recommend/engine'
+import { compareConscious } from '../domain/conscious'
 import { correctedSet, correctionDiffs } from '../domain/session'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../data/db'
@@ -59,7 +60,7 @@ function ResultBody({ s }: { s: AssessmentSession }) {
   const plan = useMemo(
     () =>
       storedPlan ??
-      buildPlan({ traits: s.postureTraits, profile: profile ?? undefined, recentLogs: logs?.slice(-30), fatigue: checkin?.fatigueRating, basedOnAssessmentId: s.id, lastAssessmentAt: s.createdAt }),
+      buildPlan({ traits: s.postureTraits, profile: profile ?? undefined, recentLogs: logs?.slice(-30), fatigue: checkin?.fatigueRating, basedOnAssessmentId: s.id, lastAssessmentAt: s.createdAt, conscious: compareConscious(s) }),
     [storedPlan, s, profile, logs, checkin],
   )
   const priority = plan.routines.filter((r) => r.slot === 'priority')
@@ -121,8 +122,13 @@ function ResultBody({ s }: { s: AssessmentSession }) {
               </li>
             ))}
           </ul>
-        ) : (
-          <p className="mt-2 text-[17px]">測定のばらつきを超える目立った差は、今回の写真からは見られませんでした。</p>
+        ) : s.front ? (
+          <p className="mt-2 text-[17px]">正面の写真からは、測定のばらつきを超える目立った差は見られませんでした。</p>
+        ) : null}
+        {s.side && (
+          <p className={cx('text-[15px] text-ink-2', s.front ? 'mt-3 border-t border-line pt-3' : 'mt-2')}>
+            横向きは、頭・肩・骨盤・膝の前後の位置を記録しました。真上や線上がよい位置とは限らないため、1 回の測定では良し悪しを判定しません。次の測定から、変化をお知らせします。
+          </p>
         )}
         <p className="mt-3 text-sm text-ink-3">
           医療的な診断ではありません。数値は写真から推定した目印の位置関係で、あなた自身の変化を見るためのものです。
@@ -326,8 +332,9 @@ function ResultBody({ s }: { s: AssessmentSession }) {
 }
 
 function TraitRow({ t }: { t: PostureTrait }) {
-  const tone = t.status === 'noticeable' ? 'attention' : t.status === 'within_noise' ? 'neutral' : 'neutral'
-  const label = t.status === 'noticeable' ? '差が見られる' : t.status === 'within_noise' ? 'ばらつきの範囲内' : t.status === 'unassessable' ? '評価不可' : '未測定'
+  const tone = t.status === 'noticeable' ? 'attention' : t.status === 'recorded' ? 'measure' : 'neutral'
+  const label =
+    t.status === 'noticeable' ? '差が見られる' : t.status === 'within_noise' ? 'ばらつきの範囲内' : t.status === 'recorded' ? '位置の記録' : t.status === 'unassessable' ? '評価不可' : '未測定'
   return (
     <li className="rounded-[var(--radius-control)] bg-surface px-3.5 py-3">
       <div className="flex items-start justify-between gap-2">

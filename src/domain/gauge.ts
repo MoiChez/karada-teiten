@@ -17,7 +17,7 @@ export const GAUGE_AXES: Record<GaugeAxisId, GaugeAxis> = {
   // 正面の写真と同じ並び（写っている人の右が画面の左）
   lateral: { id: 'lateral', left: '右', center: '差なし', right: '左' },
   leg: { id: 'leg', left: '内側', center: '線上', right: '外側' },
-  sagittal: { id: 'sagittal', left: '前', center: '差なし', right: '後ろ' },
+  sagittal: { id: 'sagittal', left: '前', center: '真上・線上', right: '後ろ' },
   plumb: { id: 'plumb', left: '前', center: '足首の真上', right: '後ろ' },
   pitch: { id: 'pitch', left: '上向き', center: '水平', right: '下向き' },
 }

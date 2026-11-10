@@ -75,6 +75,17 @@ describe('保存と削除', () => {
     expect(got.algorithmVersion).toBeGreaterThan(0)
     expect(got.computedMetrics.length).toBeGreaterThan(0)
   })
+
+  it('再計算したセッションでは、以前の計算で作ったおすすめを捨てる', async () => {
+    const r = freshRepo()
+    const s = { ...makeSession('2026-10-01T09:00:00.000Z'), algorithmVersion: 0, recommendationSnapshot: { planId: 'p_old', routineIds: ['x'] } }
+    await r.db.assessments.put(s)
+    await r.db.plans.put({ id: 'p_old', generatedAt: s.createdAt, goalTags: [], routines: [], habitSuggestions: [], reviewTiming: { days: 14, text: '' } })
+    const got = (await r.getSession(s.id))!
+    expect(got.recommendationSnapshot).toBeUndefined()
+    expect(await r.db.plans.count()).toBe(0)
+    expect((await r.db.assessments.get(s.id))!.recommendationSnapshot).toBeUndefined()
+  })
 })
 
 describe('エクスポートとインポート', () => {

@@ -77,7 +77,12 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
       : [near.ear, near.heel, near.foot]
   const cut = extremities.filter((i) => !ok(i))
   if (cut.length > 0) {
-    flags.push(flag(plane, 'body_cut_off', 'major', '頭か足先が写っていないか、隠れています。頭からつま先まで入るように撮ってください', cut.length))
+    const isHead = (i: number) => i === LM.leftEar || i === LM.rightEar
+    const part = cut.every(isHead) ? '頭' : cut.some(isHead) ? '頭と足先' : '足先'
+    const message = cut.some((i) => !inFrame(i))
+      ? `${part}が写真の外に出ています。頭からつま先まで入るように撮ってください`
+      : `${part}がはっきり写っていません。髪・服・物で隠れていないか、暗すぎないかを確かめてください`
+    flags.push(flag(plane, 'body_cut_off', 'major', message, cut.length))
   }
 
   const core =
@@ -102,11 +107,15 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
     const shoulderW = dist(px(LM.leftShoulder), px(LM.rightShoulder))
     const torso = dist(mid(px(LM.leftShoulder), px(LM.rightShoulder)), mid(px(LM.leftHip), px(LM.rightHip)))
     const ratio = torso > 0 ? shoulderW / torso : 0
-    if (plane === 'front' && ratio < QUALITY.frontShoulderRatioMin) {
-      flags.push(flag(plane, 'orientation_front', 'major', '体が斜めを向いている可能性があります。カメラに対して正面を向いてください', ratio))
+    // 奥行き（z）から見た肩・骨盤の線の向き。肩幅が十分に見えていても、体が斜めなら左右の高さの差に奥行きが混ざる
+    const yawOf = (l: number, r: number) =>
+      Math.atan2((landmarks[l].z ?? 0) - (landmarks[r].z ?? 0), Math.abs(landmarks[l].x - landmarks[r].x)) * RAD2DEG
+    const yaw = Math.abs((yawOf(LM.leftShoulder, LM.rightShoulder) + yawOf(LM.leftHip, LM.rightHip)) / 2)
+    if (plane === 'front' && (ratio < QUALITY.frontShoulderRatioMin || yaw > QUALITY.frontYawMaxDeg)) {
+      flags.push(flag(plane, 'orientation_front', 'major', '体が斜めを向いているようです。この写真では左右の差を評価しません。カメラに対して正面を向いて撮り直してください', ratio))
     }
     if (plane === 'side' && ratio > QUALITY.sideShoulderRatioMax) {
-      flags.push(flag(plane, 'orientation_side', 'major', '体が真横を向いていない可能性があります。カメラに対して横向きに立ってください', ratio))
+      flags.push(flag(plane, 'orientation_side', 'major', '体が真横を向いていないようです。この写真では前後の位置を記録しません。カメラに対して真横を向いて撮り直してください', ratio))
     }
   }
 
@@ -128,6 +137,11 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
     flags.push(flag(plane, 'too_small', 'minor', '体が小さく写っています。もう少し近づくと精度が上がります', H / height))
   }
 
+  // 傾きセンサーの値がない写真（選んだ写真、センサーを使えない端末）は、スマホの傾きを差し引けない
+  if (!tilt) {
+    flags.push(flag(plane, 'tilt_unknown', 'minor', '撮影時のスマホの傾きを確認できませんでした。スマホが傾いていた場合、その分が角度の値に含まれます'))
+  }
+
   return flags
 }
 
@@ -142,11 +156,7 @@ export function hasMajor(flags: QualityFlag[]): boolean {
 /**
  * 側面の向き: カメラ側の半身（visibility が高い方）と、顔が画像の左右どちらを向いているか
  */
-export function detectSideOrientation(
-  landmarks: Landmark[],
-  width: number,
-  height: number,
-): { nearSide: 'left' | 'right'; facing: 'left' | 'right' } {
+export function detectSideOrientation(landmarks: Landmark[]): { nearSide: 'left' | 'right'; facing: 'left' | 'right' } {
   const leftSet = [7, 11, 23, 25, 27, 29, 31]
   const rightSet = [8, 12, 24, 26, 28, 30, 32]
   const avgVis = (set: number[]) => set.reduce((s, i) => s + visibilityOf(landmarks[i]), 0) / set.length
@@ -158,19 +168,7 @@ export function detectSideOrientation(
   else nearSide = avgZ(leftSet) <= avgZ(rightSet) ? 'left' : 'right'
 
   const s = sidePoints(nearSide)
-  const x = (i: number) => (landmarks[i]?.x ?? 0) * width
-  void height
+  const x = (i: number) => landmarks[i]?.x ?? 0
   const cue = x(LM.nose) - x(s.ear) + (x(s.foot) - x(s.heel))
   return { nearSide, facing: cue >= 0 ? 'right' : 'left' }
-}
-
-/** ワールド座標の肩の線から体の回旋（度）を推定する。正面を向いていれば 0 付近 */
-export function estimateYawDeg(world: Landmark[] | null | undefined): number | undefined {
-  if (!world || world.length < 33) return undefined
-  const l = world[LM.leftShoulder]
-  const r = world[LM.rightShoulder]
-  const dx = l.x - r.x
-  const dz = l.z - r.z
-  if (dx === 0 && dz === 0) return undefined
-  return Math.atan2(dz, Math.abs(dx)) * RAD2DEG
 }

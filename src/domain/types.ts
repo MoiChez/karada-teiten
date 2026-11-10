@@ -90,6 +90,7 @@ export type QualityFlagKey =
   | 'low_contrast'
   | 'blurry'
   | 'device_tilt'
+  | 'tilt_unknown'
   | 'mirrored_possible'
   | 'uncertain_points'
 
@@ -129,7 +130,7 @@ export interface ImageMetadata {
   imageId?: string
   /** 2 人目の大きさ（H 比）。複数人の判定用 */
   secondPersonScale?: number
-  /** ワールド座標の肩の線から推定した体の回旋（度）。正面なら 0 付近 */
+  /** 以前の版が記録していた体の回旋（度）。今は記録も利用もしない */
   yawDeg?: number
   /** 鏡の前で自撮りした写真（左右を戻してから分析・保存している） */
   mirrorSelfie?: boolean
@@ -271,7 +272,8 @@ export type TraitKey =
   | 'swayback_related'
   | 'knee_hyperextension'
 
-export type TraitStatus = 'noticeable' | 'within_noise' | 'unassessable' | 'not_measured'
+/** recorded: 位置の記録だけ（横向きの特徴。1 回の測定では差があるとも、ないとも言わない） */
+export type TraitStatus = 'noticeable' | 'within_noise' | 'recorded' | 'unassessable' | 'not_measured'
 
 export interface PostureTrait {
   key: TraitKey

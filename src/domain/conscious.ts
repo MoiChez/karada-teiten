@@ -1,24 +1,26 @@
 // 「いつもの姿勢」と「意識した姿勢」（自分が良いと思う姿勢）の比較。
 // 差が意識で変わるか（意識づけで変えられる差か）、意識しても残るか（体を動かすメニューを組み合わせたい差か）を分ける。
 // 変化の判定は前回との比較と同じ: |差| > K × √(σa² + σb²)
+// 横向きの前後の位置（位置の記録だけにする指標）は、差が残るかどうかは言わず、意識で小さくなったか・大きくなったかだけを伝える
 import type { AssessmentSession, ComputedMetric, MetricKey, Plane, TraitKey } from './types'
 import { NOTICEABLE_K } from './constants'
 import { METRIC_TO_TRAIT } from './compare'
 import { fmtAbs } from './format'
-import { towardPhrase } from './metrics'
+import { isTracked, towardPhrase } from './metrics'
 
-export type ConsciousEffect = 'resolved' | 'reduced' | 'remains' | 'increased' | 'overshoot'
+export type ConsciousEffect = 'resolved' | 'reduced' | 'smaller' | 'remains' | 'increased' | 'overshoot'
 
 export const CONSCIOUS_EFFECT_LABELS: Record<ConsciousEffect, string> = {
   resolved: 'ばらつきの範囲まで小さく',
   reduced: '小さくなるが残る',
+  smaller: '小さくなる',
   remains: '変わりにくい',
   increased: '大きくなる',
   overshoot: '反対の向きへ',
 }
 
 /** 意識すると小さくなる差（その立ち方の意識づけを提案する） */
-export const isHabitEffect = (e: ConsciousEffect) => e === 'resolved' || e === 'reduced'
+export const isHabitEffect = (e: ConsciousEffect) => e === 'resolved' || e === 'reduced' || e === 'smaller'
 /** 意識すると大きくなる・反対へ行く差（意識の向け方の見直しを提案する） */
 export const isAdjustEffect = (e: ConsciousEffect) => e === 'increased' || e === 'overshoot'
 /** 意識しても残る差（体を動かすメニューの提案につなげる） */
@@ -46,7 +48,7 @@ export interface ConsciousShift {
 }
 
 export interface ConsciousComparison {
-  /** 判定する指標のうち、どちらかに差が見られたもの */
+  /** 判定する指標のうちどちらかに差が見られたものと、横向きの位置のうち意識で変わったもの */
   items: ConsciousItem[]
   /** 位置の記録（良し悪しを判定しない指標）で、ばらつきを超えて変わったもの */
   shifts: ConsciousShift[]
@@ -63,6 +65,8 @@ function sentenceOf(e: ConsciousEffect, a: ComputedMetric, b: ComputedMetric): s
       return `${v}。意識すると、ばらつきの範囲まで小さくなりました。`
     case 'reduced':
       return `${v}。意識すると小さくなりましたが、差は残っています。`
+    case 'smaller':
+      return `${v}。意識すると小さくなりました。`
     case 'remains':
       return `${v}。意識しても、ばらつきを超える変化はありませんでした。`
     case 'increased':
@@ -90,6 +94,25 @@ export function classifyConscious(a: ComputedMetric, b: ComputedMetric): { effec
   return { effect: 'remains', significance: Math.abs(dAbs) / thr }
 }
 
+/** 位置の記録だけにする指標の比較。意識で変わらなければ null（差が残るとは言わない） */
+export function classifyTracked(a: ComputedMetric, b: ComputedMetric): { effect: ConsciousEffect; significance: number; sentence: string } | null {
+  if (a.rawValue === null || b.rawValue === null) return null
+  const thr = Math.max(NOTICEABLE_K * Math.hypot(a.uncertainty ?? 0, b.uncertainty ?? 0), 1e-6)
+  const diff = b.rawValue - a.rawValue
+  const dAbs = Math.abs(b.rawValue) - Math.abs(a.rawValue)
+  const flipped = Math.sign(a.rawValue) !== Math.sign(b.rawValue)
+  const v = `いつも ${fmtAbs(a.rawValue, a.unit)} → 意識すると ${fmtAbs(b.rawValue, b.unit)}`
+  if (dAbs < -thr) return { effect: 'smaller', significance: -dAbs / thr, sentence: `${v}。意識すると小さくなりました。` }
+  if (dAbs > thr) {
+    const sentence = flipped ? `${v}。意識すると、反対の向きに大きくなりました（${b.direction}）。` : `${v}。意識すると大きくなりました。`
+    return { effect: 'increased', significance: dAbs / thr, sentence }
+  }
+  if (flipped && Math.abs(diff) > thr) {
+    return { effect: 'overshoot', significance: Math.abs(diff) / thr, sentence: `${v}。意識すると、反対の向きになりました（${b.direction}）。` }
+  }
+  return null
+}
+
 export function compareConscious(s: AssessmentSession): ConsciousComparison | null {
   const c = s.conscious
   if (!c) return null
@@ -102,6 +125,25 @@ export function compareConscious(s: AssessmentSession): ConsciousComparison | nu
     const a = habitual.get(b.key)
     if (!a || a.rawValue === null || b.rawValue === null) continue
     planes.add(b.plane)
+    if (b.group === 'composite') continue
+    if (isTracked(b.key)) {
+      const r = classifyTracked(a, b)
+      if (r) {
+        items.push({
+          key: b.key,
+          label: b.label,
+          plane: b.plane,
+          unit: b.unit,
+          habitual: a.rawValue,
+          conscious: b.rawValue,
+          effect: r.effect,
+          sentence: r.sentence,
+          trait: METRIC_TO_TRAIT[b.key],
+          significance: Math.round(r.significance * 100) / 100,
+        })
+      }
+      continue
+    }
     if (b.status === 'descriptive') {
       const thr = Math.max(NOTICEABLE_K * Math.hypot(a.uncertainty ?? 0, b.uncertainty ?? 0), 1e-6)
       const diff = b.rawValue - a.rawValue
@@ -110,7 +152,6 @@ export function compareConscious(s: AssessmentSession): ConsciousComparison | nu
       }
       continue
     }
-    if (b.group === 'composite') continue
     const r = classifyConscious(a, b)
     if (!r) {
       quietCount++

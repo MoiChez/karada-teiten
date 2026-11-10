@@ -41,6 +41,13 @@ describe('過去比較', () => {
     expect(sh.sentence).toContain('小さくなっています')
     const hf = c.changes.find((x) => x.key === 'side_head_forward')!
     expect(hf.change).toBe('stable')
+    // 横向きの位置は良し悪しを判定しない。変わったときは「小さくなった / 大きくなった」
+    const far = session('2026-10-20T09:00:00.000Z', {}, { earForward: 140 })
+    const side = (x: typeof a, y: typeof a) => compareSessions(x, y).changes.find((ch) => ch.key === 'side_head_forward')!
+    expect(side(a, far).change).toBe('larger')
+    expect(side(far, session('2026-10-25T09:00:00.000Z', {}, { earForward: 40 })).change).toBe('smaller')
+    expect(compareSessions(a, far).counts.worsened).toBe(0)
+    expect(compareSessions(a, far).counts.changed).toBeGreaterThan(0)
     expect(c.top[0].key).toBe('front_shoulder_tilt')
     expect(c.counts.improved).toBeGreaterThan(0)
   })
@@ -154,7 +161,7 @@ describe('運動・習慣の提案', () => {
   })
 
   it('比較結果から継続・強化・回復を出す', () => {
-    const later = session('2026-10-15T09:00:00.000Z', { leftShoulderDrop: 5 }, { earForward: 90 })
+    const later = session('2026-10-15T09:00:00.000Z', { leftShoulderDrop: 5 }, { earForward: 160 })
     const c = compareSessions(s, later)
     const logs = [
       { id: '1', date: '2026-10-05T08:00:00.000Z', routineId: 'side_bend' },
@@ -169,7 +176,10 @@ describe('運動・習慣の提案', () => {
 
   it('生活習慣との関連仮説は「可能性」として出す', () => {
     const hyp = deriveHypotheses(s.postureTraits, profile)
-    expect(hyp.map((h) => h.id)).toEqual(expect.arrayContaining(['screen_forward_head', 'bag_shoulder']))
+    expect(hyp.map((h) => h.id)).toContain('bag_shoulder')
+    // 横向きの位置は 1 回の測定では判定しないので、そこからの仮説は出さない
+    expect(s.postureTraits.find((t) => t.key === 'forward_head')!.status).toBe('recorded')
+    expect(hyp.map((h) => h.id)).not.toContain('screen_forward_head')
     for (const h of hyp) expect(h.text).toMatch(/かもしれません|可能性|言われています|考えられます/)
   })
 })

@@ -36,8 +36,6 @@ export const LM = {
   rightFootIndex: 32,
 } as const
 
-export const LANDMARK_COUNT = 33
-
 export const LANDMARK_NAMES_JA: Record<number, string> = {
   0: '鼻',
   2: '左目',

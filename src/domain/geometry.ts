@@ -71,10 +71,6 @@ export function std(values: number[]): number {
   return Math.sqrt(values.reduce((s, v) => s + (v - m) ** 2, 0) / (values.length - 1))
 }
 
-export function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v))
-}
-
 /** 決定的な乱数（mulberry32） */
 export function rng(seed: number): () => number {
   let a = seed >>> 0

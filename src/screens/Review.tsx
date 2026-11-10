@@ -33,7 +33,6 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
 
   const conscious = pose === 'conscious'
   const base = conscious ? '/measure/conscious' : '/measure'
-  // 意識した姿勢は、いつもの姿勢と同じモード
   if (!draft) return <Navigate to={`${base}/capture/${plane}`} replace />
   const rec = draft.record
   const blocked = hasBlocking(rec.qualityFlags)

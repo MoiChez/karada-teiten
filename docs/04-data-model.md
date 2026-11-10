@@ -60,7 +60,7 @@ JSON の書き出しに `gaits` として含める（ないファイルも読み
   postureTraits: PostureTrait[]
   confidenceScores: { overall: number; front?: number; side?: number }  // 0..1
   qualityFlags: QualityFlag[]                // 正面・側面の品質判定をまとめたもの
-  recommendationSnapshot?: { planId: string; routineIds: string[] }
+  recommendationSnapshot?: { planId: string; routineIds: string[] }   // 分析時に作ったおすすめ。計算ロジックの版が変わって再計算したら捨てる（結果の画面で作り直す）
   checkinId?: string
   captureMode?: 'simple' | 'precise'         // 以前の測り方（版 0.6 までの記録だけ）
   shootStyle?: 'placed' | 'mirror'            // 撮り方（版 0.7 から。ない記録は置いて撮ったもの）
@@ -130,7 +130,7 @@ PlaneRecord {
 ```ts
 {
   key: TraitKey; label: string
-  status: 'noticeable' | 'within_noise' | 'unassessable' | 'not_measured'
+  status: 'noticeable' | 'within_noise' | 'recorded' | 'unassessable' | 'not_measured'   // recorded: 横向きの特徴（1 回の測定では判定しない位置の記録）
   evidenceMetricKeys: MetricKey[]
   summary: string                            // 観測された事実（例: 「左肩が右肩より約 2.1° 低い位置にあります」）
   caution: string                            // 限界の説明

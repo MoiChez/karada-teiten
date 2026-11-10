@@ -82,7 +82,7 @@ export function History() {
                       {corrected && <Badge tone="level">補正あり</Badge>}
                     </div>
                     <p className="mt-1 truncate text-sm text-ink-2">
-                      {notice.length ? notice.slice(0, 2).map((t) => t.label).join('、') : '目立った差は見られませんでした'}
+                      {notice.length ? notice.slice(0, 2).map((t) => t.label).join('、') : s.front ? '目立った差は見られませんでした' : '横向きの位置を記録'}
                     </p>
                   </div>
                 </>

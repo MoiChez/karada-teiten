@@ -22,7 +22,7 @@ export function Home() {
   const latest = sessions?.[0]
   const prev = sessions?.[1]
   const comparison = useMemo(() => (latest && prev ? compareSessions(prev, latest) : undefined), [latest, prev])
-  const todayCheckin = checkins?.filter((c) => c.date.slice(0, 10) === localDateKey()).at(-1)
+  const todayCheckin = checkins?.filter((c) => localDateKey(new Date(c.date)) === localDateKey()).at(-1)
   const plan = useMemo(
     () =>
       buildPlan({
@@ -100,7 +100,8 @@ export function Home() {
             </div>
           ) : (
             <p className="mt-3 border-t border-line pt-3 text-[15px] text-ink-2">
-              {latest.postureTraits.find((t) => t.status === 'noticeable')?.summary ?? '測定のばらつきを超える目立った差は見られませんでした。'}
+              {latest.postureTraits.find((t) => t.status === 'noticeable')?.summary ??
+                (latest.front ? '正面の写真からは、測定のばらつきを超える目立った差は見られませんでした。' : '横向きの位置を記録しました。次の測定から、変化をお知らせします。')}
             </p>
           )}
           <div className="mt-2 flex gap-4">

@@ -1,16 +1,22 @@
 // 2 回の測定の比較と、推移・行動記録のまとめ
 import type { AssessmentSession, CheckIn, ComputedMetric, MetricKey, RoutineLog, TraitKey } from './types'
 import { COMPARE_WARN, NOTICEABLE_K, PRECISE_SHOTS } from './constants'
-import { fmtAbs, fmtValue } from './format'
-import { prefersTowardZero, towardPhrase } from './metrics'
+import { fmtAbs, fmtValue, localDateKey } from './format'
+import { isTracked, prefersTowardZero, towardPhrase } from './metrics'
 import { correctedSet } from './session'
 
-export type ChangeLabel = 'improved' | 'stable' | 'worsened' | 'flipped' | 'changed'
+/**
+ * improved / worsened は、0 が「差なし」の指標（正面の左右差）だけに使う。
+ * 横向きの前後の位置は良し悪しを判定しないので、smaller / larger（0 に近づいた / 離れた）で伝える
+ */
+export type ChangeLabel = 'improved' | 'stable' | 'worsened' | 'smaller' | 'larger' | 'flipped' | 'changed'
 
 export const CHANGE_LABELS: Record<ChangeLabel, string> = {
   improved: '改善傾向',
   stable: '横ばい',
   worsened: '悪化傾向',
+  smaller: '小さくなった',
+  larger: '大きくなった',
   flipped: '向きが反対に',
   changed: '変化あり',
 }
@@ -45,7 +51,8 @@ export interface Comparison {
   changes: MetricChange[]
   unavailable: { key: MetricKey; label: string; reason: string }[]
   top: MetricChange[]
-  counts: Record<'improved' | 'stable' | 'worsened', number>
+  /** changed は、改善・悪化を判定しない変化（横向きの位置、向きの反転、位置の記録）の数 */
+  counts: Record<'improved' | 'stable' | 'worsened' | 'changed', number>
   overall: string
   warnings: ConditionWarning[]
 }
@@ -90,10 +97,11 @@ function compareMetric(a: ComputedMetric, b: ComputedMetric): MetricChange | nul
   if (prefersTowardZero(b.key)) {
     const dAbs = Math.abs(b.rawValue) - Math.abs(a.rawValue)
     if (Math.abs(dAbs) > threshold) {
-      change = dAbs < 0 ? 'improved' : 'worsened'
+      const less = dAbs < 0
+      change = isTracked(b.key) ? (less ? 'smaller' : 'larger') : less ? 'improved' : 'worsened'
       significance = Math.abs(dAbs) / threshold
       sentence =
-        change === 'improved'
+        less
           ? `${b.label}は前回より小さくなっています（${fmtAbs(a.rawValue, unit)} → ${fmtAbs(b.rawValue, unit)}）。`
           : `${b.label}は前回より大きくなっています（${fmtAbs(a.rawValue, unit)} → ${fmtAbs(b.rawValue, unit)}）。`
     } else if (Math.abs(diff) > threshold) {
@@ -162,10 +170,12 @@ export function compareSessions(x: AssessmentSession, y: AssessmentSession): Com
     }
   }
 
+  const count = (k: ChangeLabel) => changes.filter((c) => c.change === k).length
   const counts = {
-    improved: changes.filter((c) => c.change === 'improved').length,
-    stable: changes.filter((c) => c.change === 'stable').length,
-    worsened: changes.filter((c) => c.change === 'worsened').length,
+    improved: count('improved'),
+    stable: count('stable'),
+    worsened: count('worsened'),
+    changed: count('smaller') + count('larger') + count('flipped') + count('changed'),
   }
   const top = [...changes]
     .filter((c) => c.change !== 'stable')
@@ -186,7 +196,7 @@ export function compareSessions(x: AssessmentSession, y: AssessmentSession): Com
 }
 
 function overallSentence(counts: Comparison['counts'], top: MetricChange[]): string {
-  const total = counts.improved + counts.stable + counts.worsened
+  const total = counts.improved + counts.stable + counts.worsened + counts.changed
   if (total === 0) return '比べられる指標がありませんでした。'
   if (top.length === 0) return `比べられた ${total} 項目は、いずれも測定のばらつきの範囲内の変化でした。`
   const lead = top[0]
@@ -194,6 +204,7 @@ function overallSentence(counts: Comparison['counts'], top: MetricChange[]): str
     counts.improved ? `改善傾向 ${counts.improved} 項目` : '',
     counts.stable ? `横ばい ${counts.stable} 項目` : '',
     counts.worsened ? `悪化傾向 ${counts.worsened} 項目` : '',
+    counts.changed ? `そのほかの変化 ${counts.changed} 項目` : '',
   ].filter(Boolean)
   return `${parts.join('、')}でした。いちばん大きく変わったのは「${lead.label}」です。`
 }
@@ -216,11 +227,6 @@ export function conditionWarnings(a: AssessmentSession, b: AssessmentSession): C
         message: `${name}: ${ca ? '前回' : '今回'}だけ手動補正があります。補正の有無で値が変わることがあります。`,
       })
     }
-    const ya = ra.imageMetadata.yawDeg
-    const yb = rb.imageMetadata.yawDeg
-    if (plane === 'front' && ya !== undefined && yb !== undefined && Math.abs(ya - yb) >= COMPARE_WARN.yawDiffDeg) {
-      w.push({ key: 'front_yaw', message: `正面写真の体の向きが前回と約 ${Math.abs(ya - yb).toFixed(0)}° 違います。` })
-    }
     const ta = ra.imageMetadata.deviceTilt?.rollDeg
     const tb = rb.imageMetadata.deviceTilt?.rollDeg
     if (ta !== undefined && tb !== undefined && Math.abs(ta - tb) >= COMPARE_WARN.deviceTiltDiffDeg) {
@@ -230,6 +236,7 @@ export function conditionWarnings(a: AssessmentSession, b: AssessmentSession): C
       w.push({ key: 'side_facing', message: '側面の向き（左向き / 右向き）が前回と逆です。左右の半身で値が違う可能性があります。' })
     }
   }
+  // 以前の測り方（シンプル / 高精度）が記録されている古い測定どうしの比較だけで出る
   if (a.captureMode && b.captureMode && a.captureMode !== b.captureMode) {
     const name = (m: string) => (m === 'precise' ? '高精度モード' : 'シンプルモード')
     w.push({
@@ -301,7 +308,7 @@ export function behaviorBetween(fromIso: string, toIso: string, logs: RoutineLog
   const ls = logs.filter((l) => inRange(l.date))
   const counts = new Map<string, number>()
   for (const l of ls) counts.set(l.routineId, (counts.get(l.routineId) ?? 0) + 1)
-  const days = new Set(ls.map((l) => l.date.slice(0, 10)))
+  const days = new Set(ls.map((l) => localDateKey(new Date(l.date))))
   const cs = checkins.filter((c) => inRange(c.date)).sort((a, b) => a.date.localeCompare(b.date))
   const firstWith = (k: 'fatigueRating' | 'sleepRating') => cs.find((c) => c[k] !== undefined)?.[k]
   const lastWith = (k: 'fatigueRating' | 'sleepRating') => [...cs].reverse().find((c) => c[k] !== undefined)?.[k]

@@ -3,11 +3,10 @@ import { FilesetResolver, PoseLandmarker, type MPMask } from '@mediapipe/tasks-v
 import type { Landmark } from '../domain/types'
 import type { MaskData } from '../domain/backContour'
 
-export type ModelKind = 'full' | 'heavy'
+export type ModelKind = 'heavy'
 
-/** 測定に使うモデル（シンプル・高精度のどちらのモードでも高精度モデル） */
+/** 測定に使うモデル */
 export const POSE_MODEL: ModelKind = 'heavy'
-type Mode = 'IMAGE' | 'VIDEO'
 
 const TASKS_VISION_VERSION = '1.2.0'
 
@@ -20,43 +19,34 @@ function assetUrl(path: string) {
 }
 
 let filesetPromise: ReturnType<typeof FilesetResolver.forVisionTasks> | null = null
-const cache = new Map<string, Promise<PoseLandmarker>>()
-const delegateUsed = new Map<string, 'GPU' | 'CPU'>()
+const cache = new Map<ModelKind, Promise<PoseLandmarker>>()
 
-export function getLandmarker(model: ModelKind, mode: Mode): Promise<PoseLandmarker> {
-  const key = `${model}:${mode}`
-  const hit = cache.get(key)
+/** 写真 1 枚ずつの推定器（動画は createVideoLandmarker） */
+export function getLandmarker(model: ModelKind): Promise<PoseLandmarker> {
+  const hit = cache.get(model)
   if (hit) return hit
   const p = (async () => {
     filesetPromise ??= FilesetResolver.forVisionTasks(assetUrl('mediapipe/wasm'))
     const fileset = await filesetPromise
     const options = (delegate: 'GPU' | 'CPU') => ({
       baseOptions: { modelAssetPath: assetUrl(`models/pose_landmarker_${model}.task`), delegate },
-      runningMode: mode,
+      runningMode: 'IMAGE' as const,
       numPoses: 2,
       minPoseDetectionConfidence: 0.5,
       minPosePresenceConfidence: 0.5,
       minTrackingConfidence: 0.5,
       // 人の領域（背中の輪郭を取るため）。読み出すのは測定のときだけ
-      outputSegmentationMasks: mode === 'IMAGE',
+      outputSegmentationMasks: true,
     })
     try {
-      const lm = await PoseLandmarker.createFromOptions(fileset, options('GPU'))
-      delegateUsed.set(key, 'GPU')
-      return lm
+      return await PoseLandmarker.createFromOptions(fileset, options('GPU'))
     } catch {
-      const lm = await PoseLandmarker.createFromOptions(fileset, options('CPU'))
-      delegateUsed.set(key, 'CPU')
-      return lm
+      return await PoseLandmarker.createFromOptions(fileset, options('CPU'))
     }
   })()
-  cache.set(key, p)
-  p.catch(() => cache.delete(key))
+  cache.set(model, p)
+  p.catch(() => cache.delete(model))
   return p
-}
-
-export function usedDelegate(model: ModelKind, mode: Mode) {
-  return delegateUsed.get(`${model}:${mode}`)
 }
 
 export interface DetectionResult {
@@ -109,7 +99,7 @@ export async function detectImage(
   model: ModelKind,
   opts: { withMask?: boolean } = {},
 ): Promise<DetectionResult> {
-  const lm = await getLandmarker(model, 'IMAGE')
+  const lm = await getLandmarker(model)
   const r = lm.detect(source)
   try {
     return pick(r.landmarks, r.worldLandmarks, opts.withMask ? r.segmentationMasks : undefined)
@@ -152,15 +142,5 @@ export async function createVideoLandmarker(model: ModelKind) {
       }
     },
     close: () => lm.close(),
-  }
-}
-
-export async function detectVideoFrame(video: HTMLVideoElement, model: ModelKind, timestamp: number): Promise<DetectionResult> {
-  const lm = await getLandmarker(model, 'VIDEO')
-  const r = lm.detectForVideo(video, timestamp)
-  try {
-    return pick(r.landmarks, r.worldLandmarks)
-  } finally {
-    r.close()
   }
 }

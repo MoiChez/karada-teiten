@@ -45,11 +45,10 @@ describe('ゲージの段階', () => {
     expect(knee.tag).toBe('伸びすぎの方向')
   })
 
-  it('判定する指標を先に、位置の記録（判定なし）を後に並べ、推定できない指標は出さない', () => {
-    const rows = gaugeRows(side(), 'side')
-    const firstRecord = rows.findIndex((r) => !r.judged)
-    expect(firstRecord).toBeGreaterThan(0)
-    expect(rows.slice(firstRecord).every((r) => !r.judged)).toBe(true)
+  it('横向きはすべて位置の記録（判定なし）で、推定できない指標は出さない', () => {
+    const rows = gaugeRows(side({ earForward: 80 }), 'side')
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((r) => !r.judged)).toBe(true)
     expect(rows.some((r) => r.key === 'side_pelvis_tilt')).toBe(false)
   })
 

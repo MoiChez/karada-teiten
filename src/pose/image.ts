@@ -58,12 +58,7 @@ export async function prepareFromFile(file: Blob, opts: { flip?: boolean } = {})
   return finish(opts.flip ? flipCanvas(canvas) : canvas)
 }
 
-/** カメラの映像から 1 枚切り出す（鏡像にはしない） */
-export async function prepareFromVideo(video: HTMLVideoElement): Promise<PreparedImage> {
-  return finish(grabVideoFrame(video))
-}
-
-/** 映像の今のコマをすぐに切り出す（続けて撮るときに間隔を保つため、圧縮はあとで prepareFromCanvas で行う） */
+/** 映像の今のコマをすぐに切り出す（鏡像にはしない。圧縮はあとで prepareFromCanvas で行う） */
 export function grabVideoFrame(video: HTMLVideoElement): HTMLCanvasElement {
   return drawScaled(video, video.videoWidth, video.videoHeight)
 }
@@ -111,14 +106,4 @@ export function computeImageStats(canvas: HTMLCanvasElement): ImageStats {
     stdLuma: Math.round(std * 10) / 10,
     laplacianVar: Math.round((lsq / n - lmean * lmean) * 10) / 10,
   }
-}
-
-export async function blobToImageBitmapCanvas(blob: Blob): Promise<HTMLCanvasElement> {
-  const bitmap = await createImageBitmap(blob)
-  const canvas = document.createElement('canvas')
-  canvas.width = bitmap.width
-  canvas.height = bitmap.height
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0)
-  bitmap.close()
-  return canvas
 }

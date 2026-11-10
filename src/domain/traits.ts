@@ -236,10 +236,6 @@ export const TRAIT_LABELS: Record<TraitKey, string> = Object.fromEntries(
   TRAIT_DEFS.map((d) => [d.key, d.label]),
 ) as Record<TraitKey, string>
 
-export function traitDef(key: TraitKey) {
-  return TRAIT_DEFS.find((d) => d.key === key)!
-}
-
 /** 指標がばらつきの何倍の差か（K 倍で 1）。0..3 */
 function magnitudeOf(m: ComputedMetric | undefined, dir: 1 | -1 | 0): number {
   if (!m || m.rawValue === null || !m.uncertainty) return 0
@@ -272,20 +268,26 @@ export function deriveTraits(metrics: ComputedMetric[], measuredPlanes: Plane[])
       const note = primary.find((m) => m.qualityNote)?.qualityNote ?? '必要な点を確認できませんでした'
       return { ...base, status: 'unassessable', summary: `評価できませんでした。${note}` }
     }
+    const fact = def.summary(map)
+    // 横向きの位置の指標は、1 回の測定では良し悪しを判定しない。位置を記録し、変化は比較で伝える
+    if (assessed.every((m) => m.status === 'descriptive')) {
+      return { ...base, status: 'recorded', summary: fact }
+    }
     const magnitude = Math.max(...assessed.map((m) => magnitudeOf(m, def.direction)))
     const noticeable = assessed.some(
       (m) => m.status === 'noticeable' && (def.direction === 0 || Math.sign(m.rawValue!) === def.direction),
     )
-    const fact = def.summary(map)
     if (noticeable) {
       return { ...base, status: 'noticeable', summary: fact, magnitude: Math.round(magnitude * 100) / 100 }
     }
     // 表示上 0.0 になるほど小さい差は、向きを書かずに「ほぼ見られない」とする
+    // 特徴とは反対の向きに、ばらつきを超える差がある（「ばらつきの範囲内」とは書かない）
+    const opposite = def.direction !== 0 && assessed.some((m) => m.status === 'noticeable')
     const nearZero = assessed.every((m) => Math.abs(m.rawValue!) < (m.unit === 'score' ? 0.005 : 0.05))
     return {
       ...base,
       status: 'within_noise',
-      summary: nearZero ? `${def.label}は、ほぼ見られません。` : `${fact}この差は測定のばらつきの範囲内です。`,
+      summary: nearZero ? `${def.label}は、ほぼ見られません。` : opposite ? `${fact}この特徴とは反対の向きです。` : `${fact}この差は測定のばらつきの範囲内です。`,
       magnitude: Math.round(magnitude * 100) / 100,
     }
   })

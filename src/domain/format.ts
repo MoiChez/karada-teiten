@@ -81,10 +81,6 @@ export function fmtShortDate(iso: string): string {
   return `${d.getMonth() + 1}/${d.getDate()}`
 }
 
-export function daysBetween(a: string, b: string): number {
-  return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000)
-}
-
 export function localDateKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }

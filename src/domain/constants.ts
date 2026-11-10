@@ -2,17 +2,19 @@
 // 測定の品質や「ばらつきを超える差か」を判断するための工学的な目安（docs/05-analysis-logic.md）
 
 /** 計算ロジックの版。変えたら保存済みセッションは読み込み時に再計算される */
-export const ALGORITHM_VERSION = 4
+export const ALGORITHM_VERSION = 5
 
 /** ランドマーク位置の想定誤差（体の高さ H に対する割合、1σ） */
 export const LANDMARK_SIGMA_FRACTION = 0.005
 
 /**
  * 背中の輪郭（人の領域の端）の位置の想定誤差（体の高さ H に対する割合、1σ）。
- * 端は画素より細かく求まるため骨格の点より小さくした工学的な目安で、体の高さが 1,000〜1,500 画素の写真で 2〜3 画素にあたる。
+ * 体の高さが 1,000〜1,500 画素の写真で 3〜5 画素にあたる工学的な目安。真横から撮れている実在の人の写真 4 枚を
+ * 左右反転して測り直したときの値の違いが、この目安から求めたばらつきの 0.5 倍（背中上部）〜1.1 倍（腰のくぼみ）に
+ * なる大きさにした（以前の 0.002 では腰のくぼみが 1.7 倍あり、小さすぎた）。
  * 服・髪・立ち方の違いによる外形の変化は含まない
  */
-export const BACK_EDGE_SIGMA_FRACTION = 0.002
+export const BACK_EDGE_SIGMA_FRACTION = 0.003
 
 /** 不確かさを求める乱数摂動の回数 */
 export const PERTURBATION_SAMPLES = 150
@@ -32,6 +34,8 @@ export const MIN_VISIBILITY = 0.5
 
 export const QUALITY = {
   frontShoulderRatioMin: 0.45,
+  /** 正面: 肩と骨盤の線の奥行きの傾き（度）がこれを超えたら、体が斜めを向いているとみなす。実在の人の写真では、正面は約 31° 以下、斜めは約 52° 以上だった */
+  frontYawMaxDeg: 40,
   sideShoulderRatioMax: 0.35,
   extremeTiltDeg: 10,
   tooSmallRatio: 0.45,
@@ -82,7 +86,6 @@ export const COMPOSITE_SCALE = {
 
 /** 比較で撮影条件の違いを注意する閾値 */
 export const COMPARE_WARN = {
-  yawDiffDeg: 5,
   deviceTiltDiffDeg: 5,
   confidenceDiff: 0.2,
 } as const

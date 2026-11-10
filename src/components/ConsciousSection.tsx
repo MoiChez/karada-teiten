@@ -18,6 +18,7 @@ import { Badge, Button, ButtonLink, SectionTitle, cx } from './ui'
 const TONE: Record<ConsciousEffect, 'good' | 'measure' | 'neutral' | 'attention'> = {
   resolved: 'good',
   reduced: 'measure',
+  smaller: 'measure',
   remains: 'neutral',
   increased: 'attention',
   overshoot: 'attention',
@@ -153,7 +154,7 @@ export function ConsciousSection({
           ))}
         </ul>
       ) : (
-        <p className="mt-1 text-ink-2">どちらの姿勢でも、ばらつきを超える差のある項目はありませんでした。</p>
+        <p className="mt-1 text-ink-2">意識しても、ばらつきを超えて変わった項目はありませんでした。</p>
       )}
       {cmp.items.length > 0 && cmp.quietCount > 0 && (
         <p className="mt-2 text-sm text-ink-3">ほかの {cmp.quietCount} 項目は、どちらの姿勢でも測定のばらつきの範囲内でした。</p>

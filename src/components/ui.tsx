@@ -172,10 +172,6 @@ export function SectionTitle({ children, sub, id }: { children: ReactNode; sub?:
   )
 }
 
-export function Panel({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cx('rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift', className)}>{children}</div>
-}
-
 // ---------- お知らせ ----------
 
 export function Notice({

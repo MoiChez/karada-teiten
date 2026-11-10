@@ -44,7 +44,13 @@ export function repo(db: AppDB = defaultDb) {
     async upgrade(s: AssessmentSession): Promise<AssessmentSession> {
       if (s.algorithmVersion === ALGORITHM_VERSION) return s
       const next = recomputeSession(s)
-      await db.assessments.put(next)
+      // 以前の計算で作ったおすすめは、計算し直した特徴と理由が食い違うことがあるので捨てる（結果の画面でその場で作り直す）
+      const planId = next.recommendationSnapshot?.planId
+      delete next.recommendationSnapshot
+      await db.transaction('rw', db.assessments, db.plans, async () => {
+        await db.assessments.put(next)
+        if (planId) await db.plans.delete(planId)
+      })
       return next
     },
     /** 起動時に一度だけ: 古い版のセッションをまとめて再計算する */

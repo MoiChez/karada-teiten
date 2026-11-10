@@ -52,7 +52,7 @@ export function CaptureGuide() {
   const start = () => {
     if (!hasDraft) draft.clear()
     draft.setStyle(style)
-    if (!draft.checkin || draft.checkin.date.slice(0, 10) !== localDateKey()) draft.setCheckin({ ...checkin, date: new Date().toISOString() })
+    if (!draft.checkin || localDateKey(new Date(draft.checkin.date)) !== localDateKey()) draft.setCheckin({ ...checkin, date: new Date().toISOString() })
     navigate('/measure/capture/front')
   }
 

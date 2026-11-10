@@ -48,6 +48,8 @@ export interface PlaneInput {
   backFrames?: (Point[] | null)[]
   /** 鏡の前で自撮りした写真（スマホを持つ腕の位置は評価しない） */
   mirrorSelfie?: boolean
+  /** 体の向きが合っていないなど、この写真では値を出さない理由。あれば、すべての指標を「評価できない」にする */
+  blockedNote?: string
 }
 
 type Getter = (i: number) => Point
@@ -82,7 +84,12 @@ interface MetricDef {
   group: ComputedMetric['group']
   unit: MetricUnit
   normalizedUnit?: string
-  kind: 'judged' | 'descriptive' | 'unsupported'
+  /**
+   * judged: 左右差など、0 が「差なし」と言える指標。ばらつきを超えたら「差が見られる」とする
+   * tracked: 横向きの前後の位置。0 が良い姿勢とは言えないので 1 回の測定では位置の記録だけにし、前回との比較では 0 に近づいたかを見る
+   * descriptive: 位置の記録だけ（比較でも向きだけを伝える）
+   */
+  kind: 'judged' | 'tracked' | 'descriptive' | 'unsupported'
   landmarks: (ctx: Ctx) => number[]
   compute: (p: Getter, ctx: Ctx) => ComputeResult
   direction: (raw: number) => string
@@ -145,6 +152,11 @@ export function towardPhrase(key: MetricKey, diff: number): string {
       return diff >= 0 ? '丸みが強い方向' : '丸みが弱い方向'
     case 'side_back_lower':
       return diff >= 0 ? 'すき間が深い方向' : 'すき間が浅い方向'
+    case 'side_knee_extension':
+      return diff >= 0 ? '伸びる方向' : '曲がる方向'
+    case 'composite_kyphosis':
+    case 'composite_swayback':
+      return diff >= 0 ? '大きい方向' : '小さい方向'
     default:
       return diff >= 0 ? '前の方向' : '後ろの方向'
   }
@@ -380,7 +392,7 @@ const SIDE: MetricDef[] = [
     group: 'alignment',
     unit: '°',
     normalizedUnit: '% (胴の長さ比)',
-    kind: 'judged',
+    kind: 'tracked',
     landmarks: (c) => [c.side.ear, c.side.shoulder, c.side.hip],
     compute: (p, c) => {
       const E = p(c.side.ear)
@@ -399,7 +411,7 @@ const SIDE: MetricDef[] = [
     group: 'alignment',
     unit: '°',
     normalizedUnit: '% (胴の長さ比)',
-    kind: 'judged',
+    kind: 'tracked',
     landmarks: (c) => [c.side.shoulder, c.side.hip],
     compute: (p, c) => {
       const S = p(c.side.shoulder)
@@ -417,7 +429,7 @@ const SIDE: MetricDef[] = [
     group: 'alignment',
     unit: '%',
     normalizedUnit: '% (胴の長さ比)',
-    kind: 'judged',
+    kind: 'tracked',
     landmarks: (c) => [c.side.wrist, c.side.hip, c.side.shoulder],
     compute: (p, c) => {
       if (c.mirrorSelfie) return { fail: '鏡の前で自撮りした写真では、スマホを持つ腕の位置が変わるため評価しません' }
@@ -436,7 +448,7 @@ const SIDE: MetricDef[] = [
     group: 'alignment',
     unit: '%',
     normalizedUnit: '% (体の高さ比)',
-    kind: 'judged',
+    kind: 'tracked',
     landmarks: (c) => [c.side.ankle, c.side.hip, c.side.shoulder],
     compute: (p, c) => {
       const e = perpendicular(p(c.side.hip), p(c.side.ankle), p(c.side.shoulder))
@@ -455,7 +467,7 @@ const SIDE: MetricDef[] = [
     group: 'alignment',
     unit: '°',
     normalizedUnit: '% (脚の長さ比)',
-    kind: 'judged',
+    kind: 'tracked',
     landmarks: (c) => [c.side.hip, c.side.knee, c.side.ankle],
     compute: (p, c) => {
       const P = p(c.side.hip)
@@ -618,7 +630,7 @@ function composite(key: MetricKey, label: string, components: CompositeComponent
     plane: 'side',
     group: 'composite',
     unit: 'score',
-    kind: 'judged',
+    kind: 'tracked',
     landmarks: (c) => {
       const comps = available(c)
       const missingRequired = components.some((cc) => cc.required && !comps.includes(cc))
@@ -665,15 +677,34 @@ export function metricLabel(key: MetricKey): string {
 }
 
 /** 改善の方向が「0 に近づく」指標か（記述のみの指標は false） */
+/** 1 回の測定では位置の記録だけにし、比較では 0 に近づいたかを見る指標（横向きの前後の位置） */
+export function isTracked(key: MetricKey): boolean {
+  return METRIC_DEFS.find((m) => m.key === key)?.kind === 'tracked'
+}
+
 export function prefersTowardZero(key: MetricKey): boolean {
   const d = METRIC_DEFS.find((m) => m.key === key)
-  return d?.kind === 'judged'
+  return d?.kind === 'judged' || d?.kind === 'tracked'
 }
 
 // ---------- 計算本体 ----------
 
 function qualityFactorOf(record: PlaneRecord): number {
   return record.qualityFlags.reduce((f, q) => f * (QUALITY_CONFIDENCE_FACTOR[q.key] ?? 1), 1)
+}
+
+/**
+ * 体の向きが合っていない写真では、値を出さない。
+ * 斜めから撮ると、左右の高さの差や前後の位置に奥行きが混ざり、次に撮った写真とも比べられないため
+ */
+function blockedNoteOf(record: PlaneRecord): string | undefined {
+  if (record.plane === 'front' && record.qualityFlags.some((q) => q.key === 'orientation_front')) {
+    return '体が斜めを向いているようなので、左右の差を評価していません。カメラに対して正面を向いて撮り直してください'
+  }
+  if (record.plane === 'side' && record.qualityFlags.some((q) => q.key === 'orientation_side')) {
+    return '体が真横を向いていないようなので、前後の位置を記録していません。カメラに対して真横を向いて撮り直してください'
+  }
+  return undefined
 }
 
 export function planeInputFrom(record: PlaneRecord, useCorrected: boolean): PlaneInput {
@@ -693,6 +724,7 @@ export function planeInputFrom(record: PlaneRecord, useCorrected: boolean): Plan
     height: record.imageMetadata.height,
     correctedIdx: corrected,
     qualityFactor: qualityFactorOf(record),
+    blockedNote: blockedNoteOf(record),
     facing: record.imageMetadata.facing,
     nearSide: record.imageMetadata.nearSide,
     sigmaFraction: burstSigmaFraction(record.burst),
@@ -789,6 +821,9 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     if (landmarks.length < 33) {
       return { ...shell, qualityNote: '人物が検出されていません' }
     }
+    if (input.blockedNote) {
+      return { ...shell, qualityNote: input.blockedNote }
+    }
     if (H === null) {
       return { ...shell, qualityNote: '頭と足元の位置が分からないため、体の大きさを決められません' }
     }
@@ -841,7 +876,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     const confidence = Math.max(0, Math.min(cap, minVis * input.qualityFactor))
 
     let status: ComputedMetric['status']
-    if (def.kind === 'descriptive') status = 'descriptive'
+    if (def.kind === 'descriptive' || def.kind === 'tracked') status = 'descriptive'
     else if (uncertainty !== null && Math.abs(result.raw) > NOTICEABLE_K * uncertainty) status = 'noticeable'
     else status = 'within_noise'
 

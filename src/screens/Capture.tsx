@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Navigate, useNavigate, useParams } from 'react-router'
 import { ChevronLeft, History, ImageUp, Loader2, RefreshCcw, SwitchCamera, Timer } from 'lucide-react'
 import type { DeviceTilt, Landmark, Plane, PlaneRecord, ShootStyle } from '../domain/types'
-import { MIN_VISIBILITY } from '../domain/constants'
+import { MIN_VISIBILITY, QUALITY } from '../domain/constants'
 import { visibilityOf } from '../domain/metrics'
 import { SKELETON_EDGES } from '../domain/landmarks'
 import { sideEdges } from '../domain/figure'
@@ -189,7 +189,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
 
   // 推定モデルを先に読み込んでおく
   useEffect(() => {
-    getLandmarker(POSE_MODEL, 'IMAGE').catch(() => undefined)
+    getLandmarker(POSE_MODEL).catch(() => undefined)
   }, [])
 
   const advice = useMemo(() => {
@@ -279,7 +279,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
   }
 
   const roll = tilt?.rollDeg ?? null
-  const level = roll === null ? null : Math.abs(roll) <= 3
+  const level = roll === null ? null : Math.abs(roll) <= QUALITY.deviceRollDeg
   const prevFacing = plane === 'side' ? guideRec?.imageMetadata.facing : undefined
   // 画面が鏡像（内カメラ）か、鏡に映った姿を撮っているときは、前回の向きを左右反転して案内する
   const shownFacing = prevFacing && (mirrored !== mirrorSelfie ? (prevFacing === 'left' ? 'right' : 'left') : prevFacing)
@@ -596,7 +596,6 @@ function CameraProblem({ state, onUpload }: { state: CamState; onUpload: () => v
     <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
       <p className="text-[17px] font-bold">{m.title}</p>
       <p className="text-[15px] text-paper/80">{m.text}</p>
-      <p className="text-sm text-paper/70">同じ姿勢で続けて撮った写真を 2〜3 枚選ぶと、平均して測ります。</p>
       <div className="mt-2 flex gap-2">
         <Button variant="primary" onClick={onUpload} icon={<ImageUp aria-hidden className="size-5" />}>
           写真を選ぶ

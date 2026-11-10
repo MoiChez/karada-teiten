@@ -16,7 +16,7 @@ import {
 } from '../domain/gait'
 import { gaitClips } from '../domain/gaitPose'
 import type { AssessmentSession, MetricKey, UserProfile } from '../domain/types'
-import { fmtDate, fmtNum } from '../domain/format'
+import { fmtDate, fmtNum, localDateKey } from '../domain/format'
 import { data } from '../data/repo'
 import { useGaits, useProfile, useSessions } from '../data/hooks'
 import { useToast } from '../state/stores'
@@ -115,7 +115,7 @@ export function GaitResult() {
   const rec = gaits[idx]
   const prev = gaits[idx + 1]
   // 同じ日か、それより前の、横向きのある立ち姿の測定
-  const standing = sessions.find((s) => s.side && s.createdAt.slice(0, 10) <= rec.createdAt.slice(0, 10))
+  const standing = sessions.find((s) => s.side && localDateKey(new Date(s.createdAt)) <= localDateKey(new Date(rec.createdAt)))
   return <GaitResultBody rec={rec} prev={prev} standing={standing} sex={profile?.sex} />
 }
 

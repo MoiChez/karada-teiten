@@ -20,6 +20,42 @@ describe('品質チェック', () => {
     lms[31] = { ...lms[31], y: 1.02 }
     const flags = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
     expect(flags.map((f) => f.key)).toContain('body_cut_off')
+    expect(flags.find((f) => f.key === 'body_cut_off')!.message).toContain('足先が写真の外に出ています')
+  })
+
+  it('頭が写真の中にあっても、はっきり写っていなければ、隠れや暗さを確かめるよう伝える', () => {
+    const flags = assessQuality({ plane: 'front', landmarks: frontPose({ vis: { 7: 0.2 } }), width: W, height: H })
+    const f = flags.find((x) => x.key === 'body_cut_off')!
+    expect(f.message).toContain('頭がはっきり写っていません')
+    expect(f.message).not.toContain('足先')
+  })
+
+  it('肩幅が見えていても、奥行きから体が斜めなら向きの注意', () => {
+    const turned = frontPose().map((l, i) => ({ ...l, z: [11, 23].includes(i) ? -0.2 : [12, 24].includes(i) ? 0.2 : 0 }))
+    const slight = frontPose().map((l, i) => ({ ...l, z: [11, 23].includes(i) ? -0.05 : [12, 24].includes(i) ? 0.05 : 0 }))
+    const keys = (lms: typeof turned) => assessQuality({ plane: 'front', landmarks: lms, width: W, height: H }).map((f) => f.key)
+    expect(keys(turned)).toContain('orientation_front')
+    expect(keys(slight)).not.toContain('orientation_front')
+  })
+
+  it('体の向きが合っていない写真では、値を出さず「評価できない」にする', () => {
+    const turned = frontPose({ leftShoulderDrop: 30 }).map((l, i) => ({ ...l, z: [11, 23].includes(i) ? -0.2 : [12, 24].includes(i) ? 0.2 : 0 }))
+    const s = buildSession({ front: record('front', turned), side: record('side', frontPose()), imagesSaved: false, modelVersion: 'test' })
+    const assessed = s.computedMetrics.filter((m) => m.status !== 'unsupported' && m.status !== 'unassessable')
+    expect(assessed).toEqual([])
+    expect(s.computedMetrics.find((m) => m.key === 'front_shoulder_tilt')!.qualityNote).toContain('斜め')
+    expect(s.computedMetrics.find((m) => m.key === 'side_head_forward')!.qualityNote).toContain('真横')
+    expect(s.postureTraits.filter((t) => t.status === 'noticeable' || t.status === 'recorded')).toEqual([])
+    // 向きが合っていれば、同じ肩の差は判定される
+    const ok = buildSession({ front: record('front', frontPose({ leftShoulderDrop: 30 })), imagesSaved: false, modelVersion: 'test' })
+    expect(ok.computedMetrics.find((m) => m.key === 'front_shoulder_tilt')!.status).toBe('noticeable')
+  })
+
+  it('傾きセンサーの値がなければ、軽い注意として知らせる（信頼度は下げない）', () => {
+    const without = assessQuality({ plane: 'front', landmarks: frontPose(), width: W, height: H })
+    const withTilt = assessQuality({ plane: 'front', landmarks: frontPose(), width: W, height: H, deviceTilt: { rollDeg: 0.5, pitchDeg: 89 } })
+    expect(without.find((f) => f.key === 'tilt_unknown')!.severity).toBe('minor')
+    expect(withTilt.map((f) => f.key)).not.toContain('tilt_unknown')
   })
 
   it('正面なのに肩幅が狭い → 向きの注意', () => {
@@ -58,10 +94,10 @@ describe('品質チェック', () => {
 
 describe('側面の向きの推定', () => {
   it('顔が画像の右を向き、右半身がカメラ側', () => {
-    expect(detectSideOrientation(sidePose(), W, H)).toEqual({ nearSide: 'right', facing: 'right' })
+    expect(detectSideOrientation(sidePose())).toEqual({ nearSide: 'right', facing: 'right' })
   })
   it('顔が画像の左を向いている', () => {
-    expect(detectSideOrientation(sidePose({ facing: 'left' }), W, H).facing).toBe('left')
+    expect(detectSideOrientation(sidePose({ facing: 'left' })).facing).toBe('left')
   })
 })
 

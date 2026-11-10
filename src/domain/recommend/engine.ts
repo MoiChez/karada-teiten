@@ -46,7 +46,7 @@ function isTired(input: RecommendInput): boolean {
   return (f ?? 0) >= 4
 }
 
-/** 比較で差が広がった / 残っている特徴 */
+/** 比較で差が広がった / 残っている特徴。横向きの位置は、前回より大きくなったときだけ取り上げる */
 function comparisonTraitWeights(c: Comparison | undefined): Map<TraitKey, { weight: number; reason: string }> {
   const out = new Map<TraitKey, { weight: number; reason: string }>()
   if (!c) return out
@@ -55,7 +55,9 @@ function comparisonTraitWeights(c: Comparison | undefined): Map<TraitKey, { weig
     const trait = METRIC_TO_TRAIT[ch.key]
     if (!trait) continue
     if (ch.change === 'worsened') {
-      out.set(trait, { weight: 1.5, reason: `前回より「${ch.label}」の差が大きくなっています` })
+      out.set(trait, { weight: 1.5, reason: `前回より「${ch.label}」が大きくなっています` })
+    } else if (ch.change === 'larger') {
+      if (!out.has(trait) || out.get(trait)!.weight < 1.5) out.set(trait, { weight: 1.5, reason: `前回より「${ch.label}」が大きくなっています` })
     } else if (ch.change === 'stable' && afterTraits.get(trait)?.status === 'noticeable' && !out.has(trait)) {
       out.set(trait, { weight: 0.75, reason: `「${ch.label}」は前回から大きく変わっていません` })
     }
@@ -102,8 +104,8 @@ export function scoreRoutines(input: RecommendInput): ScoredRoutine[] {
           traitScore += 1
           reasons.push(
             fx.habit.length
-              ? `意識すると「${fx.habit[0]}」の差が小さくなりました。ふだんの立ち方の意識づけに`
-              : `意識すると「${fx.adjust[0]}」の差が大きくなりました。意識の向け方を確かめるのに`,
+              ? `意識すると「${fx.habit[0]}」が小さくなりました。ふだんの立ち方の意識づけに`
+              : `意識すると「${fx.adjust[0]}」が大きくなりました。意識の向け方を確かめるのに`,
           )
         }
         if (fx.body.length && (r.category === 'stretch' || r.category === 'mobility' || r.category === 'light_exercise')) {
@@ -235,7 +237,7 @@ export function comparisonSuggestions(
     const t = METRIC_TO_TRAIT[ch.key]
     if (!t) continue
     if (ch.change === 'improved' || ch.change === 'stable') improvedOrStable.add(t)
-    if (ch.change === 'worsened') needsWork.add(t)
+    if (ch.change === 'worsened' || ch.change === 'larger') needsWork.add(t)
   }
   for (const t of comparison.after.postureTraits) if (t.status === 'noticeable') needsWork.add(t.key)
 
@@ -289,14 +291,14 @@ export function habitSuggestions(input: RecommendInput): HabitSuggestion[] {
     add(
       'conscious_habit',
       `意識した姿勢で小さくなった「${habitLabels.slice(0, 2).join('」「')}」の立ち方を、歯みがきや信号待ちなど、1 日の決まった場面で思い出す`,
-      '意識すると差が小さくなったため（立ち方で変えられる差です）',
+      '意識すると小さくなったため（立ち方で変えられます）',
     )
   }
   if (adjustLabels.length) {
     add(
       'conscious_adjust',
       `良い姿勢をつくるとき、「${adjustLabels.slice(0, 2).join('」「')}」を動かしすぎていないか、鏡で確かめる`,
-      '意識すると差が大きくなった、または反対の向きになったため',
+      '意識すると大きくなった、または反対の向きになったため',
     )
   }
   if (isTired(input)) add('rest_day', '疲れている日は、呼吸と軽いストレッチだけでも十分です', '疲れやすさの記録から')

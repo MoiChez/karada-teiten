@@ -149,7 +149,7 @@ export function GaitCapture() {
   }, [phase, cam])
 
   useEffect(() => {
-    getLandmarker(POSE_MODEL, 'IMAGE').catch(() => undefined)
+    getLandmarker(POSE_MODEL).catch(() => undefined)
   }, [])
 
   // 端末の傾きから、映像の回し方と残りの傾き（立てて置いているときだけ使う）

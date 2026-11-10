@@ -148,6 +148,9 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
           <span className="flex items-center gap-1.5"><ChangeLabel change="improved" /><span className="num">{c.counts.improved}</span></span>
           <span className="flex items-center gap-1.5"><ChangeLabel change="stable" /><span className="num">{c.counts.stable}</span></span>
           <span className="flex items-center gap-1.5"><ChangeLabel change="worsened" /><span className="num">{c.counts.worsened}</span></span>
+          {c.counts.changed > 0 && (
+            <span className="flex items-center gap-1.5"><ChangeLabel change="changed" /><span className="num">{c.counts.changed}</span></span>
+          )}
         </div>
         {c.top.length > 0 && (
           <ol className="mt-4 space-y-2">
@@ -159,7 +162,7 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
             ))}
           </ol>
         )}
-        <p className="mt-3 text-sm text-ink-3">「改善傾向」は、左右差や前後差が小さくなる方向の変化を指します。測定のばらつき（2 回分）を超えた変化だけを判定しています。</p>
+        <p className="mt-3 text-sm text-ink-3">「改善傾向」は、正面の左右差が小さくなる方向の変化を指します。横向きの前後の位置は、真上や線上がよい位置とは限らないため、良し悪しを判定せずに「小さくなった」「大きくなった」と伝えます。どちらも、測定のばらつき（2 回分）を超えた変化だけを取り上げています。</p>
       </section>
       {c.warnings.length > 0 && (
         <div className="mt-3">

@@ -60,21 +60,29 @@ describe('いつもの姿勢と意識した姿勢', () => {
 })
 
 describe('意識した姿勢による提案の分け方', () => {
+  const score = (s: AssessmentSession) => scoreRoutines({ traits: s.postureTraits, conscious: compareConscious(s) })
+  type Scored = ReturnType<typeof score>
+  const tipOf = (list: Scored, tag: 'forward_head') => list.find((r) => r.routine.category === 'posture_tip' && r.routine.targetTags.includes(tag))!
+  const bodyOf = (list: Scored, tag: 'forward_head' | 'shoulder_asymmetry') => list.find((r) => r.routine.category !== 'posture_tip' && r.routine.targetTags.includes(tag))!
+
   it('意識で変わる差は意識づけ（姿勢のコツ）、意識しても残る差は体を動かすメニューを上げる', () => {
-    const changes = session({ ear: 80 }, { ear: 0 })
-    const stays = session({ ear: 80 }, { ear: 80 })
-    expect(effectOf(changes, 'side_head_forward')).toBe('resolved')
-    expect(effectOf(stays, 'side_head_forward')).toBe('remains')
-    const score = (s: typeof changes) => scoreRoutines({ traits: s.postureTraits, conscious: compareConscious(s) })
-    const tipOf = (list: ReturnType<typeof score>) => list.find((r) => r.routine.category === 'posture_tip' && r.routine.targetTags.includes('forward_head'))!
-    const bodyOf = (list: ReturnType<typeof score>) =>
-      list.find((r) => r.routine.category !== 'posture_tip' && r.routine.targetTags.includes('forward_head'))!
+    const changes = session({ drop: 40 }, { drop: 0 })
+    const stays = session({ drop: 40 }, { drop: 40 })
     const a = score(changes)
     const b = score(stays)
-    expect(tipOf(a).reasons.some((x) => x.includes('意識すると'))).toBe(true)
-    expect(bodyOf(a).reasons.some((x) => x.includes('意識しても'))).toBe(false)
-    expect(bodyOf(b).reasons.some((x) => x.includes('意識しても'))).toBe(true)
-    expect(tipOf(a).score).toBeGreaterThan(tipOf(b).score)
+    expect(bodyOf(a, 'shoulder_asymmetry').reasons.some((x) => x.includes('意識しても'))).toBe(false)
+    expect(bodyOf(b, 'shoulder_asymmetry').reasons.some((x) => x.includes('意識しても'))).toBe(true)
+  })
+
+  it('横向きの位置は、意識で変わったときだけ取り上げ、変わらなくても「差が残る」とは言わない', () => {
+    const changes = session({ ear: 80 }, { ear: 0 })
+    const stays = session({ ear: 80 }, { ear: 80 })
+    expect(effectOf(changes, 'side_head_forward')).toBe('smaller')
+    expect(effectOf(stays, 'side_head_forward')).toBeUndefined()
+    expect(effectOf(session({ ear: 0 }, { ear: 80 }), 'side_head_forward')).toBe('increased')
+    expect(tipOf(score(changes), 'forward_head').reasons.some((x) => x.includes('意識すると'))).toBe(true)
+    expect(bodyOf(score(stays), 'forward_head').reasons.some((x) => x.includes('意識しても'))).toBe(false)
+    expect(tipOf(score(changes), 'forward_head').score).toBeGreaterThan(tipOf(score(stays), 'forward_head').score)
   })
 
   it('意識すると反対へ行く差は、意識の向け方を確かめる習慣を提案する', () => {

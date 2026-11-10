@@ -24,7 +24,7 @@ export function Move() {
 
   const latest = sessions?.[0]
   const comparison = useMemo(() => (sessions && sessions.length >= 2 ? compareSessions(sessions[1], sessions[0]) : undefined), [sessions])
-  const todayCheckin = checkins?.filter((c) => c.date.slice(0, 10) === localDateKey()).at(-1)
+  const todayCheckin = checkins?.filter((c) => localDateKey(new Date(c.date)) === localDateKey()).at(-1)
   const plan = useMemo(
     () =>
       buildPlan({
@@ -41,7 +41,7 @@ export function Move() {
   const bySlot = (slot: Slot) => plan.routines.filter((r) => r.slot === slot)
   const today = bySlot('today')[0]
   const total = (list: PlannedRoutine[]) => list.reduce((t, r) => t + (routineById(r.routineId)?.durationMin ?? 0), 0)
-  const doneToday = new Set(logs?.filter((l) => l.date.slice(0, 10) === localDateKey()).map((l) => l.routineId))
+  const doneToday = new Set(logs?.filter((l) => localDateKey(new Date(l.date)) === localDateKey()).map((l) => l.routineId))
 
   return (
     <Screen title="運動・ストレッチ">
