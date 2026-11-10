@@ -4,7 +4,7 @@ import type { Landmark, PlaneRecord, Point } from '../domain/types'
 import { DISPLAY_POINTS, LM, SKELETON_EDGES, sidePoints } from '../domain/landmarks'
 import { figurePose, sideEdges, sideFigureTransform, type FigurePose } from '../domain/figure'
 import { correctedSet } from '../domain/session'
-import { backShapeFor, visibilityOf, type BackShapeView } from '../domain/metrics'
+import { backShapeFor, pointState, visibilityOf, type BackShapeView } from '../domain/metrics'
 import { MIN_VISIBILITY } from '../domain/constants'
 import { data } from '../data/repo'
 import { cx } from './ui'
@@ -75,7 +75,7 @@ export function SkeletonLayer({
 export function GuideLines({ record, landmarks, width, height }: { record: PlaneRecord; landmarks: Landmark[]; width: number; height: number }) {
   if (landmarks.length < 33) return null
   const corrected = correctedSet(record)
-  const ok = (i: number) => corrected.has(i) || visibilityOf(landmarks[i]) >= MIN_VISIBILITY
+  const ok = (i: number) => pointState(landmarks[i], corrected.has(i)) !== 'none'
   const P = (i: number) => ({ x: landmarks[i].x * width, y: landmarks[i].y * height })
   const lines: { x1: number; y1: number; x2: number; y2: number; key: string }[] = []
   if (record.plane === 'front') {

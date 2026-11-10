@@ -74,14 +74,16 @@ describe('ランドマーク補正と再計算', () => {
     expect(rec.landmarksCorrected[23]).toEqual(rec.landmarksRaw[23])
   })
 
-  it('信頼度が低く評価不可だった点も、補正すれば評価できる', () => {
+  it('推測した位置で計算した点も、補正すれば写っている点として計算し直す', () => {
     let rec = record('front', frontPose({ vis: { 11: 0.2 } }))
     let s = buildSession({ front: rec, imagesSaved: false, modelVersion: 'test' })
-    expect(m(s, 'front_shoulder_tilt').status).toBe('unassessable')
+    expect(m(s, 'front_shoulder_tilt').qualityNote).toContain('推測')
+    const before = m(s, 'front_shoulder_tilt').uncertainty!
     const lm = rec.landmarksRaw[11]
     rec = applyCorrection(rec, 11, { x: lm.x, y: lm.y + 20 / H })
     s = buildSession({ front: rec, imagesSaved: false, modelVersion: 'test' })
-    expect(m(s, 'front_shoulder_tilt').rawValue).not.toBeNull()
+    expect(m(s, 'front_shoulder_tilt').qualityNote ?? '').not.toContain('推測')
+    expect(m(s, 'front_shoulder_tilt').uncertainty!).toBeLessThan(before)
   })
 
   it('recomputeSession は同じ結果を再現する', () => {

@@ -108,9 +108,21 @@ describe('正面の指標', () => {
     expect(m.offset!.sigma).toBeGreaterThan(0)
   })
 
-  it('信頼度が低い点を使う指標は「評価不可」になり、理由が付く', () => {
-    const ms = front({ vis: { 11: 0.2 } })
-    const m = metric(ms, 'front_shoulder_tilt')
+  it('はっきり写っていない点は推測した位置で計算し、誤差を広く見込んで、そのことを書き添える', () => {
+    const seen = metric(front({ leftShoulderDrop: 12 }), 'front_shoulder_tilt')
+    const m = metric(front({ leftShoulderDrop: 12, vis: { 11: 0.2 } }), 'front_shoulder_tilt')
+    expect(m.rawValue).toBeCloseTo(seen.rawValue!, 6)
+    expect(m.uncertainty!).toBeGreaterThan(seen.uncertainty! * 3)
+    expect(m.confidence).toBeLessThanOrEqual(0.4)
+    expect(m.qualityNote).toContain('左肩')
+    expect(m.qualityNote).toContain('推測')
+    expect(seen.qualityNote ?? '').not.toContain('推測')
+  })
+
+  it('写真の外に大きく出た点を使う指標は「評価不可」になり、理由が付く', () => {
+    const lms = frontPose()
+    lms[11] = { ...lms[11], x: -0.5 }
+    const m = computePlaneMetrics(planeInputFrom(record('front', lms), true)).find((x) => x.key === 'front_shoulder_tilt')!
     expect(m.status).toBe('unassessable')
     expect(m.rawValue).toBeNull()
     expect(m.qualityNote).toContain('左肩')
@@ -207,7 +219,9 @@ describe('側面の指標', () => {
   })
 
   it('任意成分（腕）が評価不可でも、必須成分だけで猫背傾向スコアを出す', () => {
-    const k = metric(side({ earForward: 50, vis: { 16: 0.1 } }), 'composite_kyphosis')
+    const lms = sidePose({ earForward: 50 })
+    lms[16] = { ...lms[16], x: -0.5 }
+    const k = computePlaneMetrics(planeInputFrom(record('side', lms), true)).find((m) => m.key === 'composite_kyphosis')!
     expect(k.rawValue).not.toBeNull()
     expect(k.components?.length).toBe(2)
   })

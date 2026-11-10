@@ -4,6 +4,9 @@ import {
   BACK_EDGE_SIGMA_FRACTION,
   CONFIDENCE_CAP,
   COMPOSITE_SCALE,
+  GUESS_FRAME_MARGIN,
+  GUESSED_POINT_CONFIDENCE,
+  GUESSED_SIGMA_FRACTION,
   LANDMARK_SIGMA_FRACTION,
   MIN_VISIBILITY,
   NOTICEABLE_K,
@@ -63,7 +66,10 @@ interface Ctx {
   side: ReturnType<typeof sidePoints>
   /** 体の高さ（ピクセル）。摂動の大きさと正規化に使う。摂動中も固定 */
   H: number
+  /** 計算に使える点（推測した位置を含む） */
   isValid: (i: number) => boolean
+  /** 写真の中で確かに写っている点（耳と目尻のように、代わりの点を選ぶときに使う） */
+  isSeen: (i: number) => boolean
   /** 側面: 背中側の輪郭（ピクセル） */
   back?: Point[]
   /** 背中側の輪郭を取れなかった理由 */
@@ -111,6 +117,20 @@ function inFrame(lm: Landmark): boolean {
   return lm.x >= 0 && lm.x <= 1 && lm.y >= 0 && lm.y <= 1
 }
 
+/**
+ * 点の扱い。seen: 写真の中で確かに写っている。guessed: 隠れている・写真の外に少し出ているが、
+ * MediaPipe が推測した位置を使う（誤差を広く見込む）。none: 写真の外に大きく出ていて使わない。手で直した点は seen
+ */
+export type PointState = 'seen' | 'guessed' | 'none'
+
+export function pointState(lm: Landmark | undefined, corrected = false): PointState {
+  if (!lm || !Number.isFinite(lm.x) || !Number.isFinite(lm.y)) return 'none'
+  if (corrected) return 'seen'
+  const m = GUESS_FRAME_MARGIN
+  if (lm.x < -m || lm.x > 1 + m || lm.y < -m || lm.y > 1 + m) return 'none'
+  return inFrame(lm) && visibilityOf(lm) >= MIN_VISIBILITY ? 'seen' : 'guessed'
+}
+
 const pctOf = (v: number, base: number) => (v / base) * 100
 
 function lateralSign(p: Getter): number {
@@ -134,11 +154,11 @@ function backInput(p: Getter, c: Ctx): BackShapeInput | { fail: string } {
     [LM.leftShoulder, 13, 15, 17, 19, 21],
     [LM.rightShoulder, 14, 16, 18, 20, 22],
   ]) {
-    if (c.isValid(el)) {
+    if (c.isSeen(el)) {
       arms.push(p(el))
-      if (c.isValid(sh)) arms.push(mid(p(sh), p(el)))
+      if (c.isSeen(sh)) arms.push(mid(p(sh), p(el)))
     }
-    for (const i of rest) if (c.isValid(i)) arms.push(p(i))
+    for (const i of rest) if (c.isSeen(i)) arms.push(p(i))
   }
   return { contour: c.back, shoulderY: p(c.side.shoulder).y, hipY: p(c.side.hip).y, H: c.H, f: c.f, arms, jitter: c.backJitter }
 }
@@ -248,11 +268,11 @@ const FRONT: MetricDef[] = [
     unit: '°',
     kind: 'judged',
     landmarks: (c) =>
-      c.isValid(LM.leftEar) && c.isValid(LM.rightEar)
+      c.isSeen(LM.leftEar) && c.isSeen(LM.rightEar)
         ? [LM.leftEar, LM.rightEar]
         : [LM.leftEyeOuter, LM.rightEyeOuter],
     compute: (p, c) => {
-      const useEars = c.isValid(LM.leftEar) && c.isValid(LM.rightEar)
+      const useEars = c.isSeen(LM.leftEar) && c.isSeen(LM.rightEar)
       const l = p(useEars ? LM.leftEar : LM.leftEyeOuter)
       const r = p(useEars ? LM.rightEar : LM.rightEyeOuter)
       return {
@@ -272,11 +292,11 @@ const FRONT: MetricDef[] = [
     normalizedUnit: '% (体の高さ比)',
     kind: 'judged',
     landmarks: (c) =>
-      c.isValid(LM.leftEar) && c.isValid(LM.rightEar)
+      c.isSeen(LM.leftEar) && c.isSeen(LM.rightEar)
         ? [LM.leftEar, LM.rightEar, LM.leftShoulder, LM.rightShoulder]
         : [LM.nose, LM.leftShoulder, LM.rightShoulder],
     compute: (p, c) => {
-      const useEars = c.isValid(LM.leftEar) && c.isValid(LM.rightEar)
+      const useEars = c.isSeen(LM.leftEar) && c.isSeen(LM.rightEar)
       const head = useEars ? mid(p(LM.leftEar), p(LM.rightEar)) : p(LM.nose)
       const sh = mid(p(LM.leftShoulder), p(LM.rightShoulder))
       const len = (head.x - sh.x) * c.sLat
@@ -769,7 +789,10 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
   const pts: Point[] = landmarks.map((lm) => ({ x: lm.x * width, y: lm.y * height }))
   const base: Getter = (i) => pts[i]
   const vis = (i: number) => (correctedIdx.has(i) ? 1 : visibilityOf(landmarks[i]))
-  const isValid = (i: number) => !!landmarks[i] && inFrame(landmarks[i]) && vis(i) >= MIN_VISIBILITY
+  const state = (i: number) => pointState(landmarks[i], correctedIdx.has(i))
+  const isValid = (i: number) => state(i) !== 'none'
+  const isSeen = (i: number) => state(i) === 'seen'
+  const isGuessed = (i: number) => state(i) === 'guessed'
 
   const nearSide = input.nearSide ?? 'left'
   const H = bodyHeightPx(input.plane, base, isValid, nearSide)
@@ -781,19 +804,22 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     side: sidePoints(nearSide),
     H: H ?? height * 0.7,
     isValid,
+    isSeen,
     back: input.back ? toPx(input.back.points) : undefined,
     backNote: input.back?.note,
     mirrorSelfie: input.mirrorSelfie,
   }
   const sigmaPx = (input.sigmaFraction ?? LANDMARK_SIGMA_FRACTION) * ctx.H
   const edgeSigmaPx = BACK_EDGE_SIGMA_FRACTION * ctx.H
+  // 推測した点は、足元を切り落とした写真で確かめたずれの大きさだけ、広く揺らす
+  const guessSigmaPx = Math.max(GUESSED_SIGMA_FRACTION * ctx.H, sigmaPx)
   // 背中の輪郭の指標は、輪郭を記録した測定だけで出す
   const defs = METRIC_DEFS.filter((d) => d.plane === input.plane && (!d.usesBack || input.back !== undefined))
   const framePts = (input.frames ?? []).map((fr, k) => {
     const back = input.backFrames?.[k]
     return {
       pts: fr.map((lm) => ({ x: lm.x * width, y: lm.y * height })),
-      valid: (i: number) => !!fr[i] && inFrame(fr[i]) && visibilityOf(fr[i]) >= MIN_VISIBILITY,
+      valid: (i: number) => pointState(fr[i]) !== 'none',
       back: back && back.length ? toPx(back) : null,
     }
   })
@@ -825,7 +851,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       return { ...shell, qualityNote: input.blockedNote }
     }
     if (H === null) {
-      return { ...shell, qualityNote: '頭と足元の位置が分からないため、体の大きさを決められません' }
+      return { ...shell, qualityNote: '頭か足元が写真に入っていないため、体の大きさを決められず評価できません' }
     }
     const used = def.landmarks(ctx)
     const invalid = used.filter((i) => !isValid(i))
@@ -833,7 +859,7 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       return {
         ...shell,
         usedLandmarks: used,
-        qualityNote: `${invalid.map(landmarkName).join('・')}の位置を確認できないため評価できません`,
+        qualityNote: `${invalid.map(landmarkName).join('・')}が写真に入っていないため評価できません`,
       }
     }
     const result = def.compute(base, ctx)
@@ -849,7 +875,8 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     for (let n = 0; n < PERTURBATION_SAMPLES; n++) {
       const jitter = new Map<number, Point>()
       for (const i of used) {
-        jitter.set(i, { x: pts[i].x + gaussian(rand) * sigmaPx, y: pts[i].y + gaussian(rand) * sigmaPx })
+        const s = isGuessed(i) ? guessSigmaPx : sigmaPx
+        jitter.set(i, { x: pts[i].x + gaussian(rand) * s, y: pts[i].y + gaussian(rand) * s })
       }
       const getter: Getter = (i) => jitter.get(i) ?? pts[i]
       let sctx = ctx
@@ -871,7 +898,8 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
     }
     const uncertainty = samples.length > 10 ? std(samples) : null
 
-    const minVis = Math.min(...used.map(vis))
+    const guessed = used.filter(isGuessed)
+    const minVis = Math.min(...used.map((i) => (isGuessed(i) ? Math.min(vis(i), GUESSED_POINT_CONFIDENCE) : vis(i))))
     const cap = CONFIDENCE_CAP[def.key] ?? 1
     const confidence = Math.max(0, Math.min(cap, minVis * input.qualityFactor))
 
@@ -889,7 +917,10 @@ export function computePlaneMetrics(input: PlaneInput): ComputedMetric[] {
       uncertainty: uncertainty === null ? null : round(uncertainty, 3),
       status,
       confidence: round(confidence, 3),
-      qualityNote: [result.note, mirrorNote].filter(Boolean).join(' ') || undefined,
+      qualityNote:
+        [result.note, guessed.length ? `${guessed.map(landmarkName).join('・')}は、はっきり写っていないため推測した位置で計算しました。` : undefined, mirrorNote]
+          .filter(Boolean)
+          .join(' ') || undefined,
       usedLandmarks: used,
       correctedLandmarks: used.filter((i) => correctedIdx.has(i)),
     }
@@ -940,13 +971,13 @@ export function backShapeFor(record: PlaneRecord, useCorrected = true): BackShap
   if (landmarks.length < 33) return { contour }
   const pts: Point[] = landmarks.map((lm) => ({ x: lm.x * width, y: lm.y * height }))
   const p: Getter = (i) => pts[i]
-  const isValid = (i: number) =>
-    !!landmarks[i] && inFrame(landmarks[i]) && (correctedIdx.has(i) ? 1 : visibilityOf(landmarks[i])) >= MIN_VISIBILITY
+  const isValid = (i: number) => pointState(landmarks[i], correctedIdx.has(i)) !== 'none'
+  const isSeen = (i: number) => pointState(landmarks[i], correctedIdx.has(i)) === 'seen'
   const nearSide = input.nearSide ?? 'left'
   const H = bodyHeightPx('side', p, isValid, nearSide)
   const side = sidePoints(nearSide)
   if (!H || !isValid(side.shoulder) || !isValid(side.hip)) return { contour }
-  const ctx: Ctx = { plane: 'side', sLat: 1, f: input.facing === 'left' ? -1 : 1, side, H, isValid, back: contour }
+  const ctx: Ctx = { plane: 'side', sLat: 1, f: input.facing === 'left' ? -1 : 1, side, H, isValid, isSeen, back: contour }
   const inp = backInput(p, ctx)
   if ('fail' in inp) return { contour }
   const u = backUpper(inp)

@@ -95,7 +95,7 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
   return (
     <Screen title={title} back={`${base}/capture/${plane}`} footer={footer}>
       <p className="mt-1 mb-4 text-[15px] text-ink-2">
-        肩・股関節・膝などの点が体の位置からずれていたら、ドラッグして直してください。直した点から数値を計算し直します。
+        骨格の点が体から大きくずれていたら、ドラッグで直せます。そのままでも分析できます。
       </p>
       {draft.notice && (
         <div className="mb-3">

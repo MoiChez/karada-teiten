@@ -1,9 +1,8 @@
 // 正面と側面の 2D ランドマークから、簡易的な 3D 座標を作る（docs/07 の 3 章）
 // 単位は「体の高さ（耳〜かかと）に対する比率」。X: 被写体の左が +、Y: 上が +、Z: 前が +
 import type { Landmark, PlaneRecord } from './types'
-import { MIN_VISIBILITY } from './constants'
 import { LM } from './landmarks'
-import { visibilityOf } from './metrics'
+import { pointState } from './metrics'
 import { correctedSet } from './session'
 
 export interface Vec3 {
@@ -36,9 +35,7 @@ function validFn(rec: PlaneRecord, lms: Landmark[]) {
   const corrected = correctedSet(rec)
   return (i: number) => {
     const l = lms[i]
-    if (!l) return false
-    if (l.x < 0 || l.x > 1 || l.y < 0 || l.y > 1) return false
-    return corrected.has(i) || visibilityOf(l) >= MIN_VISIBILITY
+    return pointState(l, corrected.has(i)) !== 'none'
   }
 }
 

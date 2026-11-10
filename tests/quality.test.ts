@@ -15,51 +15,56 @@ describe('品質チェック', () => {
     expect(flags.filter((f) => f.severity !== 'minor')).toEqual([])
   })
 
-  it('足先が画像の外なら全身欠け', () => {
+  it('足先が少し画像の外なら、推測した位置で計算したと軽く知らせる', () => {
     const lms = frontPose()
     lms[31] = { ...lms[31], y: 1.02 }
     const flags = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
-    expect(flags.map((f) => f.key)).toContain('body_cut_off')
-    expect(flags.find((f) => f.key === 'body_cut_off')!.message).toContain('足先が写真の外に出ています')
+    const f = flags.find((x) => x.key === 'body_cut_off')!
+    expect(f.severity).toBe('minor')
+    expect(f.message).toContain('足先が写真の外に出ているため、位置を推測して計算しました')
   })
 
-  it('かかとが隠れているときは「かかと」と伝え、ほかの点で数値を出せるので撮り直しをすすめるだけにする', () => {
+  it('かかとが隠れているときは「かかと」と伝え、推測した位置で計算する', () => {
     const flags = assessQuality({ plane: 'front', landmarks: frontPose({ vis: { 29: 0.3, 30: 0.3 } }), width: W, height: H })
     const f = flags.find((x) => x.key === 'body_cut_off')!
-    expect(f.severity).toBe('major')
-    expect(f.message).toContain('かかとがはっきり写っていません')
+    expect(f.severity).toBe('minor')
+    expect(f.message).toContain('かかとがはっきり写っていないため、位置を推測して計算しました')
     expect(f.message).toContain('ズボンの裾')
     expect(f.message).not.toContain('足先')
     expect(hasBlocking(flags)).toBe(false)
   })
 
-  it('足元が写っておらず頭から足元までの長さを測れないときは、分析できないと先に伝える', () => {
+  it('足元が写真の少し外なら、推測した位置で値を出す（撮り直しは求めない）', () => {
+    const lms = frontPose({ leftShoulderDrop: 30 })
+    for (const i of [27, 28, 29, 30, 31, 32]) lms[i] = { ...lms[i], y: lms[i].y + 0.12 }
+    const flags = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
+    const f = flags.find((x) => x.key === 'body_cut_off')!
+    expect(f.severity).toBe('minor')
+    expect(f.message).toContain('かかと・足先が写真の外に出ているため')
+    expect(flags.filter((x) => x.severity !== 'minor')).toEqual([])
+    const s = buildSession({ front: record('front', lms), imagesSaved: false, modelVersion: 'test' })
+    const tilt = s.computedMetrics.find((m) => m.key === 'front_shoulder_tilt')!
+    expect(tilt.rawValue).not.toBeNull()
+    expect(s.computedMetrics.find((m) => m.key === 'front_body_lean')!.qualityNote).toContain('推測')
+  })
+
+  it('足元が写真の外に大きく出て推測もできないときは、分析できないと先に伝える', () => {
     const lms = frontPose()
-    for (const i of [27, 28, 29, 30, 31, 32]) lms[i] = { ...lms[i], y: 1.03 }
+    for (const i of [25, 26, 27, 28, 29, 30, 31, 32]) lms[i] = { ...lms[i], y: 1.4 }
     const flags = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
     const f = flags.find((x) => x.key === 'body_cut_off')!
     expect(f.severity).toBe('blocking')
-    expect(f.message).toContain('かかと・足先が写真の外に出ていて')
-    expect(f.message).toContain('数値を出せません')
-    expect(hasBlocking(flags)).toBe(true)
+    expect(f.message).toContain('写真に入っていないため、分析できません')
+    expect(f.message).not.toContain('ドラッグ')
     // そのまま進めても、どの値も出ない
     const s = buildSession({ front: record('front', lms), imagesSaved: false, modelVersion: 'test' })
     expect(s.computedMetrics.filter((m) => m.plane === 'front' && m.rawValue !== null)).toEqual([])
   })
 
-  it('写真の中で隠れて分析できないときも、点を合わせれば計算できる', () => {
-    const lms = frontPose({ vis: { 27: 0.2, 28: 0.2, 29: 0.2, 30: 0.2 } })
-    const before = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H })
-    expect(before.find((x) => x.key === 'body_cut_off')!.severity).toBe('blocking')
-    expect(before.find((x) => x.key === 'body_cut_off')!.message).toContain('点をドラッグして')
-    const after = assessQuality({ plane: 'front', landmarks: lms, width: W, height: H, correctedIdx: new Set([29, 30]) })
-    expect(hasBlocking(after)).toBe(false)
-  })
-
   it('頭が写真の中にあっても、はっきり写っていなければ、隠れや暗さを確かめるよう伝える', () => {
     const flags = assessQuality({ plane: 'front', landmarks: frontPose({ vis: { 7: 0.2 } }), width: W, height: H })
     const f = flags.find((x) => x.key === 'body_cut_off')!
-    expect(f.message).toContain('頭がはっきり写っていません')
+    expect(f.message).toContain('頭がはっきり写っていないため')
     expect(f.message).not.toContain('足先')
   })
 

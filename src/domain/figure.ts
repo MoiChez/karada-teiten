@@ -1,9 +1,8 @@
 // 定点グリッドに描くための座標変換。足首の中点を原点、体の高さ H を 1 とする
 // 正面: x は被写体の左が +（画面では右）、側面: x は前方が +（画面では右）、y は上が +
 import type { Landmark, PlaneRecord, Point } from './types'
-import { MIN_VISIBILITY } from './constants'
 import { LM, sidePoints } from './landmarks'
-import { visibilityOf } from './metrics'
+import { pointState } from './metrics'
 import { correctedSet } from './session'
 
 export interface FigurePose {
@@ -20,7 +19,7 @@ export function figurePose(rec: PlaneRecord | undefined, useCorrected = true): F
   const corrected = useCorrected ? correctedSet(rec) : new Set<number>()
   const ok = (i: number) => {
     const l = lms[i]
-    return !!l && l.x >= 0 && l.x <= 1 && l.y >= 0 && l.y <= 1 && (corrected.has(i) || visibilityOf(l) >= MIN_VISIBILITY)
+    return pointState(l, corrected.has(i)) !== 'none'
   }
   const px = (i: number) => ({ x: lms[i].x * width, y: lms[i].y * height })
 
@@ -54,7 +53,7 @@ export function sideFigureTransform(rec: PlaneRecord | undefined, useCorrected =
   const { width, height } = rec.imageMetadata
   const s = sidePoints(rec.imageMetadata.nearSide ?? 'left')
   const corrected = useCorrected ? correctedSet(rec) : new Set<number>()
-  const ok = (i: number) => !!lms[i] && (corrected.has(i) || visibilityOf(lms[i]) >= MIN_VISIBILITY)
+  const ok = (i: number) => pointState(lms[i], corrected.has(i)) !== 'none'
   if (!ok(s.ankle) || !ok(s.ear)) return null
   const a = { x: lms[s.ankle].x * width, y: lms[s.ankle].y * height }
   const H = a.y - lms[s.ear].y * height

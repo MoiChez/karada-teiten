@@ -3,7 +3,7 @@ import type { DeviceTilt, ImageStats, Landmark, Plane, QualityFlag } from './typ
 import { MIN_VISIBILITY, QUALITY } from './constants'
 import { angleFromVerticalDeg, dist, mid, RAD2DEG } from './geometry'
 import { CORRECTABLE, LEFT_SIDE_CORRECTABLE, LM, RIGHT_SIDE_CORRECTABLE, landmarkName, sidePoints } from './landmarks'
-import { bodyHeightPx, visibilityOf } from './metrics'
+import { bodyHeightPx, pointState, visibilityOf } from './metrics'
 
 export interface QualityInput {
   plane: Plane
@@ -63,7 +63,9 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
     const l = landmarks[i]
     return l.x >= 0 && l.x <= 1 && l.y >= 0 && l.y <= 1
   }
+  // ok: 写真の中で確かに写っている点。usable: 推測した位置も含めて計算に使える点
   const ok = (i: number) => inFrame(i) && vis(i) >= MIN_VISIBILITY
+  const usable = (i: number) => pointState(landmarks[i], corrected.has(i)) !== 'none'
   const px = (i: number) => ({ x: landmarks[i].x * width, y: landmarks[i].y * height })
 
   if (input.secondPersonScale !== undefined && input.secondPersonScale >= QUALITY.secondPersonScale) {
@@ -76,29 +78,29 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
       ? [LM.leftEar, LM.rightEar, LM.leftHeel, LM.rightHeel, LM.leftFootIndex, LM.rightFootIndex]
       : [near.ear, near.heel, near.foot]
   const cut = extremities.filter((i) => !ok(i))
-  if (cut.length > 0) {
+  // 頭（耳か鼻）と足元（かかとか足首）が推測としても使えないと、体の高さ H が決まらず、どの値も計算できない
+  const noScale = bodyHeightPx(plane, px, usable, input.nearSide) === null
+  if (cut.length > 0 || noScale) {
     const isHead = (i: number) => i === LM.leftEar || i === LM.rightEar
     const isHeel = (i: number) => i === LM.leftHeel || i === LM.rightHeel
-    const part = [cut.some(isHead) && '頭', cut.some(isHeel) && 'かかと', cut.some((i) => !isHead(i) && !isHeel(i)) && '足先']
-      .filter(Boolean)
-      .join('・')
+    const part =
+      [cut.some(isHead) && '頭', cut.some(isHeel) && 'かかと', cut.some((i) => !isHead(i) && !isHeel(i)) && '足先'].filter(Boolean).join('・') ||
+      '頭か足元'
     const hiders = cut.every(isHead) ? '髪や物' : cut.some(isHead) ? '髪・ズボンの裾・物' : 'ズボンの裾や物'
-    // 頭（耳か鼻）と足元（かかとか足首）の両方がないと体の高さ H が決まらず、どの値も計算できない。
-    // そのまま進めると全項目が「評価できません」の記録になるため、先に分析できないと伝える
-    const noScale = bodyHeightPx(plane, px, ok, input.nearSide) === null
-    const message = cut.some((i) => !inFrame(i))
-      ? noScale
-        ? `${part}が写真の外に出ていて、頭から足元までの長さを測れないため、数値を出せません。頭からつま先まで入るように撮り直してください`
-        : `${part}が写真の外に出ています。頭からつま先まで入るように撮ってください`
-      : noScale
-        ? `${part}がはっきり写っていないため、頭から足元までの長さを測れず、数値を出せません。${hiders}で隠れていないか、暗すぎないかを確かめてください。写っている場合は、点をドラッグして位置を合わせると計算できます`
-        : `${part}がはっきり写っていません。${hiders}で隠れていないか、暗すぎないかを確かめてください`
-    flags.push(flag(plane, 'body_cut_off', noScale ? 'blocking' : 'major', message, cut.length))
+    if (noScale) {
+      flags.push(flag(plane, 'body_cut_off', 'blocking', `${part}が写真に入っていないため、分析できません。頭からつま先まで入るように撮り直してください`, cut.length))
+    } else {
+      // 少し外に出た点・隠れた点は、MediaPipe が推測した位置で計算する（誤差は広く見込む）
+      const message = cut.some((i) => !inFrame(i))
+        ? `${part}が写真の外に出ているため、位置を推測して計算しました。頭からつま先まで入れて撮ると、より確かになります`
+        : `${part}がはっきり写っていないため、位置を推測して計算しました。${hiders}で隠れないようにすると、より確かになります`
+      flags.push(flag(plane, 'body_cut_off', 'minor', message, cut.length))
+    }
   }
 
   const core =
     plane === 'front' ? [LM.leftShoulder, LM.rightShoulder, LM.leftHip, LM.rightHip] : [near.shoulder, near.hip]
-  const hidden = core.filter((i) => !ok(i))
+  const hidden = core.filter((i) => !usable(i))
   if (hidden.length > 0) {
     flags.push(flag(plane, 'occluded', 'major', '肩か股関節の位置が確認できません。腕や物で体が隠れていないか確認してください', hidden.length))
   }
@@ -109,7 +111,7 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
   const uncertain = editable.filter((i) => !ok(i) && !reported.has(i))
   if (uncertain.length > 0) {
     flags.push(
-      flag(plane, 'uncertain_points', 'minor', `${uncertain.map(landmarkName).join('・')}の位置が不確かです。写真と見比べて、ずれていれば直してください`, uncertain.length),
+      flag(plane, 'uncertain_points', 'minor', `${uncertain.map(landmarkName).join('・')}は、はっきり写っていないため、位置を推測しました`, uncertain.length),
     )
   }
 
@@ -143,7 +145,7 @@ export function assessQuality(input: QualityInput): QualityFlag[] {
   }
 
   // 写っている大きさ
-  const H = bodyHeightPx(plane, px, ok, input.nearSide)
+  const H = bodyHeightPx(plane, px, usable, input.nearSide)
   if (H !== null && H / height < QUALITY.tooSmallRatio) {
     flags.push(flag(plane, 'too_small', 'minor', '体が小さく写っています。もう少し近づくと精度が上がります', H / height))
   }

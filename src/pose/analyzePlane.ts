@@ -3,13 +3,13 @@ import type { BodyOutline, DeviceTilt, Landmark, Plane, PlaneRecord } from '../d
 import { detectSideOrientation } from '../domain/quality'
 import { requalify } from '../domain/session'
 import { extractEdge, type MaskData } from '../domain/backContour'
-import { bodyHeightPx, visibilityOf } from '../domain/metrics'
+import { bodyHeightPx, pointState } from '../domain/metrics'
 import { sidePoints } from '../domain/landmarks'
-import { MIN_VISIBILITY } from '../domain/constants'
 import type { PreparedImage } from './image'
 import { detectImage, type ModelKind } from './landmarker'
 
-const usable = (l: Landmark | undefined) => !!l && l.x >= 0 && l.x <= 1 && l.y >= 0 && l.y <= 1 && visibilityOf(l) >= MIN_VISIBILITY
+// 推測した位置の点（隠れている・写真の外に少し出ている）も使う
+const usable = (l: Landmark | undefined) => pointState(l) !== 'none'
 
 /** 体の高さ（画像の高さに対する比）。求められなければ null */
 function heightFrac(landmarks: Landmark[], width: number, height: number, nearSide: 'left' | 'right' | undefined): number | null {

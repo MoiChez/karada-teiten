@@ -2,10 +2,23 @@
 // 測定の品質や「ばらつきを超える差か」を判断するための工学的な目安（docs/05-analysis-logic.md）
 
 /** 計算ロジックの版。変えたら保存済みセッションは読み込み時に再計算される */
-export const ALGORITHM_VERSION = 5
+export const ALGORITHM_VERSION = 6
 
 /** ランドマーク位置の想定誤差（体の高さ H に対する割合、1σ） */
 export const LANDMARK_SIGMA_FRACTION = 0.005
+
+/**
+ * 推測した点（隠れている・写真の外に少し出ている点。MediaPipe が推測した位置をそのまま使う）の想定誤差（H 比、1 方向の 1σ）。
+ * 全身が写った写真 20 枚の足元を切り落として測り直すと、推測した膝・足首・かかと・足先は、切る前の位置から
+ * H の約 4%（足首の高さで切ったとき）〜 6%（すねの中ほどで切ったとき）ずれた（距離の二乗平均）。1 方向あたりに直して 0.04 とした
+ */
+export const GUESSED_SIGMA_FRACTION = 0.04
+
+/** 写真の外に出た点を推測として使う範囲（画像の幅・高さに対する比）。これより外の点は使わない */
+export const GUESS_FRAME_MARGIN = 0.25
+
+/** 推測した点を使う指標の信頼度の計算で、その点の visibility の代わりに使う上限 */
+export const GUESSED_POINT_CONFIDENCE = 0.4
 
 /**
  * 背中の輪郭（人の領域の端）の位置の想定誤差（体の高さ H に対する割合、1σ）。
@@ -29,7 +42,7 @@ export const H_TO_STATURE = 0.91
 /** 「差が見られる」とみなす倍率（|値| > K × σ） */
 export const NOTICEABLE_K = 2
 
-/** この visibility 未満の点は使わない */
+/** この visibility 以上で写真の中にある点を「写っている点」とする。未満の点は推測した点として扱う */
 export const MIN_VISIBILITY = 0.5
 
 export const QUALITY = {
