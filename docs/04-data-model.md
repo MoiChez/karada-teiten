@@ -32,12 +32,15 @@
   // w: 33 点 × [x, y, z]（推定モデルの 3D。メートル、腰の中心が原点、小数 3 桁）
   edits?: { t: number; i: number; x: number; y: number }[]
   // 手で直した点（版 0.12 から）。t: コマの時刻、i: 点の番号、x・y: 画像に対する比。frames は書き換えない
-  analysis: MotionAnalysis               // algorithmVersion が古ければ frames と edits から計算し直す（版 0.12 は 3）
+  body?: { heightCm?: number; weightKg?: number; loadKg?: number }
+  // 重心と負担の推定に使う値（版 0.13 から。入力されたものだけ。撮ったときのプロフィールの値か、結果の画面で入れた値）
+  analysis: MotionAnalysis               // algorithmVersion が古ければ frames・edits・body から計算し直す（版 0.13 は 4）
 }
 // MotionAnalysis: { algorithmVersion, kind, facing, nearSide, validFrames,
 //   cycles: { start, end, events: { key, t }[], values: Record<string, number | null> }[],
 //   metrics: { key, value, sd, uncertainty, reps, status }[], warnings: string[],
-//   constraints?: { key: 'footplate' | 'rail' | 'knee'; applied: boolean }[] }  // 使った器具の前提
+//   constraints?: { key: 'footplate' | 'rail' | 'knee'; applied: boolean }[],  // 使った器具の前提
+//   body?: { heightCm, weightKg, loadKg, assumed: { height, weight, load } } }  // 推定に使った値（スクワット）
 ```
 
 JSON の書き出しに `motions` として含める（動画は含めない。読み込んだ記録は「動画を残していない」扱い）。動画は記録を削除すると一緒に消え、「すべてのデータを削除」でも消える。

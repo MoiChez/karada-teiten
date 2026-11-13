@@ -6,6 +6,7 @@ import { RAD2DEG } from './geometry'
 import { sidePoints } from './landmarks'
 import { pointState } from './metrics'
 import type { ConstraintNote, FrameSize } from './motionConstraints'
+import type { BodyParams } from './motionLoad'
 
 export type MotionKind = 'squat' | 'erg' | 'bike'
 
@@ -71,6 +72,8 @@ export interface MotionInput {
   height: number
   rollDeg?: number
   edits?: MotionEdit[]
+  /** 身長・体重・持つ重さ（入力されたものだけ。重心と負担の推定に使う） */
+  body?: BodyParams
 }
 
 export interface PreparedFrame {

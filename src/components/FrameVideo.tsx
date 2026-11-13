@@ -1,6 +1,6 @@
 // 撮った動画（コマの画像の並び）を、時計に合わせて表示する。骨格の線を重ねられる
 import { useEffect, useMemo, useRef } from 'react'
-import type { Landmark } from '../domain/types'
+import type { Landmark, Point } from '../domain/types'
 import { SKELETON_EDGES } from '../domain/landmarks'
 import { indexAt, type Clock } from './motionClock'
 
@@ -11,6 +11,7 @@ export function FrameVideo({
   clock,
   overlay,
   nearSide,
+  com,
 }: {
   images: { t: number; blob: Blob }[]
   width: number
@@ -19,6 +20,8 @@ export function FrameVideo({
   /** なめらかにした体の点（画像に対する比）。重ねないときは undefined */
   overlay?: { t: number; lm: Landmark[] }[]
   nearSide: 'left' | 'right'
+  /** 推定の重心と、かかと・つま先（画像に対する比。overlay と同じ時刻の並び）。骨格を重ねるときに一緒に描く */
+  com?: { c: Point; heel: Point; toe: Point }[]
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const ts = useMemo(() => images.map((im) => im.t), [images])
@@ -50,6 +53,37 @@ export function FrameVideo({
         ctx.moveTo(o.lm[a].x * c.width, o.lm[a].y * c.height)
         ctx.lineTo(o.lm[b].x * c.width, o.lm[b].y * c.height)
         ctx.stroke()
+      }
+      const m = com?.[indexAt(overlayTs, clock.get())]
+      if (m && Number.isFinite(m.c.x)) {
+        const X = (p: Point) => p.x * c.width
+        const Y = (p: Point) => p.y * c.height
+        const floor = Math.max(Y(m.heel), Y(m.toe))
+        // 足（かかと〜つま先）と、重心から床への線
+        ctx.strokeStyle = 'rgba(91,174,255,0.95)'
+        ctx.lineWidth = 3.2 * s
+        ctx.beginPath()
+        ctx.moveTo(X(m.heel), floor)
+        ctx.lineTo(X(m.toe), floor)
+        ctx.stroke()
+        ctx.strokeStyle = 'rgba(233,184,94,0.95)'
+        ctx.lineWidth = 2 * s
+        ctx.setLineDash([5 * s, 4 * s])
+        ctx.beginPath()
+        ctx.moveTo(X(m.c), Y(m.c))
+        ctx.lineTo(X(m.c), floor)
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.fillStyle = 'rgba(233,184,94,1)'
+        ctx.strokeStyle = '#10282f'
+        ctx.lineWidth = 1.5 * s
+        ctx.beginPath()
+        ctx.arc(X(m.c), Y(m.c), 4.5 * s, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(X(m.c), floor, 2.6 * s, 0, Math.PI * 2)
+        ctx.fill()
       }
       for (const i of [11, 12, 23, 24, 25, 26, 27, 28]) {
         if (!near(i)) continue
@@ -101,7 +135,7 @@ export function FrameVideo({
       off()
       lastBitmap?.close()
     }
-  }, [images, ts, clock, overlay, overlayTs, nearSide])
+  }, [images, ts, clock, overlay, overlayTs, nearSide, com])
 
   return (
     <canvas

@@ -7,7 +7,7 @@ const csvCell = (v: string | number | null | undefined) => {
 }
 // Excel で文字化けしないよう BOM を付ける
 const toCsv = (rows: (string | number | null | undefined)[][]) => '﻿' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n')
-const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d
+const round = (v: number, d: number): number | '' => (Number.isFinite(v) ? Math.round(v * 10 ** d) / 10 ** d : '')
 
 /** コマごとの値（なめらかにした点から求めた値）。回の番号と、そのコマで起きた出来事（底・キャッチなど）を付ける */
 export function motionFramesCsv(rec: MotionRecord, prep: PreparedMotion, cycles: MotionCycle[]): string {

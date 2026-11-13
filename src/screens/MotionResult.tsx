@@ -12,6 +12,7 @@ import {
   motionMetric,
   prepareRecord,
   type MetricDef,
+  type MotionCycleSummary,
   type MotionEdit,
   type MotionMetric,
   type MotionRecord,
@@ -28,6 +29,7 @@ import { useClock } from '../components/motionClock'
 import { MotionPlayer } from '../components/MotionPlayer'
 import { MotionPointEditor } from '../components/MotionPointEditor'
 import type { ConstraintNote } from '../domain/motionConstraints'
+import { BODY_PRIOR, type BodyParams, type ResolvedBody } from '../domain/motionLoad'
 import { download } from '../components/download'
 import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle, Segmented } from '../components/ui'
 
@@ -41,6 +43,12 @@ export function fmtMotionValue(def: Pick<MetricDef, 'unit' | 'digits'>, v: numbe
 export function fmtMotionMetric(def: MetricDef, m: MotionMetric | undefined) {
   if (!m || m.status !== 'ok' || m.value === null) return '測定不可'
   return fmtMotionValue(def, m.value)
+}
+
+/** 仮定を動かした幅（下限〜上限）。なければ null */
+export function motionBandText(def: MetricDef, lo: number | null | undefined, hi: number | null | undefined) {
+  if (!def.band || lo === null || lo === undefined || hi === null || hi === undefined) return null
+  return `${fmtMotionValue(def, lo, false)}〜${fmtMotionValue(def, hi)}`
 }
 
 export function motionDiffText(def: MetricDef, d: number) {
@@ -166,23 +174,31 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [muscles, setMuscles] = useState(false)
   // 点の補正（この画面を開いている間の取り消し・やり直しを持つ。直すたびに保存する）
-  const [work, setWork] = useState(() => ({ edits: saved.edits ?? [], analysis: saved.analysis }))
+  const [work, setWork] = useState(() => ({ edits: saved.edits ?? [], body: saved.body, analysis: saved.analysis }))
   const [past, setPast] = useState<MotionEdit[][]>([])
   const [future, setFuture] = useState<MotionEdit[][]>([])
   const [editing, setEditing] = useState(false)
   const [spread, setSpread] = useState<0 | 5>(5)
   const edits = work.edits
   const profile = PROFILES[saved.kind]
-  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, analysis: work.analysis }), [saved, work])
+  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis }), [saved, work])
+  const shown = profile.metrics.filter((d) => !d.hidden)
   const built = useMemo(() => prepareRecord(rec), [rec])
   const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
   const changes = useMemo(() => (prev ? compareMotion(prev.analysis, rec.analysis) : []), [prev, rec])
   const a = rec.analysis
   // 直した点で計算し直して、すぐ保存する
   const change = (next: MotionEdit[]) => {
-    const analysis = analyzeMotion(motionInputOf({ ...saved, edits: next }), saved.kind)
-    setWork({ edits: next, analysis })
+    const analysis = analyzeMotion(motionInputOf({ ...saved, edits: next, body: work.body }), saved.kind)
+    setWork({ edits: next, body: work.body, analysis })
     void data.saveMotionEdits(saved.id, next, analysis)
+  }
+  // 体の値を変えて計算し直し、保存する
+  const changeBody = (body: BodyParams | undefined) => {
+    const analysis = analyzeMotion(motionInputOf({ ...saved, edits: work.edits, body }), saved.kind)
+    setWork({ edits: work.edits, body, analysis })
+    void data.saveMotionBody(saved.id, body, analysis)
+    toast('この値で計算し直しました')
   }
   const apply = (next: MotionEdit[]) => {
     setPast((p) => [...p, edits])
@@ -294,11 +310,16 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
       </div>
       <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
         <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={muscles} onChange={(e) => setMuscles(e.target.checked)} />
-        3D の体に、{profile.label}で一般に主に使われる筋肉の場所を色で示す
+        {profile.load ? '3D の体に、推定した筋肉の要求度を色の濃さで示す' : `3D の体に、${profile.label}で一般に主に使われる筋肉の場所を色で示す`}
       </label>
-      {muscles && (
+      {muscles && profile.load && (
         <p className="text-sm text-ink-3">
-          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません（筋肉の力は、外から加わる力を測らないと求められません）。
+          色が濃いほど、その時刻にその筋肉に求められる力が大きいという推定です。体の部分の重さ（Winter 2009）と床からの力の仮定から求めた関節の負担と、関節の曲がりから出した目安で、筋電図などで測った値ではありません。
+        </p>
+      )}
+      {muscles && !profile.load && (
+        <p className="text-sm text-ink-3">
+          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません。この種目はハンドルやペダルにかかる力が分からないため、濃さ（要求度）は付けていません。
         </p>
       )}
       <p className="mt-2 text-sm text-ink-3">
@@ -308,13 +329,15 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
         グラフの帯は 1 {profile.unitLabel}ごとの区間です。
       </p>
 
+      {profile.load && <BodyPanel body={work.body} used={a.body} onApply={changeBody} />}
+
       <SectionTitle sub="横から見た見かけの角度・位置です。正常範囲とは比べていません。自分の過去の記録と比べるための値です。">1 {profile.unitLabel}ごとの値</SectionTitle>
       <div className="overflow-x-auto rounded-[var(--radius-panel)] bg-surface shadow-lift">
-        <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + profile.metrics.length * 64}px` }}>
+        <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + shown.length * 64}px` }}>
           <thead className="text-sm text-ink-3">
             <tr className="border-b border-line">
               <th className="px-3 py-2 text-left font-medium">{profile.unitLabel}</th>
-              {profile.metrics.map((d) => (
+              {shown.map((d) => (
                 <th key={d.key} className="px-2 py-2 font-medium">
                   {d.short}
                   <span className="block text-xs font-normal">{d.unit}</span>
@@ -326,9 +349,10 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
             {a.cycles.map((c, i) => (
               <tr key={i} className="border-b border-line last:border-0">
                 <td className="px-3 py-2 text-left">{i + 1}</td>
-                {profile.metrics.map((d) => (
+                {shown.map((d) => (
                   <td key={d.key} className="px-2 py-2">
                     {fmtMotionValue(d, c.values[d.key], false)}
+                    <CycleBand def={d} c={c} />
                   </td>
                 ))}
               </tr>
@@ -346,8 +370,9 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
         </ButtonLink>
       )}
       <ul className="space-y-3">
-        {profile.metrics.map((def) => {
+        {shown.map((def) => {
           const m = motionMetric(a, def.key)
+          const band = def.band ? motionBandText(def, motionMetric(a, def.band[0])?.value, motionMetric(a, def.band[1])?.value) : null
           const ch = changes.find((c) => c.key === def.key)
           const pm = prev ? motionMetric(prev.analysis, def.key) : undefined
           return (
@@ -356,6 +381,11 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
                 <h3 className="font-bold">{def.label}</h3>
                 <span className="shrink-0 text-[22px] font-bold num">{fmtMotionMetric(def, m)}</span>
               </div>
+              {band && (
+                <p className="mt-0.5 text-right text-sm text-ink-2 num">
+                  <Badge tone="level">条件付きの推定</Badge> 仮定を動かした幅 {band}
+                </p>
+              )}
               {m?.status === 'ok' && m.sd !== null && (
                 <p className="mt-0.5 text-right text-sm text-ink-3 num">
                   {profile.unitLabel}ごとの揺れ ±{fmtMotionValue({ unit: def.unit, digits: def.digits + 1 }, m.sd)}・{m.reps} {profile.unitLabel}
@@ -371,6 +401,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
                   )}
                 </p>
               )}
+              {def.reference && <p className="mt-2 rounded-[var(--radius-control)] bg-sunken p-2.5 text-sm text-ink-2">{def.reference}</p>}
               <Details summary="この値について">{def.doc}</Details>
             </li>
           )
@@ -439,6 +470,67 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
         }
       />
     </Screen>
+  )
+}
+
+/** 表の 1 回の値の下に、仮定を動かした幅を小さく出す */
+function CycleBand({ def, c }: { def: MetricDef; c: MotionCycleSummary }) {
+  const text = def.band ? motionBandText(def, c.values[def.band[0]], c.values[def.band[1]]) : null
+  return text ? <span className="block text-xs text-ink-3">{text}</span> : null
+}
+
+const numOr = (s: string) => {
+  const v = Number(s.replace(',', '.'))
+  return s.trim() && Number.isFinite(v) ? v : undefined
+}
+
+/** 重心と負担の推定に使う、身長・体重・持つ重さ。入れなければ仮定の値を使い、「仮定」と出す */
+function BodyPanel({ body, used, onApply }: { body: BodyParams | undefined; used: ResolvedBody | undefined; onApply: (b: BodyParams | undefined) => void }) {
+  const [h, setH] = useState(body?.heightCm ? String(body.heightCm) : '')
+  const [w, setW] = useState(body?.weightKg ? String(body.weightKg) : '')
+  const [l, setL] = useState(body?.loadKg ? String(body.loadKg) : '')
+  const next: BodyParams = { heightCm: numOr(h), weightKg: numOr(w), loadKg: numOr(l) }
+  const changed = next.heightCm !== body?.heightCm || next.weightKg !== body?.weightKg || next.loadKg !== body?.loadKg
+  const field = (label: string, unit: string, value: string, set: (v: string) => void, assumed: boolean | undefined, prior: number) => (
+    <label className="block">
+      <span className="flex items-center gap-1.5 text-sm text-ink-2">
+        {label}
+        {assumed ? <Badge tone="attention">仮定 {prior}</Badge> : <Badge tone="measure">入力</Badge>}
+      </span>
+      <span className="mt-1 flex items-center gap-1.5">
+        <input
+          type="text"
+          inputMode="decimal"
+          className="min-h-11 w-full rounded-[var(--radius-control)] border border-line bg-surface px-3 text-[16px] num"
+          value={value}
+          placeholder={String(prior)}
+          onChange={(e) => set(e.target.value)}
+        />
+        <span className="text-sm text-ink-3">{unit}</span>
+      </span>
+    </label>
+  )
+  return (
+    <section className="mt-4 rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift" aria-labelledby="body-panel-title">
+      <h2 id="body-panel-title" className="font-bold">
+        重心と負担の推定に使う値
+      </h2>
+      <p className="mt-1 text-sm text-ink-3">
+        入れなければ、身長 {BODY_PRIOR.heightCm} cm・体重 {BODY_PRIOR.weightKg} kg・持つ重さ {BODY_PRIOR.loadKg} kg と仮定します。体重と重さは、重心と「股関節と膝の負担の比」を求めるのに使うだけで、力の大きさ（Nm）は出しません。
+      </p>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        {field('身長', 'cm', h, setH, used?.assumed.height, BODY_PRIOR.heightCm)}
+        {field('体重', 'kg', w, setW, used?.assumed.weight, BODY_PRIOR.weightKg)}
+        {field('持つ重さ', 'kg', l, setL, used?.assumed.load, BODY_PRIOR.loadKg)}
+      </div>
+      <Button className="mt-3" variant="secondary" block disabled={!changed} onClick={() => onApply(next.heightCm || next.weightKg || next.loadKg ? next : undefined)}>
+        この値で計算し直す
+      </Button>
+      <div className="mt-3" />
+      <Notice tone="info" title="重心と負担は推定です">
+        床からの力や筋肉の働きは測っていません。体の部分ごとの重さの割合（Winter 2009）と画面の上の点から重心を求め、ゆっくりした動きでは体がほぼつり合うので、床からの力が重心の真下に左右半分ずつかかると仮定して、股関節と膝の負担（力のモーメント）の比を求めています。帯と「幅」は、その位置を足の長さの ±25%、左右を 4:6〜6:4 に動かしたときの範囲です。奥側の手足はカメラ側と同じ位置とみなしています。持つ重さは手首の位置にあるとしています。
+      </Notice>
+    </section>
   )
 }
 

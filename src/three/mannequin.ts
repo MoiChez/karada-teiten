@@ -264,6 +264,59 @@ export const MUSCLE_WEIGHT: Record<MuscleKey, (w: (bone: string) => number, fron
   biceps: (w, f) => (w('upperarm_l') + w('upperarm_r')) * f,
 }
 
+/**
+ * 筋肉ごとの濃さ（0〜1）で色づける関数を返す。頂点ごとの筋肉の重みは最初に一度だけ求め、
+ * 呼ぶたびに色だけを塗り直す（再生中に、推定の要求度に合わせて濃さを変えるため）
+ */
+export function muscleShader(root: THREE.Object3D, base: string, accent: string) {
+  const c0 = new THREE.Color(base)
+  const c1 = new THREE.Color(accent)
+  const keys = Object.keys(MUSCLE_WEIGHT) as MuscleKey[]
+  const ramp = (v: number) => Math.min(1, Math.max(0, (v - 0.05) / 0.35))
+  const meshes: { color: THREE.BufferAttribute; w: Float32Array[]; n: number }[] = []
+  root.traverse((o) => {
+    const mesh = o as THREE.SkinnedMesh
+    if (!mesh.isSkinnedMesh) return
+    const g = mesh.geometry
+    const idx = g.getAttribute('skinIndex')
+    const wt = g.getAttribute('skinWeight')
+    const nrm = g.getAttribute('normal')
+    const n = g.getAttribute('position').count
+    const names = mesh.skeleton.bones.map((b) => b.name)
+    let color = g.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (!color || color.count !== n) {
+      color = new THREE.BufferAttribute(new Float32Array(n * 3), 3)
+      g.setAttribute('color', color)
+    }
+    const w = keys.map(() => new Float32Array(n))
+    const bw = new Map<string, number>()
+    const get = (bone: string) => bw.get(bone) ?? 0
+    for (let i = 0; i < n; i++) {
+      bw.clear()
+      for (let k = 0; k < 4; k++) {
+        const wk = wt.getComponent(i, k)
+        if (wk > 0) bw.set(names[idx.getComponent(i, k)], (bw.get(names[idx.getComponent(i, k)]) ?? 0) + wk)
+      }
+      const nz = nrm ? nrm.getZ(i) : 0
+      keys.forEach((key, j) => (w[j][i] = Math.min(1, MUSCLE_WEIGHT[key](get, ramp(nz), ramp(-nz)))))
+    }
+    meshes.push({ color, w, n })
+  })
+  const c = new THREE.Color()
+  return (levels: Partial<Record<MuscleKey, number>>) => {
+    const lv = keys.map((k) => levels[k] ?? 0)
+    for (const m of meshes) {
+      for (let i = 0; i < m.n; i++) {
+        let h = 0
+        for (let j = 0; j < lv.length; j++) if (lv[j] > 0) h = Math.max(h, m.w[j][i] * lv[j])
+        c.copy(c0).lerp(c1, ACCENT_MAX * Math.min(1, h))
+        m.color.setXYZ(i, c.r, c.g, c.b)
+      }
+      m.color.needsUpdate = true
+    }
+  }
+}
+
 /** 選んだ筋肉のある場所を色づける（なしなら色を戻す） */
 export function paintMuscles(root: THREE.Object3D, base: string, accent: string, keys: MuscleKey[]) {
   const fns = keys.map((k) => MUSCLE_WEIGHT[k])

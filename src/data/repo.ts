@@ -159,6 +159,8 @@ export function repo(db: AppDB = defaultDb) {
     getMotionVideo: (id: string) => db.motionVideos.get(id),
     /** 手で直した点と、それで計算し直した結果を保存する（推定した点は書き換えない） */
     saveMotionEdits: (id: string, edits: MotionRecord['edits'], analysis: MotionRecord['analysis']) => db.motions.update(id, { edits, analysis }),
+    /** 結果の画面で入れた身長・体重・持つ重さと、それで計算し直した結果を保存する */
+    saveMotionBody: (id: string, body: MotionRecord['body'], analysis: MotionRecord['analysis']) => db.motions.update(id, { body, analysis }),
 
     // ---- 記録 ----
     addLog: (l: RoutineLog) => db.routineLogs.put(l),

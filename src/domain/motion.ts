@@ -18,12 +18,13 @@ import {
 } from './motionCore'
 import { PROFILES, type MotionCycle, type PreparedMotion, type SeriesCtx } from './motionSports'
 import type { ConstraintNote } from './motionConstraints'
+import { resolveBody, squatLoad, type BodyParams, type ResolvedBody } from './motionLoad'
 
 export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 3
+export const MOTION_ALGORITHM_VERSION = 4
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },
@@ -46,16 +47,19 @@ export interface MotionRecord {
   frames: MotionFrameData[]
   /** 手で直した点（新しい順ではなく、直した順） */
   edits?: MotionEdit[]
+  /** 身長・体重・持つ重さ（入力されたものだけ。撮ったときのプロフィールの値か、結果の画面で入れた値） */
+  body?: BodyParams
   analysis: MotionAnalysis
 }
 
-export function motionInputOf(r: Pick<MotionRecord, 'frames' | 'video'> & { edits?: MotionEdit[] }): MotionInput {
+export function motionInputOf(r: Pick<MotionRecord, 'frames' | 'video'> & { edits?: MotionEdit[]; body?: BodyParams }): MotionInput {
   return {
     frames: r.frames.map((f) => ({ t: f.t, lm: unpackLandmarks(f.p), world: f.w ? unpackWorld(f.w) : undefined })),
     width: r.video.width,
     height: r.video.height,
     rollDeg: r.video.rollDeg,
     edits: r.edits,
+    body: r.body,
   }
 }
 
@@ -70,10 +74,21 @@ export function prepareMotion(input: MotionInput, kind: MotionKind = 'squat'): P
     base.frames.map((fr) => fr.px[s.ankle].y - fr.px[s.hip].y),
     0.9,
   )
-  const ctx: SeriesCtx = { s, f: base.f, leg: base.leg, standLeg: standLeg > 0 ? standLeg : base.leg }
+  const body = resolveBody(input.body)
+  const ctx: SeriesCtx = { s, f: base.f, leg: base.leg, standLeg: standLeg > 0 ? standLeg : base.leg, body }
   const series: Record<string, number[]> = {}
-  for (const def of profile.series) series[def.key] = base.frames.map((fr) => def.value(fr.px, ctx))
-  return { ...base, kind, standLeg: ctx.standLeg, series }
+  for (const def of profile.series) {
+    const value = def.value
+    if (value) series[def.key] = base.frames.map((fr) => value(fr.px, ctx))
+  }
+  const load = profile.load ? (squatLoad(base.frames, s, base.f, body, base.breaks) ?? undefined) : undefined
+  if (profile.load) {
+    const none = base.frames.map(() => NaN)
+    series.ratio = load?.ratio ?? none
+    series.ratio_lo = load?.ratioLo ?? none
+    series.ratio_hi = load?.ratioHi ?? none
+  }
+  return { ...base, kind, standLeg: ctx.standLeg, series, body, load }
 }
 
 export function findCycles(prep: PreparedMotion) {
@@ -114,6 +129,8 @@ export interface MotionAnalysis {
   warnings: string[]
   /** 使った器具の前提（エルゴ・自転車） */
   constraints?: ConstraintNote[]
+  /** 重心と負担の推定に使った身長・体重・持つ重さ（スクワット。仮定の値かどうかも） */
+  body?: ResolvedBody
 }
 
 /**
@@ -194,6 +211,7 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
     metrics,
     warnings,
     constraints: prep.constraints.length ? prep.constraints : undefined,
+    body: prep.load ? prep.body : undefined,
   }
 }
 

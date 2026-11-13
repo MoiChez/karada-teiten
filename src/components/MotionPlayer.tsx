@@ -1,7 +1,10 @@
 // 動きの再生: 撮った動画と 3D の体を並べ、1 つの時計で動かす。下に角度のグラフと、今の時刻の値
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Pause, Play, StepBack, StepForward } from 'lucide-react'
-import { PROFILES, eventOf, type MotionCycle, type MotionRecord, type PreparedMotion } from '../domain/motion'
+import { MUSCLE_LABELS, PROFILES, eventOf, type MotionCycle, type MotionRecord, type MuscleKey, type PreparedMotion } from '../domain/motion'
+import { MUSCLE_JOINT, PHASE_LABELS } from '../domain/motionLoad'
+import { pxToNorm } from '../domain/motionConstraints'
+import { sidePoints } from '../domain/landmarks'
 import type { Pose3D } from '../domain/fusion3d'
 import { motionEquipment } from '../domain/motionPose'
 import type { UserProfile } from '../domain/types'
@@ -49,6 +52,20 @@ export function MotionPlayer({
   const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const def = profile.series.find((d) => d.key === series) ?? profile.series[0]
   const equipment = useMemo(() => motionEquipment(rec.kind, poses, prep.nearSide), [rec.kind, poses, prep.nearSide])
+  // 重心の線（スクワット。画像に対する比）
+  const com = useMemo(() => {
+    if (!prep.load) return undefined
+    const size = { width: rec.video.width, height: rec.video.height, rollDeg: rec.video.rollDeg }
+    const sp = sidePoints(prep.nearSide)
+    return prep.frames.map((fr, k) => ({ c: pxToNorm(prep.load!.com[k], size), heel: fr.lm[sp.heel], toe: fr.lm[sp.foot] }))
+  }, [prep, rec.video])
+  // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
+  const levels = useMemo(() => {
+    if (!muscles || !prep.load) return undefined
+    const values: Partial<Record<MuscleKey, number[]>> = {}
+    for (const [m, j] of Object.entries(MUSCLE_JOINT) as [MuscleKey, keyof typeof prep.load.demand][]) values[m] = prep.load.demand[j]
+    return { ts, values }
+  }, [muscles, prep, ts])
 
   // 最初だけ、1 回目の出来事（底・キャッチなど）から、ゆっくり再生する
   const started = useRef(false)
@@ -77,6 +94,7 @@ export function MotionPlayer({
               clock={clock}
               overlay={overlayOn && !videoOverlay ? overlay : undefined}
               nearSide={prep.nearSide}
+              com={com}
             />
             {videoOverlay}
           </div>
@@ -85,12 +103,13 @@ export function MotionPlayer({
         <div className={cx('relative', sideBySide ? 'min-h-[240px]' : 'h-[min(46dvh,380px)]')}>
           <div className="absolute inset-0">
             <Suspense fallback={<div className="size-full rounded-[var(--radius-panel)] bg-surface" />}>
-              <MotionBody3D poses={poses} clock={clock} sex={sex} facing={rec.analysis.facing} kind={rec.kind} muscles={muscles} equipment={equipment} nearSide={prep.nearSide} className="h-full" />
+              <MotionBody3D poses={poses} clock={clock} sex={sex} facing={rec.analysis.facing} kind={rec.kind} muscles={muscles} levels={levels} equipment={equipment} nearSide={prep.nearSide} className="h-full" />
             </Suspense>
           </div>
         </div>
       </div>
       {!video && <p className="mt-2 text-sm text-ink-3">動画は保存していないため、3D の体だけを再生します。</p>}
+      {levels && prep.load && <DemandNow clock={clock} ts={ts} load={prep.load} />}
 
       <Transport clock={clock} ts={ts} />
 
@@ -133,6 +152,8 @@ export function MotionPlayer({
         cycles={cycles.map((c) => ({ start: c.start, end: c.end, mark: eventOf(c, profile.mainEvent)?.t }))}
         clock={clock}
         label={def.label}
+        band={def.band ? { lo: prep.series[def.band[0]], hi: prep.series[def.band[1]] } : undefined}
+        reference={profile.chartRefs?.[def.key]}
       />
       <NowTable clock={clock} ts={ts} prep={prep} />
       {video && !videoOverlay && (
@@ -208,12 +229,43 @@ function Transport({ clock, ts }: { clock: Clock; ts: number[] }) {
 }
 
 /** 今の時刻の値 */
+/** 今の時刻の、筋肉ごとの推定の要求度と、伸びながら / 縮みながら */
+function DemandNow({ clock, ts, load }: { clock: Clock; ts: number[]; load: NonNullable<PreparedMotion['load']> }) {
+  const t = useClockValue(clock, (c) => c.get())
+  const k = indexAt(ts, t)
+  return (
+    <div className="mt-2 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+      <p className="text-sm font-medium text-ink-2">推定の要求度（今の時刻）</p>
+      <ul className="mt-1.5 space-y-1.5">
+        {(Object.entries(MUSCLE_JOINT) as [MuscleKey, keyof typeof load.demand][]).map(([m, j]) => {
+          const v = load.demand[j][k] ?? 0
+          return (
+            <li key={m} className="text-sm">
+              <span className="flex items-baseline justify-between gap-2">
+                <span>{MUSCLE_LABELS[m]}</span>
+                <span className="shrink-0 font-bold num">{fmtNum(v, 2)}</span>
+              </span>
+              <span className="mt-0.5 flex items-center gap-2">
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-sunken" aria-hidden>
+                  <span className="block h-full rounded-full" style={{ width: `${Math.round(v * 100)}%`, background: '#E9B85E' }} />
+                </span>
+                <span className="shrink-0 text-xs text-ink-3">{PHASE_LABELS[load.phase[j][k] ?? 'isometric']}</span>
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+      <p className="mt-2 text-xs text-ink-3">運動の動きと、条件付きのモデル（体の部分の重さ・床からの力の仮定）から求めた、筋肉にかかる力の要求の目安（0〜1）です。筋電図などで測った値ではありません。太ももの裏とお尻は、どちらも股関節を伸ばす筋肉として同じ値にしています。</p>
+    </div>
+  )
+}
+
 function NowTable({ clock, ts, prep }: { clock: Clock; ts: number[]; prep: PreparedMotion }) {
   const t = useClockValue(clock, (c) => c.get())
   const k = indexAt(ts, t)
   const defs = PROFILES[prep.kind].series
   return (
-    <dl className="mt-2 grid gap-1 rounded-[var(--radius-panel)] bg-surface p-2 text-center shadow-lift" style={{ gridTemplateColumns: `repeat(${defs.length}, minmax(0, 1fr))` }}>
+    <dl className="mt-2 grid gap-1 rounded-[var(--radius-panel)] bg-surface p-2 text-center shadow-lift" style={{ gridTemplateColumns: `repeat(${Math.min(defs.length, 4)}, minmax(0, 1fr))` }}>
       {defs.map((d) => (
         <div key={d.key}>
           <dt className="text-xs text-ink-3">{d.short}</dt>

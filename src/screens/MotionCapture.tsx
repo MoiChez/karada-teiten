@@ -12,6 +12,7 @@ import { beep, speak, useDeviceTilt, vibrate } from '../pose/device'
 import { FILE_MAX_MS, detectRecorded, detectVideoFile, recordFrames, type DetectedClip, type Progress } from '../pose/motionVideo'
 import { keepMotionVideo } from '../state/motionMedia'
 import { data } from '../data/repo'
+import { useProfile } from '../data/hooks'
 import { Button, Notice, Screen, Segmented, cx } from '../components/ui'
 
 type Phase = 'guide' | 'camera' | 'countdown' | 'recording' | 'analyzing' | 'failed'
@@ -36,6 +37,7 @@ export function MotionCapture() {
   const initial = params.get('kind')
   const [kind, setKind] = useState<MotionKind>(MOTION_KIND_LIST.includes(initial as MotionKind) ? (initial as MotionKind) : 'squat')
   const profile = PROFILES[kind]
+  const me = useProfile()
   const [phase, setPhase] = useState<Phase>('guide')
   const [keepVideo, setKeepVideo] = useState(false)
   const [cam, setCam] = useState<CamState>('starting')
@@ -184,6 +186,8 @@ export function MotionCapture() {
       },
       videoSaved: false,
       frames: clip.frames,
+      // 重心と負担の推定に使う（プロフィールに入っていれば。結果の画面で変えられる）
+      body: me?.heightCm || me?.weightKg ? { heightCm: me.heightCm, weightKg: me.weightKg } : undefined,
     }
     const analysis = analyzeMotion(motionInputOf(base), kind)
     if (!analysis.cycles.length) {

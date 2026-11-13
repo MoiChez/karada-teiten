@@ -22,8 +22,11 @@ export function AngleChart({
   cycles,
   clock,
   label,
+  band,
+  reference,
 }: {
   ts: number[]
+  /** 出せないコマは NaN（線を切る） */
   values: number[]
   unit: string
   digits: number
@@ -31,13 +34,24 @@ export function AngleChart({
   cycles: { start: number; end: number; mark?: number }[]
   clock: Clock
   label: string
+  /** 仮定を動かした幅（下限・上限） */
+  band?: { lo: number[]; hi: number[] }
+  /** 出典のある目安の範囲 */
+  reference?: { lo: number; hi: number; label: string }
 }) {
   const svg = useRef<SVGSVGElement>(null)
   const geo = useMemo(() => {
     const t0 = clock.start
     const t1 = clock.end
-    const lo0 = Math.min(...values)
-    const hi0 = Math.max(...values)
+    // 幅の帯は、値の範囲の上下に値の幅ぶんまでで切る（ほぼ立っているところで幅が大きく広がり、線がつぶれないように）
+    const fin = values.filter(Number.isFinite)
+    const vlo = fin.length ? Math.min(...fin) : 0
+    const vhi = fin.length ? Math.max(...fin) : 1
+    const span = Math.max(vhi - vlo, Math.abs(vhi) * 0.2, 1e-6)
+    const cap = (v: number) => Math.min(vhi + span, Math.max(vlo - span, v))
+    const all = [...fin, ...(band ? [...band.lo, ...band.hi].filter(Number.isFinite).map(cap) : []), ...(reference ? [reference.lo, reference.hi] : [])]
+    const lo0 = all.length ? Math.min(...all) : 0
+    const hi0 = all.length ? Math.max(...all) : 1
     const step = niceStep(Math.max(1, hi0 - lo0))
     const lo = Math.floor(lo0 / step) * step
     const hi = Math.ceil(hi0 / step) * step
@@ -45,11 +59,25 @@ export function AngleChart({
     const y = (v: number) => H - PAD.b - ((v - lo) / Math.max(1e-6, hi - lo)) * (H - PAD.t - PAD.b)
     const ticks: number[] = []
     for (let v = lo; v <= hi + 1e-9; v += step) ticks.push(v)
-    const path = values.map((v, i) => `${i ? 'L' : 'M'}${x(ts[i]).toFixed(1)},${y(v).toFixed(1)}`).join('')
+    // NaN のコマで線を切る
+    const path = values
+      .map((v, i) => (Number.isFinite(v) ? `${i && Number.isFinite(values[i - 1]) ? 'L' : 'M'}${x(ts[i]).toFixed(1)},${y(v).toFixed(1)}` : ''))
+      .join('')
+    // 幅の帯（続いているところごとに、上限を行って下限を戻る）
+    const area: string[] = []
+    if (band) {
+      let run: number[] = []
+      const flush = () => {
+        if (run.length > 1) area.push(`M${run.map((i) => `${x(ts[i]).toFixed(1)},${y(cap(band.hi[i])).toFixed(1)}`).join('L')}L${[...run].reverse().map((i) => `${x(ts[i]).toFixed(1)},${y(cap(band.lo[i])).toFixed(1)}`).join('L')}Z`)
+        run = []
+      }
+      ts.forEach((_, i) => (Number.isFinite(band.lo[i]) && Number.isFinite(band.hi[i]) ? run.push(i) : flush()))
+      flush()
+    }
     const seconds = Math.floor((t1 - t0) / 1000)
     const every = seconds > 12 ? 5 : seconds > 6 ? 2 : 1
-    return { x, y, ticks, path, seconds, every, t0, t1 }
-  }, [ts, values, clock])
+    return { x, y, ticks, path, area: area.join(''), seconds, every, t0, t1 }
+  }, [ts, values, clock, band, reference])
 
   const seekAt = (clientX: number) => {
     const el = svg.current
@@ -97,10 +125,30 @@ export function AngleChart({
             {s}秒
           </text>
         ))}
+        {reference && (
+          <g>
+            <rect
+              x={PAD.l}
+              y={geo.y(reference.hi)}
+              width={W - PAD.l - PAD.r}
+              height={Math.max(1, geo.y(reference.lo) - geo.y(reference.hi))}
+              fill="var(--color-level)"
+              fillOpacity="0.18"
+              stroke="var(--color-ink-3)"
+              strokeDasharray="3 3"
+              strokeWidth="0.8"
+            />
+            <text x={PAD.l + 4} y={geo.y(reference.hi) - 3} fontSize="9.5" fill="var(--color-ink-2)">
+              {reference.label}
+            </text>
+          </g>
+        )}
+        {geo.area && <path d={geo.area} fill="#E9B85E" fillOpacity="0.28" stroke="none" />}
         <path d={geo.path} fill="none" stroke="var(--color-measure)" strokeWidth="1.8" strokeLinejoin="round" />
         {cycles.map((r, i) => {
           if (r.mark === undefined) return null
           const k = indexAt(ts, r.mark)
+          if (!Number.isFinite(values[k])) return null
           return <circle key={i} cx={geo.x(r.mark)} cy={geo.y(values[k])} r="3.5" fill="var(--color-level)" stroke="var(--color-ink)" strokeWidth="1" />
         })}
         <Cursor clock={clock} x={geo.x} />
@@ -120,7 +168,7 @@ function NowValue({ ts, values, clock, unit, digits }: { ts: number[]; values: n
   const v = values[indexAt(ts, t)]
   return (
     <span className="text-[15px] font-bold text-ink num">
-      {v === undefined ? '—' : `${fmtNum(v, digits)}${unit}`}
+      {v === undefined || !Number.isFinite(v) ? '—' : `${fmtNum(v, digits)}${unit}`}
     </span>
   )
 }

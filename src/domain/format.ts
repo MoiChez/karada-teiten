@@ -36,6 +36,7 @@ export const AREA_LABELS: Record<BodyArea, string> = {
 }
 
 export function fmtNum(v: number, digits = 1): string {
+  if (!Number.isFinite(v)) return '—'
   const s = Math.abs(v) < 10 ** -digits / 2 ? 0 : v
   return s.toLocaleString('ja-JP', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }

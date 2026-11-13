@@ -9,10 +9,10 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { Pose3D } from '../domain/fusion3d'
 import type { UserProfile } from '../domain/types'
-import { PROFILES, type MotionKind } from '../domain/motion'
+import { PROFILES, type MotionKind, type MuscleKey } from '../domain/motion'
 import { poseAtTime, type MotionEquipment } from '../domain/motionPose'
-import type { Clock } from '../components/motionClock'
-import { mannequinKindOf, paintMuscles, poseMannequin, type MannequinKind } from './mannequin'
+import { indexAt, type Clock } from '../components/motionClock'
+import { mannequinKindOf, muscleShader, paintMuscles, poseMannequin, type MannequinKind } from './mannequin'
 import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, hasWebGL, mannequinUrl } from './common'
 import { HIGHLIGHT_COLOR } from './StandingBody'
 import { Notice, cx } from '../components/ui'
@@ -26,12 +26,19 @@ const VIEWS = {
 
 const GEAR = '#3d555c'
 
+/** 筋肉ごとの、コマごとの濃さ（0〜1。推定の要求度） */
+export interface MuscleLevels {
+  ts: number[]
+  values: Partial<Record<MuscleKey, number[]>>
+}
+
 function MovingBody({
   kind,
   sport,
   poses,
   clock,
   muscles,
+  levels,
   floorY,
 }: {
   kind: MannequinKind
@@ -39,6 +46,7 @@ function MovingBody({
   poses: { t: number; pose: Pose3D }[]
   clock: Clock
   muscles: boolean
+  levels?: MuscleLevels
   floorY: number
 }) {
   const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
@@ -53,9 +61,12 @@ function MovingBody({
     })
     return r
   }, [gltf])
+  const shade = useMemo(() => (levels ? muscleShader(root, BODY_COLOR, HIGHLIGHT_COLOR) : null), [root, levels])
+  const shown = useRef('')
   useEffect(() => {
-    paintMuscles(root, BODY_COLOR, HIGHLIGHT_COLOR, muscles ? PROFILES[sport].muscles : [])
-  }, [root, muscles, sport])
+    shown.current = ''
+    if (!levels) paintMuscles(root, BODY_COLOR, HIGHLIGHT_COLOR, muscles ? PROFILES[sport].muscles : [])
+  }, [root, muscles, sport, levels])
   const feet = useMemo(() => {
     const out: THREE.Object3D[] = []
     root.traverse((o) => {
@@ -68,6 +79,17 @@ function MovingBody({
 
   useFrame(() => {
     const t = clock.get()
+    // 推定の要求度の濃さ（止まっていても、出したときに塗る。変わったときだけ塗り直す。0.05 刻み）
+    if (levels && shade) {
+      const k = indexAt(levels.ts, t)
+      const now: Partial<Record<MuscleKey, number>> = {}
+      for (const [m, v] of Object.entries(levels.values) as [MuscleKey, number[]][]) now[m] = Math.round((v[k] ?? 0) * 20) / 20
+      const key = JSON.stringify(now)
+      if (key !== shown.current) {
+        shown.current = key
+        shade(now)
+      }
+    }
     if (t === last.current) return
     last.current = t
     const pose = poseAtTime(poses, t)
@@ -185,6 +207,7 @@ export default function MotionBody3D({
   facing,
   kind,
   muscles,
+  levels,
   equipment,
   nearSide,
   className,
@@ -197,6 +220,8 @@ export default function MotionBody3D({
   kind: MotionKind
   /** 種目で一般に主に使われる筋肉の場所を色で示す */
   muscles: boolean
+  /** あれば、筋肉の場所をこの濃さ（推定の要求度）で色づける */
+  levels?: MuscleLevels
   equipment: MotionEquipment
   nearSide: 'left' | 'right'
   className?: string
@@ -222,7 +247,7 @@ export default function MotionBody3D({
           <BodyLights />
           <LoadBoundary onError={() => setFailed(true)}>
             <Suspense fallback={null}>
-              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} floorY={floorY} />
+              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} />
             </Suspense>
           </LoadBoundary>
           <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} />

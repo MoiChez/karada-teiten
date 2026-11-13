@@ -120,7 +120,7 @@ function CompareBody({ a, b, videoA, videoB, sex }: { a: MotionRecord; b: Motion
             </tr>
           </thead>
           <tbody>
-            {profile.metrics.map((d) => {
+            {profile.metrics.filter((d) => !d.hidden).map((d) => {
               const ch = changes.find((c) => c.key === d.key)
               return (
                 <tr key={d.key} className="border-b border-line last:border-0">
@@ -211,7 +211,7 @@ function SyncedPair({
         それぞれの 1 {profile.unitLabel}の始めから終わりまでを 0〜100% にそろえて、同じ % のところを並べています（長さが違っても、同じ進み具合で比べるため）。
       </p>
       <div className="mt-3">
-        <Segmented legend="グラフの値" value={series} onChange={setSeries} columns={Math.min(profile.series.length, 6)} options={profile.series.map((d) => ({ value: d.key, label: d.short }))} />
+        <Segmented legend="グラフの値" value={series} onChange={setSeries} columns={Math.min(profile.series.length, 6)} options={profile.series.filter((d) => d.value).map((d) => ({ value: d.key, label: d.short }))} />
       </div>
       {curveA && curveB && <PhaseChart a={curveA} b={curveB} label={def.label} unit={def.unit} digits={def.digits} clock={phase} />}
     </div>

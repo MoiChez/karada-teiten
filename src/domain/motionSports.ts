@@ -1,10 +1,11 @@
 // 種目ごとの定義: グラフに出す値（コマごと）、1 回の区切り方、1 回ごとの値。docs/05 の 7 章。
 // どの値も、横から見た見かけの角度・位置で、正常範囲とは比べない
 import type { Point } from './types'
-import { angleFromVerticalDeg, interiorAngleDeg } from './geometry'
+import { RAD2DEG, angleFromVerticalDeg, interiorAngleDeg } from './geometry'
 import { sidePoints } from './landmarks'
 import { constrainBike, constrainErg } from './motionConstraints'
 import { findPeaks, segmentsOf, type Constrain, type MotionKind, type PreparedBase } from './motionCore'
+import { bodyCom, type LoadSeries, type ResolvedBody } from './motionLoad'
 
 type Side = ReturnType<typeof sidePoints>
 
@@ -15,6 +16,8 @@ export interface SeriesCtx {
   leg: number
   /** 立っているときの股関節〜足首の高さ（ピクセル。スクワットの深さに使う） */
   standLeg: number
+  /** 身長・体重・持つ重さ（入力がなければ仮定の値） */
+  body: ResolvedBody
 }
 
 export interface SeriesDef {
@@ -24,7 +27,10 @@ export interface SeriesDef {
   unit: string
   digits: number
   doc: string
-  value: (p: Point[], c: SeriesCtx) => number
+  /** コマごとの値。ないものは、前後のコマも使って別に求める（負担の比など） */
+  value?: (p: Point[], c: SeriesCtx) => number
+  /** 仮定を動かした幅の、下限と上限の値の名前 */
+  band?: [string, string]
 }
 
 export interface PreparedMotion extends PreparedBase {
@@ -32,6 +38,9 @@ export interface PreparedMotion extends PreparedBase {
   standLeg: number
   /** コマごとの値（frames と同じ並び） */
   series: Record<string, number[]>
+  body: ResolvedBody
+  /** 重心と負担の推定（スクワット） */
+  load?: LoadSeries
 }
 
 export interface MotionEvent {
@@ -61,6 +70,12 @@ export interface MetricDef {
   /** 比べるときの最小のばらつきの目安（推定の点の揺れから見た工学的な目安で、正常範囲ではない） */
   floor: number
   value: (c: MotionCycle, prep: PreparedMotion) => number | null
+  /** 表に出さない値（幅の下限・上限など） */
+  hidden?: boolean
+  /** 仮定を動かした幅の、下限と上限の値の名前 */
+  band?: [string, string]
+  /** 出典のある目安（良し悪しの判定ではない） */
+  reference?: string
 }
 
 /** 種目で一般に主に使われる筋肉（3D の体に場所を色で示すだけ。個人の測定値ではない） */
@@ -106,6 +121,10 @@ export interface SportProfile {
   orientation: 'portrait' | 'landscape'
   /** 一般に主に使われる筋肉（教育用の例） */
   muscles: MuscleKey[]
+  /** 重心と負担を推定するか（立って行い、外から加わる力が床だけの種目） */
+  load?: boolean
+  /** グラフに示す、出典のある目安の範囲 */
+  chartRefs?: Record<string, { lo: number; hi: number; label: string }>
 }
 
 // ---------- 角度 ----------
@@ -237,6 +256,41 @@ const DEPTH: SeriesDef = {
   value: (p, c) => ((c.standLeg - (p[c.s.ankle].y - p[c.s.hip].y)) / c.standLeg) * 100,
 }
 
+const THIGH: SeriesDef = {
+  key: 'thigh',
+  label: '太ももの傾き（+ はパラレルより深い）',
+  short: '太もも',
+  unit: '°',
+  digits: 0,
+  doc: '股関節と膝の点を結ぶ線の、水平からの角度です。太ももが水平（パラレル）のとき 0° で、股関節が膝より下になると + 、上にあると − になります。横から見た見かけの角度です。',
+  value: (p, c) => Math.atan2(p[c.s.hip].y - p[c.s.knee].y, Math.abs(p[c.s.hip].x - p[c.s.knee].x)) * RAD2DEG,
+}
+
+const COM_FOOT: SeriesDef = {
+  key: 'com',
+  label: '重心の真下の位置（かかと 0%・つま先 100%）',
+  short: '重心',
+  unit: '%',
+  digits: 0,
+  doc: '推定した体の重心（持つ重さを含む）の真下が、足のどこにあるかです。かかとが 0%、つま先が 100% です。体の部分ごとの重さの割合（Winter 2009）と、画面の上の点から求めた推定で、測った値ではありません。奥側の手足はカメラ側と同じ位置とみなしています。',
+  value: (p, c) => {
+    const com = bodyCom(p, c.s, c.body.weightKg, c.body.loadKg)
+    const heel = p[c.s.heel]
+    const toe = p[c.s.foot]
+    return Math.abs(toe.x - heel.x) < 1 ? NaN : ((com.x - heel.x) / (toe.x - heel.x)) * 100
+  },
+}
+
+const RATIO: SeriesDef = {
+  key: 'ratio',
+  label: '股関節と膝の負担の比（股関節 ÷ 膝）',
+  short: '負担比',
+  unit: '倍',
+  digits: 2,
+  doc: '股関節を伸ばす向きの負担（力のモーメント）が、膝を伸ばす向きの負担の何倍かの推定です。1 より大きいと股関節の側、小さいと膝の側に負担が寄っています。床からの力は測っていないため、推定の重心の真下に、左右の脚へ半分ずつかかると仮定して求め、その仮定を動かした幅（その位置から足の長さの ±25%、左右 4:6〜6:4）を帯で示します。ほぼ立っているとき（膝の負担が 10 Nm 未満）は出しません。良し悪しは判定しません。',
+  band: ['ratio_lo', 'ratio_hi'],
+}
+
 function squatCycles(prep: PreparedMotion): { cycles: MotionCycle[]; warnings: string[] } {
   const d = prep.series.depth
   const n = d.length
@@ -322,7 +376,7 @@ const SQUAT: SportProfile = {
   unitLabel: '回',
   mainEvent: 'bottom',
   jumpLabel: (n) => `${n} 回目の底`,
-  series: [DEPTH, KNEE, HIP, TRUNK, SHIN],
+  series: [DEPTH, KNEE, HIP, TRUNK, SHIN, THIGH, COM_FOOT, RATIO],
   defaultSeries: 'knee',
   metrics: [
     { key: 'depth', label: 'いちばん深いところ', short: '深さ', unit: '%', digits: 0, doc: DEPTH.doc, floor: 2, value: cycleMax('depth') },
@@ -350,6 +404,39 @@ const SQUAT: SportProfile = {
       floor: 0.1,
       value: (c) => seconds(eventOf(c, 'bottom')?.t, c.end),
     },
+    {
+      key: 'thigh_bottom',
+      label: '太ももの傾き（いちばん深いところ。+ はパラレルより深い）',
+      short: '太もも',
+      unit: '°',
+      digits: 0,
+      doc: THIGH.doc,
+      floor: 2,
+      value: (c, prep) => at(prep, 'thigh', eventOf(c, 'bottom')?.index),
+    },
+    {
+      key: 'com_bottom',
+      label: '重心の真下の位置（いちばん深いところ）',
+      short: '重心',
+      unit: '%',
+      digits: 0,
+      doc: COM_FOOT.doc,
+      floor: 3,
+      value: (c, prep) => at(prep, 'com', eventOf(c, 'bottom')?.index),
+    },
+    {
+      key: 'ratio_bottom',
+      label: '股関節と膝の負担の比（いちばん深いところ）',
+      short: '負担比',
+      unit: '倍',
+      digits: 2,
+      doc: RATIO.doc,
+      floor: 0.05,
+      band: ['ratio_bottom_lo', 'ratio_bottom_hi'],
+      value: (c, prep) => at(prep, 'ratio', eventOf(c, 'bottom')?.index),
+    },
+    { key: 'ratio_bottom_lo', label: '負担の比の幅（下限）', short: '比の下限', unit: '倍', digits: 2, doc: RATIO.doc, floor: 0.05, hidden: true, value: (c, prep) => at(prep, 'ratio_lo', eventOf(c, 'bottom')?.index) },
+    { key: 'ratio_bottom_hi', label: '負担の比の幅（上限）', short: '比の上限', unit: '倍', digits: 2, doc: RATIO.doc, floor: 0.05, hidden: true, value: (c, prep) => at(prep, 'ratio_hi', eventOf(c, 'bottom')?.index) },
   ],
   valid: (p, s) => p[s.shoulder].y < p[s.hip].y && p[s.knee].y < p[s.ankle].y,
   smoothing: 1.5,
@@ -369,6 +456,7 @@ const SQUAT: SportProfile = {
   ],
   orientation: 'portrait',
   muscles: ['quads', 'glutes', 'hamstrings', 'erectors'],
+  load: true,
 }
 
 // ---------- ローイングエルゴ ----------
@@ -583,6 +671,10 @@ const ERG: SportProfile = {
 
 // ---------- 固定式の自転車 ----------
 
+/** サドルの高さの目安（出典つき）。この画面の値は、こいでいる動画から求めた見かけの角度で、測り方が違う */
+const BIKE_KNEE_REFERENCE =
+  'バイクフィッティングでよく使われる目安: 下死点で膝の曲がり 25〜35°（Holmes, Pruitt, Whalen 1994, Clinics in Sports Medicine）。この目安は、止まった姿勢で角度計を当てて測る方法の値です。この画面の値は、こいでいる動画から求めた見かけの角度なので、同じ人でも違う値になることがあります。良し悪しの判定ではありません。'
+
 /** 下死点（膝がいちばん伸びたところ）を探すときの、谷の深さの最小（度）と、1 回転の長さとして受け付ける範囲（ミリ秒） */
 const BIKE_PROMINENCE = 15
 const BIKE_PERIOD: [number, number] = [300, 3000]
@@ -643,7 +735,17 @@ const BIKE: SportProfile = {
       floor: 1,
       value: (c) => (c.end > c.start ? 60000 / (c.end - c.start) : null),
     },
-    { key: 'knee_bdc', label: '膝の曲がり（下死点）', short: '膝下', unit: '°', digits: 0, doc: KNEE.doc, floor: 2, value: atEvent('knee', 'bdc') },
+    {
+      key: 'knee_bdc',
+      label: '膝の曲がり（下死点）',
+      short: '膝下',
+      unit: '°',
+      digits: 0,
+      doc: KNEE.doc,
+      floor: 2,
+      value: atEvent('knee', 'bdc'),
+      reference: BIKE_KNEE_REFERENCE,
+    },
     { key: 'knee_tdc', label: '膝の曲がり（上死点）', short: '膝上', unit: '°', digits: 0, doc: KNEE.doc, floor: 2, value: atEvent('knee', 'tdc') },
     {
       key: 'hip_open',
@@ -707,6 +809,7 @@ const BIKE: SportProfile = {
   ],
   orientation: 'landscape',
   muscles: ['quads', 'glutes', 'hamstrings', 'calves'],
+  chartRefs: { knee: { lo: 25, hi: 35, label: '目安 25〜35°（下死点。止まって角度計で測る方法）' } },
 }
 
 export const PROFILES: Record<MotionKind, SportProfile> = { squat: SQUAT, erg: ERG, bike: BIKE }
