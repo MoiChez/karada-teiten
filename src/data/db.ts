@@ -9,7 +9,7 @@ import type {
   RoutineLog,
   UserProfile,
 } from '../domain/types'
-import type { GaitRecord } from '../domain/gait'
+import type { MotionRecord } from '../domain/motion'
 
 export interface StoredImage {
   id: string
@@ -19,6 +19,14 @@ export interface StoredImage {
   width: number
   height: number
   createdAt: string
+}
+
+/** 動きの記録の動画（コマの画像）。残すと選んだときだけ保存する */
+export interface StoredMotionVideo {
+  id: string
+  width: number
+  height: number
+  images: { t: number; blob: Blob }[]
 }
 
 export interface SettingRow {
@@ -34,7 +42,8 @@ export class AppDB extends Dexie {
   checkins!: EntityTable<CheckIn, 'id'>
   plans!: EntityTable<RecommendationPlan, 'id'>
   settings!: EntityTable<SettingRow, 'key'>
-  gaits!: EntityTable<GaitRecord, 'id'>
+  motions!: EntityTable<MotionRecord, 'id'>
+  motionVideos!: EntityTable<StoredMotionVideo, 'id'>
 
   constructor(name = 'karada-teiten') {
     super(name)
@@ -50,6 +59,12 @@ export class AppDB extends Dexie {
     // 版 0.8: 歩き方の記録
     this.version(2).stores({
       gaits: 'id, createdAt',
+    })
+    // 版 0.11: 歩き方をやめ、動き（スクワット）の記録にする
+    this.version(3).stores({
+      gaits: null,
+      motions: 'id, createdAt',
+      motionVideos: 'id',
     })
   }
 }

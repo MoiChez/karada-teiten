@@ -1,25 +1,25 @@
-// 歩き方の撮影（試作）。横から往復して歩く様子を撮り、撮り終わってから 1 コマずつ骨格を推定する。
-// 動画は保存しない（体の点の動きだけを保存する）
+// 動きの撮影（スクワット）。横から撮り、撮り終わってから 1 コマずつ骨格を推定する。
+// 動画（コマの画像）は、残すと選んだときだけ端末に保存する。残さないときも、この画面を閉じるまでは結果で再生できる
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { ChevronLeft, FileVideo, Loader2, Video } from 'lucide-react'
-import { FOOTWEAR_LABELS, analyzeGait, fullBodyInFrame, gaitInputOf, turnsFromBody, voteTurns, type Footwear, type GaitRecord } from '../domain/gait'
+import { MOTION_KINDS, analyzeMotion, fullBodyInFrame, motionInputOf, turnsFromBody, voteTurns, type MotionRecord } from '../domain/motion'
 import { quarterTurnsOf, screenRollDeg } from '../domain/tilt'
 import type { DeviceTilt } from '../domain/types'
 import { APP_VERSION, newId } from '../domain/session'
 import { POSE_MODEL, detectImage, getLandmarker, modelVersion } from '../pose/landmarker'
 import { beep, speak, useDeviceTilt, vibrate } from '../pose/device'
-import { FILE_MAX_MS, detectRecorded, detectVideoFile, recordFrames, type DetectedClip, type Progress } from '../pose/gaitVideo'
+import { FILE_MAX_MS, detectRecorded, detectVideoFile, recordFrames, type DetectedClip, type Progress } from '../pose/motionVideo'
+import { keepMotionVideo } from '../state/motionMedia'
 import { data } from '../data/repo'
-import { useGaits } from '../data/hooks'
-import { Button, Notice, Screen, Segmented, cx } from '../components/ui'
+import { Button, Notice, Screen, cx } from '../components/ui'
 
 type Phase = 'guide' | 'camera' | 'countdown' | 'recording' | 'analyzing' | 'failed'
 type CamState = 'starting' | 'live' | 'denied' | 'unavailable' | 'insecure' | 'error'
 
-/** 押してから撮り始めるまで（歩き始める位置へ移るため）と、撮る長さ */
-const COUNTDOWN_SEC = 10
-const RECORD_MS = 15_000
+/** 押してから撮り始めるまで（立ち位置へ移るため）と、撮る長さの上限 */
+const COUNTDOWN_SEC = 5
+const RECORD_MS = 20_000
 
 function screenAngle() {
   const a = screen.orientation?.angle
@@ -30,11 +30,11 @@ function screenAngle() {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-export function GaitCapture() {
+export function MotionCapture() {
   const navigate = useNavigate()
-  const gaits = useGaits()
+  const kind = 'squat' as const
   const [phase, setPhase] = useState<Phase>('guide')
-  const [footwear, setFootwear] = useState<Footwear | null>(null)
+  const [keepVideo, setKeepVideo] = useState(false)
   const [cam, setCam] = useState<CamState>('starting')
   const [count, setCount] = useState(0)
   const [elapsed, setElapsed] = useState(0)
@@ -50,8 +50,6 @@ export function GaitCapture() {
   const turnVotes = useRef<(number | null)[]>([])
   const { tilt, latest, needsPermission, request } = useDeviceTilt()
 
-  // 足元は前回と同じものを初期値にする
-  const shownFootwear: Footwear = footwear ?? gaits?.[0]?.footwear ?? 'shoes'
   const cameraOn = phase === 'camera' || phase === 'countdown' || phase === 'recording'
 
   // カメラ
@@ -160,16 +158,17 @@ export function GaitCapture() {
   const turns = bodyTurns.current ?? sensor?.turns ?? 0
   const residual = sensor && sensor.turns === turns ? sensor.residualDeg : null
   const level = residual === null ? null : Math.abs(residual) <= 2
-  const portraitOut = vdims ? (Math.abs(turns) % 2 === 1 ? vdims.w < vdims.h : vdims.w > vdims.h) === false : false
+  // 回したあとの映像が横長なら、縦に持つと人を大きく写せる
+  const landscapeOut = vdims ? (Math.abs(turns) % 2 === 1 ? vdims.w < vdims.h : vdims.w > vdims.h) : false
 
-  const finishWith = async (clip: DetectedClip, source: GaitRecord['source'], rollDeg: number | undefined) => {
-    const base: Omit<GaitRecord, 'analysis'> = {
-      id: newId('g'),
+  const finishWith = async (clip: DetectedClip, source: MotionRecord['source'], rollDeg: number | undefined) => {
+    const base: Omit<MotionRecord, 'analysis'> = {
+      id: newId('m'),
       createdAt: new Date().toISOString(),
       appVersion: APP_VERSION,
+      kind,
       source,
       modelVersion: modelVersion(POSE_MODEL),
-      footwear: shownFootwear,
       video: {
         width: clip.width,
         height: clip.height,
@@ -179,18 +178,20 @@ export function GaitCapture() {
         quarterTurns: clip.quarterTurns,
         rollDeg: rollDeg === undefined ? undefined : Math.round(rollDeg * 10) / 10,
       },
+      videoSaved: false,
       frames: clip.frames,
     }
-    const analysis = analyzeGait(gaitInputOf(base))
-    if (!analysis.metrics.some((m) => m.status === 'ok')) {
-      const reasons = analysis.warnings.length ? analysis.warnings : ['歩数が足りず、測れませんでした。画面を横切る距離を長くするか、往復してください。']
-      setFailure(reasons)
+    const analysis = analyzeMotion(motionInputOf(base))
+    if (!analysis.reps.length) {
+      setFailure(analysis.warnings.length ? analysis.warnings : ['しゃがむ動きを見つけられませんでした。'])
       setPhase('failed')
       return
     }
-    const rec: GaitRecord = { ...base, analysis }
-    await data.saveGait(rec)
-    navigate(`/gait/${rec.id}`, { replace: true })
+    const rec: MotionRecord = { ...base, analysis }
+    const video = { width: clip.width, height: clip.height, images: clip.images }
+    keepMotionVideo(rec.id, video)
+    await data.saveMotion(rec, keepVideo ? video : undefined)
+    navigate(`/motion/${rec.id}`, { replace: true })
   }
 
   const fail = (e: unknown) => {
@@ -214,7 +215,7 @@ export function GaitCapture() {
     if (needsPermission) request()
     stopRef.current = false
     setPhase('countdown')
-    speak(`${COUNTDOWN_SEC}秒後に撮影を始めます。画面の外の、歩き始める位置へ移ってください`)
+    speak(`${COUNTDOWN_SEC}秒後に撮影を始めます。横向きに立ってください`)
     for (let n = COUNTDOWN_SEC; n > 0; n--) {
       if (stopRef.current) return setPhase('camera')
       setCount(n)
@@ -229,7 +230,7 @@ export function GaitCapture() {
     setPhase('recording')
     beep(1320, 200)
     vibrate(80)
-    speak('歩いてください')
+    speak('始めてください')
     let lastShown = 0
     const clip = await recordFrames(v, {
       durationMs: RECORD_MS,
@@ -246,7 +247,8 @@ export function GaitCapture() {
     })
     beep(660, 250)
     speak('撮影が終わりました')
-    const cancelled = stopRef.current && clip.durationMs < 2000
+    // 「撮り終える」で止めたときも、3 秒以上撮れていれば使う
+    const cancelled = stopRef.current && clip.durationMs < 3000
     streamRef.current?.getTracks().forEach((t) => t.stop())
     if (cancelled) return setPhase('guide')
     stopRef.current = false
@@ -276,9 +278,11 @@ export function GaitCapture() {
     }
   }
 
+  const label = MOTION_KINDS[kind].label
+
   if (phase === 'guide' || phase === 'failed' || phase === 'analyzing') {
     return (
-      <Screen title="歩き方を撮る（試作）" back={phase === 'analyzing' ? undefined : '/gait'}>
+      <Screen title={`${label}を撮る`} back={phase === 'analyzing' ? undefined : '/motion'}>
         {phase === 'analyzing' ? (
           <div className="flex flex-col items-center py-12 text-center" role="status" aria-live="polite">
             <Loader2 aria-hidden className="size-8 animate-spin text-measure" />
@@ -314,23 +318,23 @@ export function GaitCapture() {
               </div>
             )}
             <p className="mt-2 text-[15px] text-ink-2">
-              横から歩く様子を撮って、歩くテンポ・歩幅・上体の傾き・頭の位置・腕の振りを測ります。動画は保存しません。保存するのは体の点の動きだけです。
+              横から{label}の動きを撮って、1 回ごとに、しゃがむ深さ・膝と股関節の曲がり・上体とすねの前傾・しゃがむ時間と立ち上がる時間を測ります。撮った動画と 3D の体を並べて、スロー再生やコマ送りで見られます。
             </p>
             <h2 className="mt-6 font-bold">撮る前に</h2>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[15px]">
-              <li>横に 4〜5 m 歩ける場所を用意します（廊下や部屋の端から端まで）。</li>
-              <li>スマホを横向きにして、腰の高さに置きます。歩く線から 3 m ほど離し、歩く線とまっすぐ向き合うようにします。</li>
-              <li>体の線が分かる服にします。足元は毎回そろえます。</li>
-              <li>合図のあと、画面の外から歩き始めて画面を横切り、外に出たら折り返して、もう一度横切ります（往復）。いつもの速さで、カメラは見ずに前を見て歩きます。</li>
+              <li>スマホを縦向きにして、腰の高さに置きます。体の真横から 2.5〜3 m 離れます（しゃがんだときも、頭から足まで入る距離）。</li>
+              <li>体の線が分かる服にします。腕は前に伸ばすか、胸の前で組みます（体の横に下ろすと、股関節が隠れます）。</li>
+              <li>合図のあと、横向きのまま、いつもの速さで 3〜5 回しゃがんで立ちます。終わったら「撮り終える」を押します（最長 {RECORD_MS / 1000} 秒）。</li>
             </ol>
-            <div className="mt-5">
-              <Segmented
-                legend="今日の足元"
-                value={shownFootwear}
-                onChange={setFootwear}
-                options={(Object.keys(FOOTWEAR_LABELS) as Footwear[]).map((k) => ({ value: k, label: FOOTWEAR_LABELS[k] }))}
-              />
-            </div>
+            <label className="mt-5 flex min-h-11 items-start gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3 text-[15px]">
+              <input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-[var(--color-ink)]" checked={keepVideo} onChange={(e) => setKeepVideo(e.target.checked)} />
+              <span>
+                動画をこの端末に残す
+                <span className="mt-0.5 block text-sm text-ink-3">
+                  残すと、あとで開いたときも動画と 3D を並べて見られます。残さない場合も、骨格の動きは保存され、動画はこのページを閉じるまで見られます。どちらの場合も、外部には送りません。
+                </span>
+              </span>
+            </label>
             <div className="mt-6 flex flex-col gap-2">
               <Button variant="primary" size="lg" block icon={<Video aria-hidden className="size-5" />} onClick={() => setPhase('camera')}>
                 カメラで撮る
@@ -340,7 +344,7 @@ export function GaitCapture() {
               </Button>
               <input ref={fileRef} type="file" accept="video/*" className="hidden" onChange={(e) => onFile(e.target.files)} />
               <p className="text-sm text-ink-3">
-                スマホのカメラで横向きに撮った、往復の動画も使えます（最初の {FILE_MAX_MS / 1000} 秒まで）。カメラは動かさずに置いて撮り、スローモーションにしないでください。
+                スマホのカメラで横から撮った動画も使えます（最初の {FILE_MAX_MS / 1000} 秒まで）。カメラは動かさずに置いて撮り、スローモーションにしないでください。
               </p>
             </div>
           </>
@@ -370,7 +374,7 @@ export function GaitCapture() {
         >
           <ChevronLeft aria-hidden className="size-6" />
         </button>
-        <h1 className="flex-1 text-[17px] font-bold">歩き方を撮る</h1>
+        <h1 className="flex-1 text-[17px] font-bold">{label}を撮る</h1>
       </header>
       <div className="relative min-h-0 flex-1">
         <video ref={videoRef} playsInline muted autoPlay aria-label="カメラの映像" className="absolute inset-0 size-full object-contain" />
@@ -378,27 +382,27 @@ export function GaitCapture() {
         {phase === 'camera' && cam === 'live' && (
           <div className="absolute inset-x-0 top-2 flex flex-wrap justify-center gap-2 px-3 text-sm">
             <span className={cx('rounded-full px-3 py-1', live === 'ok' ? 'bg-good text-paper' : 'bg-black/60')}>
-              {live === 'ok' ? '全身が写っています' : live === 'partial' ? '頭から足まで入るように離れてください' : live === 'none' ? '歩く線の上に立つと、写り方を確かめられます' : '確認しています…'}
+              {live === 'ok' ? '全身が写っています' : live === 'partial' ? '頭から足まで入るように離れてください' : live === 'none' ? '立つ位置に立つと、写り方を確かめられます' : '確認しています…'}
             </span>
             {residual !== null && (
               <span className={cx('rounded-full px-3 py-1 num', level ? 'bg-good text-paper' : 'bg-attention text-paper')}>
                 傾き {Math.abs(residual).toFixed(1)}°{level ? '' : '（まっすぐに）'}
               </span>
             )}
-            {portraitOut && <span className="rounded-full bg-black/60 px-3 py-1">スマホを横向きにすると、広く写せます</span>}
+            {landscapeOut && <span className="rounded-full bg-black/60 px-3 py-1">スマホを縦向きにすると、体を大きく写せます</span>}
           </div>
         )}
         {phase === 'countdown' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 text-center" role="status" aria-live="assertive">
             <span className="text-[96px] leading-none font-bold num">{count}</span>
-            <p className="mt-3 px-6 text-[17px]">画面の外の、歩き始める位置へ移ってください</p>
+            <p className="mt-3 px-6 text-[17px]">カメラに対して横向きに立ってください</p>
           </div>
         )}
         {phase === 'recording' && (
           <div className="absolute inset-x-0 top-2 flex justify-center" role="status" aria-live="polite">
             <span className="flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-[15px] num">
               <span aria-hidden className="size-2.5 animate-pulse rounded-full bg-danger" />
-              撮影中 {Math.max(0, Math.ceil((RECORD_MS - elapsed) / 1000))} 秒
+              撮影中 {Math.floor(elapsed / 1000)} 秒（最長 {RECORD_MS / 1000} 秒）
             </span>
           </div>
         )}
@@ -410,12 +414,12 @@ export function GaitCapture() {
               撮影を始める
             </Button>
             <p className="text-center text-sm text-paper/80">
-              押すと {COUNTDOWN_SEC} 秒後に撮り始め、{RECORD_MS / 1000} 秒間撮ります。往復して歩いてください。
+              押すと {COUNTDOWN_SEC} 秒後に撮り始めます。3〜5 回しゃがんだら「撮り終える」を押してください。
             </p>
           </>
         ) : (
-          <Button variant="secondary" size="lg" block onClick={() => (stopRef.current = true)}>
-            {phase === 'countdown' ? 'やめる' : 'ここで止める'}
+          <Button variant={phase === 'recording' ? 'primary' : 'secondary'} size="lg" block onClick={() => (stopRef.current = true)}>
+            {phase === 'countdown' ? 'やめる' : '撮り終える'}
           </Button>
         )}
       </div>

@@ -21,8 +21,8 @@ import { History } from './screens/History'
 import { Settings } from './screens/Settings'
 import { Status } from './screens/Status'
 import { CheckInScreen } from './screens/CheckIn'
-import { GaitCapture } from './screens/GaitCapture'
-import { GaitList, GaitResult } from './screens/GaitResult'
+import { MotionCapture } from './screens/MotionCapture'
+import { MotionList, MotionResult } from './screens/MotionResult'
 
 // 3D は重いので必要になった時に読み込む
 const View3D = lazy(() => import('./screens/View3D'))
@@ -82,9 +82,9 @@ export function App() {
             <Route path="/move" element={<WithNav><Move /></WithNav>} />
             <Route path="/move/:routineId" element={<RoutineDetail />} />
             <Route path="/history" element={<WithNav><History /></WithNav>} />
-            <Route path="/gait" element={<WithNav><GaitList /></WithNav>} />
-            <Route path="/gait/capture" element={<GaitCapture />} />
-            <Route path="/gait/:id" element={<WithNav><GaitResult /></WithNav>} />
+            <Route path="/motion" element={<WithNav><MotionList /></WithNav>} />
+            <Route path="/motion/capture" element={<MotionCapture />} />
+            <Route path="/motion/:id" element={<WithNav><MotionResult /></WithNav>} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/status" element={<Status />} />
             <Route path="*" element={<Navigate to="/" replace />} />

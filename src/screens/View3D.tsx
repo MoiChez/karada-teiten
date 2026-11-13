@@ -2,18 +2,17 @@
 // 「骨格」に切り替えると、合成した関節の位置そのもの（棒と点）を表示する
 import { Suspense, useMemo, useRef, useState, type RefObject } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router'
-import { Canvas, useLoader, useThree } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import { ContactShadows, Environment, Lightformer, Line, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { AssessmentSession, BodyArea } from '../domain/types'
 import { fuse3D, type Pose3D, type Vec3 } from '../domain/fusion3d'
 import { fmtDate } from '../domain/format'
 import { useProfile, useSession } from '../data/hooks'
-import { MANNEQUIN_LABELS, mannequinKindOf, paintMannequin, poseMannequin, type MannequinKind } from '../three/mannequin'
-import { BODY_COLOR, LoadBoundary, LoadingNote, hasWebGL, mannequinUrl } from '../three/common'
+import { MANNEQUIN_LABELS, mannequinKindOf, type MannequinKind } from '../three/mannequin'
+import { LoadBoundary, LoadingNote, hasWebGL } from '../three/common'
+import { BodyModel, HIGHLIGHT_COLOR, PAST_COLOR } from '../three/StandingBody'
 import { PostureGrid } from '../components/PoseViews'
 import { Notice, Screen, Segmented, cx } from '../components/ui'
 
@@ -51,8 +50,8 @@ const JOINTS: { i: number; areas: BodyArea[] }[] = [
 ]
 
 const INK = '#3d555c'
-const HIGHLIGHT = '#e3a13b'
-const PAST = '#7c8d93'
+const HIGHLIGHT = HIGHLIGHT_COLOR
+const PAST = PAST_COLOR
 
 function point(p: Pose3D, k: Bone['a']): Vec3 | null {
   if (typeof k === 'number') return p.points[k]
@@ -133,32 +132,6 @@ function SkeletonGhost({ pose }: { pose: Pose3D }) {
       })}
     </group>
   )
-}
-
-// ---------- 人体（標準の体を関節の向きに合わせて曲げたもの） ----------
-
-function BodyModel({ kind, pose, highlight, tone }: { kind: MannequinKind; pose: Pose3D; highlight: Set<BodyArea>; tone: 'current' | 'past' }) {
-  const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
-  const root = useMemo(() => {
-    const r = cloneSkinned(gltf.scene)
-    r.traverse((o) => {
-      const m = o as THREE.SkinnedMesh
-      if (!m.isSkinnedMesh) return
-      // 曲げた後の形が元の範囲からはみ出しても消えないように
-      m.frustumCulled = false
-      m.geometry = m.geometry.clone()
-      m.material =
-        tone === 'current'
-          ? new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0 })
-          : new THREE.MeshStandardMaterial({ color: PAST, roughness: 0.8, transparent: true, opacity: 0.28, depthWrite: false })
-    })
-    return r
-  }, [gltf, tone])
-  useMemo(() => poseMannequin(root, pose), [root, pose])
-  useMemo(() => {
-    if (tone === 'current') paintMannequin(root, BODY_COLOR, HIGHLIGHT, highlight)
-  }, [root, highlight, tone])
-  return <primitive object={root} />
 }
 
 const VIEWS = {

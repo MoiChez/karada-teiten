@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router'
 import { Box, Columns2, Footprints, PencilRuler, Trash2 } from 'lucide-react'
 import type { AssessmentSession, Plane, PostureTrait } from '../domain/types'
@@ -21,6 +21,9 @@ import { PhotoWithPose, PostureGrid, useStoredImageUrl } from '../components/Pos
 import { RoutineItem } from '../components/RoutineItem'
 import { Badge, Button, ButtonLink, Dialog, IconButton, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
 import { useDraft, useToast } from '../state/stores'
+
+// 3D（three.js）は重いので、結果を開いたあとに読み込む
+const StandingPreview = lazy(() => import('../three/StandingPreview'))
 
 export function Result() {
   const { id } = useParams()
@@ -140,6 +143,18 @@ function ResultBody({ s }: { s: AssessmentSession }) {
           <Notice tone="warn" title="撮影条件の注意">
             {majorFlags.map((f) => f.message).join(' ')}
           </Notice>
+        </div>
+      )}
+
+      {/* 3D（正面の骨格があるとき） */}
+      {s.front && s.front.landmarksRaw.length > 0 && (
+        <div className="mt-6">
+          <Suspense fallback={<div className="h-[min(46dvh,360px)] rounded-[var(--radius-panel)] bg-surface" />}>
+            <StandingPreview session={s} sex={profile?.sex} />
+          </Suspense>
+          <p className="mt-1.5 text-sm text-ink-3">
+            正面と横向きの写真から合成した関節の向きを、全員に共通の標準の体にのせています。指で回せます。体型や骨の形は表していません。
+          </p>
         </div>
       )}
 
@@ -297,7 +312,7 @@ function ResultBody({ s }: { s: AssessmentSession }) {
           </Button>
         )}
         <ButtonLink to={`/session/${s.id}/3d`} variant="secondary" block icon={<Box aria-hidden className="size-5" />}>
-          3D で見る
+          3D を大きく見る
         </ButtonLink>
         {rec && (
           <ButtonLink to={`/session/${s.id}/edit/${plane}`} variant="quiet" block className="col-span-2" icon={<PencilRuler aria-hidden className="size-5" />}>

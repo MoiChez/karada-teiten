@@ -1,10 +1,10 @@
 // データの読み書き。画面からはここを通して DB を使う
-import type { AppDB, StoredImage } from './db'
+import type { AppDB, StoredImage, StoredMotionVideo } from './db'
 import { DEFAULT_SETTINGS, db as defaultDb } from './db'
 import type { AppSettings, AssessmentSession, CheckIn, RecommendationPlan, RoutineLog, UserProfile } from '../domain/types'
 import { ALGORITHM_VERSION } from '../domain/constants'
 import { recomputeSession } from '../domain/session'
-import { upgradeGait, type GaitRecord } from '../domain/gait'
+import { upgradeMotion, type MotionRecord } from '../domain/motion'
 
 export function repo(db: AppDB = defaultDb) {
   return {
@@ -118,7 +118,7 @@ export function repo(db: AppDB = defaultDb) {
       })
     },
     getImage: (id: string): Promise<StoredImage | undefined> => db.images.get(id),
-    /** 保存済みの画像をすべて削除する（ランドマークと指標は残す） */
+    /** 保存済みの写真をすべて削除する（ランドマークと指標は残す。動きの記録の動画は記録ごとに消す） */
     async deleteAllImages() {
       await db.transaction('rw', db.assessments, db.images, async () => {
         await db.images.clear()
@@ -134,17 +134,29 @@ export function repo(db: AppDB = defaultDb) {
       })
     },
 
-    // ---- 歩き方 ----
-    async listGaits(): Promise<GaitRecord[]> {
-      const list = await db.gaits.orderBy('createdAt').reverse().toArray()
-      return list.map(upgradeGait)
+    // ---- 動き ----
+    async listMotions(): Promise<MotionRecord[]> {
+      const list = await db.motions.orderBy('createdAt').reverse().toArray()
+      return list.map(upgradeMotion)
     },
-    async getGait(id: string) {
-      const r = await db.gaits.get(id)
-      return r ? upgradeGait(r) : undefined
+    async getMotion(id: string) {
+      const r = await db.motions.get(id)
+      return r ? upgradeMotion(r) : undefined
     },
-    saveGait: (r: GaitRecord) => db.gaits.put(r),
-    deleteGait: (id: string) => db.gaits.delete(id),
+    /** 記録を保存する。video を渡したときだけ、動画（コマの画像）も残す */
+    async saveMotion(r: MotionRecord, video?: Omit<StoredMotionVideo, 'id'>) {
+      await db.transaction('rw', db.motions, db.motionVideos, async () => {
+        await db.motions.put({ ...r, videoSaved: !!video })
+        if (video) await db.motionVideos.put({ id: r.id, ...video })
+      })
+    },
+    async deleteMotion(id: string) {
+      await db.transaction('rw', db.motions, db.motionVideos, async () => {
+        await db.motionVideos.delete(id)
+        await db.motions.delete(id)
+      })
+    },
+    getMotionVideo: (id: string) => db.motionVideos.get(id),
 
     // ---- 記録 ----
     addLog: (l: RoutineLog) => db.routineLogs.put(l),
@@ -156,9 +168,10 @@ export function repo(db: AppDB = defaultDb) {
 
     // ---- すべて削除 ----
     async wipeAll() {
-      await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings, db.gaits], async () => {
+      await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings, db.motions, db.motionVideos], async () => {
         await Promise.all([
-          db.gaits.clear(),
+          db.motions.clear(),
+          db.motionVideos.clear(),
           db.profile.clear(),
           db.assessments.clear(),
           db.images.clear(),

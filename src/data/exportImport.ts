@@ -1,7 +1,7 @@
 // エクスポート（JSON / CSV）とインポート（JSON）
 import type { AppDB, StoredImage } from './db'
 import type { AssessmentSession, CheckIn, RecommendationPlan, RoutineLog, UserProfile } from '../domain/types'
-import type { GaitRecord } from '../domain/gait'
+import type { MotionRecord } from '../domain/motion'
 import { fmtDate } from '../domain/format'
 
 export const SCHEMA_VERSION = 1
@@ -28,12 +28,12 @@ export interface ExportFile {
   plans: RecommendationPlan[]
   settings: { key: string; value: unknown }[]
   images: ExportedImage[]
-  /** 歩き方の記録（版 0.8 から。ないファイルもある） */
-  gaits?: GaitRecord[]
+  /** 動きの記録（版 0.11 から。体の点の動きだけで、動画は含めない。ないファイルもある） */
+  motions?: MotionRecord[]
 }
 
 export async function exportJson(db: AppDB, opts: { includeImages: boolean }): Promise<ExportFile> {
-  const [profile, assessments, routineLogs, checkins, plans, settings, images, gaits] = await Promise.all([
+  const [profile, assessments, routineLogs, checkins, plans, settings, images, motions] = await Promise.all([
     db.profile.get('me'),
     db.assessments.orderBy('createdAt').toArray(),
     db.routineLogs.toArray(),
@@ -41,7 +41,7 @@ export async function exportJson(db: AppDB, opts: { includeImages: boolean }): P
     db.plans.toArray(),
     db.settings.toArray(),
     opts.includeImages ? db.images.toArray() : Promise.resolve([] as StoredImage[]),
-    db.gaits.orderBy('createdAt').toArray(),
+    db.motions.orderBy('createdAt').toArray(),
   ])
   return {
     app: APP_ID,
@@ -64,7 +64,8 @@ export async function exportJson(db: AppDB, opts: { includeImages: boolean }): P
         dataUrl: await blobToDataUrl(im.blob),
       })),
     ),
-    gaits,
+    // 動画は書き出さないので、読み込んだ先では「残していない」扱いにする
+    motions: motions.map((m) => ({ ...m, videoSaved: false })),
   }
 }
 
@@ -93,7 +94,7 @@ export function validateExport(raw: unknown): string[] {
       else if (!Array.isArray(a.computedMetrics)) errors.push(`assessments[${i}] に computedMetrics がありません`)
     })
   }
-  if (f.gaits !== undefined && !Array.isArray(f.gaits)) errors.push('gaits が配列ではありません')
+  if (f.motions !== undefined && !Array.isArray(f.motions)) errors.push('motions が配列ではありません')
   if (f.profile !== null && f.profile !== undefined) {
     const p = f.profile as Partial<UserProfile>
     if (p.id !== 'me' || !Array.isArray(p.goals)) errors.push('profile の形式が正しくありません')
@@ -114,9 +115,9 @@ export async function importJson(db: AppDB, raw: unknown, mode: 'replace' | 'mer
       return { ok: false, errors: [`画像 ${im.id} を読み込めませんでした`] }
     }
   }
-  await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings, db.gaits], async () => {
+  await db.transaction('rw', [db.profile, db.assessments, db.images, db.routineLogs, db.checkins, db.plans, db.settings, db.motions, db.motionVideos], async () => {
     if (mode === 'replace') {
-      await Promise.all([db.gaits.clear(), db.profile.clear(), db.assessments.clear(), db.images.clear(), db.routineLogs.clear(), db.checkins.clear(), db.plans.clear(), db.settings.clear()])
+      await Promise.all([db.motions.clear(), db.motionVideos.clear(), db.profile.clear(), db.assessments.clear(), db.images.clear(), db.routineLogs.clear(), db.checkins.clear(), db.plans.clear(), db.settings.clear()])
     }
     if (f.profile) await db.profile.put(f.profile)
     await db.assessments.bulkPut(f.assessments)
@@ -125,7 +126,7 @@ export async function importJson(db: AppDB, raw: unknown, mode: 'replace' | 'mer
     await db.plans.bulkPut(f.plans)
     await db.settings.bulkPut(f.settings as never)
     await db.images.bulkPut(images)
-    if (f.gaits) await db.gaits.bulkPut(f.gaits)
+    if (f.motions) await db.motions.bulkPut(f.motions.map((m) => ({ ...m, videoSaved: false })))
   })
   return {
     ok: true,

@@ -1,7 +1,7 @@
 // 画面から使う読み取り専用のフック（IndexedDB の変更を自動で反映）
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db'
-import { upgradeGait } from '../domain/gait'
+import { upgradeMotion } from '../domain/motion'
 
 export const useSessions = () => useLiveQuery(() => db.assessments.orderBy('createdAt').reverse().toArray(), [])
 
@@ -11,6 +11,6 @@ export const useProfile = () => useLiveQuery(async () => (await db.profile.get('
 
 export const useLogs = () => useLiveQuery(() => db.routineLogs.orderBy('date').toArray(), [])
 
-export const useGaits = () => useLiveQuery(async () => (await db.gaits.orderBy('createdAt').reverse().toArray()).map(upgradeGait), [])
+export const useMotions = () => useLiveQuery(async () => (await db.motions.orderBy('createdAt').reverse().toArray()).map(upgradeMotion), [])
 
 export const useCheckins = () => useLiveQuery(() => db.checkins.orderBy('date').toArray(), [])

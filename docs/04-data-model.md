@@ -13,22 +13,28 @@
 | `checkins` | `id` | `date` | その日のコンディション |
 | `plans` | `id` | `generatedAt`, `basedOnAssessmentId` | RecommendationPlan |
 | `settings` | `key` | — | 設定（画像保存・セルフタイマー・前回選んだ撮り方など） |
-| `gaits` | `id` | `createdAt` | 歩き方の記録 GaitRecord（版 0.8 から。動画は保存せず、体の点の動きだけ） |
+| `motions` | `id` | `createdAt` | 動きの記録 MotionRecord（版 0.11 から。体の点の動き） |
+| `motionVideos` | `id` | — | 動きの記録の動画（コマの JPEG の並び。撮るときに「残す」を選んだ場合だけ） |
 
-### GaitRecord（[src/domain/gait.ts](../src/domain/gait.ts)）
+版 0.8〜0.10 の歩き方の記録（`gaits`）は、版 0.11 で表ごと削除した。
+
+### MotionRecord（[src/domain/motion.ts](../src/domain/motion.ts)）
 
 ```ts
 {
   id, createdAt, appVersion, modelVersion
+  kind: 'squat'
   source: 'camera' | 'upload'
-  footwear?: 'shoes' | 'socks' | 'barefoot'
   video: { width, height, durationMs, frameCount, fps, quarterTurns, rollDeg? }
-  frames: { t: number; p: number[] }[]   // 人を検出できたコマ。p は 33 点 × [x, y, 見えている度合い]（小数 4 桁）
-  analysis: GaitAnalysis                 // algorithmVersion が古ければ frames から計算し直す
+  videoSaved: boolean                    // 動画（motionVideos）を残したか
+  frames: { t: number; p: number[]; w?: number[] }[]
+  // p: 33 点 × [x, y, 見えている度合い]（画像に対する比、小数 4 桁）
+  // w: 33 点 × [x, y, z]（推定モデルの 3D。メートル、腰の中心が原点、小数 3 桁）
+  analysis: MotionAnalysis               // algorithmVersion が古ければ frames から計算し直す
 }
 ```
 
-JSON の書き出しに `gaits` として含める（ないファイルも読み込める）。
+JSON の書き出しに `motions` として含める（動画は含めない。読み込んだ記録は「動画を残していない」扱い）。動画は記録を削除すると一緒に消え、「すべてのデータを削除」でも消える。
 
 ## 2. 主要な型
 
