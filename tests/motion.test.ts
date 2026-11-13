@@ -234,6 +234,8 @@ describe('映像の向き', () => {
     expect(turnsFromBody(rotated, H, W)).not.toBeNull()
     expect(voteTurns([1, 1, 1, null, 0])).toBe(1)
     expect(voteTurns([1, 1, null, null, 0])).toBe(0)
+    // 上下逆さには回さない（後ろ姿で頭と足を取り違えた推定に引きずられないように）
+    expect(voteTurns([2, 2, 2, 2, null])).toBe(0)
   })
 })
 

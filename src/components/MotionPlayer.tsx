@@ -76,7 +76,7 @@ export function MotionPlayer({
   const three = useRef<HTMLCanvasElement | null>(null)
   const overlayAt = (k: number): OverlayInput | null =>
     overlayOn && !videoOverlay && prep.frames[k]
-      ? { lm: prep.frames[k].lm, nearSide: prep.nearSide, com: com?.[k], trail: bar && bar.from[k] >= 0 ? bar.points.slice(bar.from[k], k + 1) : undefined }
+      ? { lm: prep.frames[k].lm, nearSide: prep.nearSide, com: com?.[k], trail: bar && bar.from[k] >= 0 ? bar.points.slice(bar.from[k], k + 1) : undefined, bothSides: !!profile.frontal }
       : null
   // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
   const levels = useMemo(() => {
@@ -115,6 +115,7 @@ export function MotionPlayer({
               nearSide={prep.nearSide}
               com={com}
               bar={bar}
+              bothSides={!!profile.frontal}
             />
             {videoOverlay}
           </div>
@@ -129,6 +130,7 @@ export function MotionPlayer({
                 nearSide={prep.nearSide}
                 className="h-full"
                 onCanvas={(c) => (three.current = c)}
+                camera={profile.frontal ? (prep.view?.view === 'front' ? 'front' : 'rear') : undefined}
               />
             </Suspense>
           </div>
@@ -186,7 +188,7 @@ export function MotionPlayer({
       {video && !videoOverlay && (
         <label className="mt-2 flex min-h-11 items-center gap-2 text-[15px]">
           <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={overlayOn} onChange={(e) => setOverlayOn(e.target.checked)} />
-          動画に骨格の線を重ねる（明るい線がカメラ側の半身）
+          {profile.frontal ? '動画に骨格の線を重ねる' : '動画に骨格の線を重ねる（明るい線がカメラ側の半身）'}
         </label>
       )}
     </div>

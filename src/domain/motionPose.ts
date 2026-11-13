@@ -6,6 +6,7 @@ import type { Pose3D, Vec3 } from './fusion3d'
 import type { Landmark, Point } from './types'
 import type { MotionCycle, PreparedMotion } from './motionSports'
 import { sidePoints } from './landmarks'
+import { PAIRS, bodySideIndex } from './motionFrontal'
 
 /**
  * 座って行う種目で、体の大きさをそろえる比（標準の体の「股関節〜膝〜足首の長さ / 耳〜かかとの高さ」）。
@@ -49,6 +50,7 @@ const FAR_LEG = (near: 'left' | 'right') => (near === 'left' ? [26, 28, 30, 32] 
 
 /** X: 体の左が +、Y: 上が +、Z: 前が +（体の高さを 1 とする）。かかとが床（Y = 0）、立っているときの足首が Z = 0 */
 export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): { t: number; pose: Pose3D }[] {
+  if (prep.kind === 'squat_front') return frontalPoses(prep)
   const s = sidePoints(prep.nearSide)
   const fr = prep.frames
   // 立って行う種目は耳〜かかとの高さ、座って行う種目は脚の長さから体の高さを決める
@@ -124,6 +126,54 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
         x = i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06)
       }
       points[i] = { x, y: (floorY - p.y) / H, z: (prep.f * (p.x - ankleX)) / H }
+    }
+    return { t: f.t, pose: { points, depthSource: 'side_photo' as const } }
+  })
+}
+
+/**
+ * 正面・後ろから撮ったスクワットの 3D。左右と上下は画面の上の点（両側。体の左右に付け替える）から、
+ * 前後だけは推定モデルの 3D の点（奥行きの推定）から取る。体の高さ（耳〜かかと）を 1、かかとを床、足首の中点を左右の 0 とする
+ */
+function frontalPoses(prep: PreparedMotion): { t: number; pose: Pose3D }[] {
+  const fr = prep.frames
+  const L = prep.leftDir
+  const H = quantile(
+    fr.map((f) => Math.max(f.px[29].y, f.px[30].y) - (f.px[7].y + f.px[8].y) / 2),
+    0.9,
+  )
+  if (!(H > 0)) return []
+  const floorY = quantile(
+    fr.map((f) => Math.max(f.px[29].y, f.px[30].y, f.px[31].y, f.px[32].y)),
+    0.9,
+  )
+  const cx = quantile(
+    fr.map((f) => (f.px[27].x + f.px[28].x) / 2),
+    0.5,
+  )
+  const worlds = fr.every((f) => f.world && f.world.length >= 33) ? fr.map((f) => f.world!) : null
+  const Hw = worlds
+    ? quantile(
+        worlds.map((w) => Math.max(w[29].y, w[30].y) - (w[7].y + w[8].y) / 2),
+        0.9,
+      )
+    : 0
+  // 推定モデルの奥行きは、カメラに近いほど小さい。正面から撮ったときは、体の前がカメラ側
+  const fwd = prep.view?.view === 'front' ? -1 : 1
+  return fr.map((f) => {
+    const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
+    const w = f.world
+    const hipZ = w ? (w[23].z + w[24].z) / 2 : 0
+    const place = (dst: number, src: number) => {
+      const p = f.px[src]
+      const z = w && Hw > 0 ? (fwd * (w[src].z - hipZ)) / Hw : 0
+      points[dst] = { x: (L * (p.x - cx)) / H, y: (floorY - p.y) / H, z }
+    }
+    place(0, 0)
+    for (const pair of Object.values(PAIRS)) {
+      const [li, ri] = bodySideIndex(f.px, pair, L)
+      place(pair[0], li)
+      place(pair[1], ri)
     }
     return { t: f.t, pose: { points, depthSource: 'side_photo' as const } }
   })

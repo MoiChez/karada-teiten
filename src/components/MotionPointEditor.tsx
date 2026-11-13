@@ -1,5 +1,5 @@
-// 動画のコマの上で、ずれた点を動かして直す（カメラ側の半身の点）。直した位置は、推定した点とは別に記録する。
-// 動かせるのは画面の上の位置だけで、奥行きは直せない
+// 動画のコマの上で、ずれた点を動かして直す（横からはカメラ側の半身、正面・後ろからは両側）。
+// 直した位置は、推定した点とは別に記録する。動かせるのは画面の上の位置だけで、奥行きは直せない
 import { useMemo, useRef, useState } from 'react'
 import type { MotionEdit, PreparedMotion } from '../domain/motion'
 import { sidePoints } from '../domain/landmarks'
@@ -17,6 +17,16 @@ const LINKS: [string, string][] = [
   ['ankle', 'heel'],
   ['heel', 'foot'],
 ]
+/** 推定モデルの左右の番号（左, 右） */
+const BOTH: Record<string, [number, number]> = { ear: [7, 8], shoulder: [11, 12], elbow: [13, 14], wrist: [15, 16], hip: [23, 24], knee: [25, 26], ankle: [27, 28], heel: [29, 30], foot: [31, 32] }
+
+interface EditPoint {
+  key: string
+  part: string
+  i: number
+  /** 組になる反対側の点（両側を動かすとき。画面の左右を名前に付けるため） */
+  partner?: number
+}
 
 /**
  * 今のコマの点を、ドラッグか矢印キーで動かす。onEdit には、そのコマの直した位置と、
@@ -29,12 +39,35 @@ export function MotionPointEditor({ prep, clock, spread, onEdit }: { prep: Prepa
   const k = indexAt(ts, t)
   const frame = prep.frames[k]
   const [drag, setDrag] = useState<{ i: number; x: number; y: number } | null>(null)
-  const points = useMemo(() => {
+  const both = prep.kind === 'squat_front'
+  const points = useMemo<EditPoint[]>(() => {
+    if (both) return Object.entries(BOTH).flatMap(([part, [a, b]]) => [
+      { key: `${part}-${a}`, part, i: a, partner: b },
+      { key: `${part}-${b}`, part, i: b, partner: a },
+    ])
     const s = sidePoints(prep.nearSide)
-    return { ear: s.ear, shoulder: s.shoulder, elbow: s.wrist - 2, wrist: s.wrist, hip: s.hip, knee: s.knee, ankle: s.ankle, heel: s.heel, foot: s.foot } as Record<string, number>
-  }, [prep.nearSide])
+    const near: Record<string, number> = { ear: s.ear, shoulder: s.shoulder, elbow: s.wrist - 2, wrist: s.wrist, hip: s.hip, knee: s.knee, ankle: s.ankle, heel: s.heel, foot: s.foot }
+    return Object.entries(near).map(([part, i]) => ({ key: part, part, i }))
+  }, [both, prep.nearSide])
+  const lines = useMemo(() => {
+    const out: [number, number][] = []
+    const sides: (0 | 1)[] = both ? [0, 1] : [0]
+    for (const side of sides) {
+      for (const [a, b] of LINKS) {
+        if (both) out.push([BOTH[a][side], BOTH[b][side]])
+        else {
+          const pa = points.find((p) => p.part === a)
+          const pb = points.find((p) => p.part === b)
+          if (pa && pb) out.push([pa.i, pb.i])
+        }
+      }
+    }
+    if (both) out.push([11, 12], [23, 24])
+    return out
+  }, [both, points])
   if (!frame) return null
   const pos = (i: number) => (drag && drag.i === i ? drag : frame.lm[i])
+  const nameOf = (p: EditPoint) => (p.partner === undefined ? NAMES[p.part] : `画面の${frame.lm[p.i].x <= frame.lm[p.partner].x ? '左' : '右'}の${NAMES[p.part]}`)
 
   const commit = (i: number, x: number, y: number) => {
     const dx = x - frame.lm[i].x
@@ -64,29 +97,21 @@ export function MotionPointEditor({ prep, clock, spread, onEdit }: { prep: Prepa
   return (
     <div ref={box} className="absolute inset-0 touch-none select-none">
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-        {LINKS.map(([a, b]) => (
-          <line
-            key={a + b}
-            x1={pos(points[a]).x * 100}
-            y1={pos(points[a]).y * 100}
-            x2={pos(points[b]).x * 100}
-            y2={pos(points[b]).y * 100}
-            stroke="rgba(205,225,75,0.95)"
-            strokeWidth="2.5"
-            vectorEffect="non-scaling-stroke"
-          />
+        {lines.map(([a, b]) => (
+          <line key={`${a}-${b}`} x1={pos(a).x * 100} y1={pos(a).y * 100} x2={pos(b).x * 100} y2={pos(b).y * 100} stroke="rgba(205,225,75,0.95)" strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
         ))}
       </svg>
-      {Object.entries(points).map(([name, i]) => {
+      {points.map((pt) => {
+        const { i } = pt
         const p = pos(i)
         const edited = frame.edited.includes(i)
         const placed = !edited && frame.constrained.includes(i)
         return (
           <button
-            key={name}
+            key={pt.key}
             type="button"
-            aria-label={`${NAMES[name]}の点。ドラッグか矢印キーで動かせます${edited ? '（直した点）' : placed ? '（器具の前提で置いた点）' : ''}`}
-            className="absolute flex size-10 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full focus-visible:outline-2 active:cursor-grabbing"
+            aria-label={`${nameOf(pt)}の点。ドラッグか矢印キーで動かせます${edited ? '（直した点）' : placed ? '（器具の前提で置いた点）' : ''}`}
+            className={cx('absolute flex -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full focus-visible:outline-2 active:cursor-grabbing', both ? 'size-8' : 'size-10')}
             style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId)

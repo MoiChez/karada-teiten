@@ -195,7 +195,8 @@ export function MotionCapture() {
       setPhase('failed')
       return
     }
-    const rec: MotionRecord = { ...base, analysis }
+    // スクワットは、撮った向きで正面・後ろからの計算に切り替わることがある
+    const rec: MotionRecord = { ...base, kind: analysis.kind, analysis }
     const video = { width: clip.width, height: clip.height, images: clip.images }
     keepMotionVideo(rec.id, video)
     await data.saveMotion(rec, keepVideo ? video : undefined)

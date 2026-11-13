@@ -22,6 +22,7 @@ const VIEWS = {
   side: [-3.0, 0.6, 0],
   oblique: [-2.0, 1.1, 2.1],
   front: [0, 0.6, 3.0],
+  back: [0, 0.6, -3.0],
 } as const
 
 const GEAR = '#3d555c'
@@ -96,7 +97,7 @@ function MovingBody({
     if (!pose) return
     poseMannequin(root, pose)
     // 立って行う種目は、いちばん低い足を床（y = 0）に置く。座って行う種目は、足が器具の上で動くのでそのまま
-    if (sport === 'squat') {
+    if (sport === 'squat' || sport === 'squat_front') {
       let minY = Infinity
       for (const f of feet) minY = Math.min(minY, f.getWorldPosition(tmp).y)
       if (Number.isFinite(minY)) {
@@ -212,6 +213,7 @@ export default function MotionBody3D({
   nearSide,
   className,
   onCanvas,
+  camera,
 }: {
   poses: { t: number; pose: Pose3D }[]
   clock: Clock
@@ -228,9 +230,12 @@ export default function MotionBody3D({
   className?: string
   /** 3D を描いている canvas（動画の書き出しで写す） */
   onCanvas?: (c: HTMLCanvasElement) => void
+  /** 正面・後ろから撮ったときの向き（最初の視点を、撮った動画と同じ向きにする） */
+  camera?: 'front' | 'rear'
 }) {
   const body = mannequinKindOf(sex)
-  const [view, setView] = useState<keyof typeof VIEWS>('side')
+  const facingView = camera === 'rear' ? 'back' : 'front'
+  const [view, setView] = useState<keyof typeof VIEWS>(camera ? facingView : 'side')
   const [failed, setFailed] = useState(false)
   const controls = useRef<OrbitControlsImpl | null>(null)
   const webgl = useMemo(hasWebGL, [])
@@ -266,12 +271,17 @@ export default function MotionBody3D({
         <LoadingNote />
       </div>
       <div className="grid grid-cols-3 gap-1 p-1.5" role="group" aria-label="3D の視点">
-        {(
-          [
-            ['side', '横'],
-            ['oblique', '斜め'],
-            ['front', '正面'],
-          ] as const
+        {(camera
+          ? ([
+              [facingView, camera === 'rear' ? '後ろ' : '正面'],
+              ['oblique', '斜め'],
+              ['side', '横'],
+            ] as const)
+          : ([
+              ['side', '横'],
+              ['oblique', '斜め'],
+              ['front', '正面'],
+            ] as const)
         ).map(([k, label]) => (
           <button
             key={k}

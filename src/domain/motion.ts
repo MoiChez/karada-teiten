@@ -21,15 +21,17 @@ import type { ConstraintNote } from './motionConstraints'
 import { resolveBody, squatLoad, type BodyParams, type ResolvedBody } from './motionLoad'
 import { barSeries } from './motionBar'
 import { crankAngles } from './motionCrank'
+import { frontalValues, viewOf, type ViewInfo } from './motionFrontal'
 
 export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 6
+export const MOTION_ALGORITHM_VERSION = 7
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },
+  squat_front: { label: PROFILES.squat_front.label },
   erg: { label: PROFILES.erg.label },
   bike: { label: PROFILES.bike.label },
 }
@@ -71,13 +73,16 @@ export function prepareMotion(input: MotionInput, kind: MotionKind = 'squat'): P
   const base = prepareBase(input, profile.valid, profile.smoothing, profile.constrain)
   if (!base) return null
   const s = sidePoints(base.nearSide)
-  // 立っているときの股関節〜足首の高さ（高い方から 1 割のところ）
+  // 撮った向きと、体の左へ向かう画面の向き（正面から撮ったら画面の右、それ以外は画面の左）
+  const view = viewOf(input.frames, input.width, input.height)
+  const leftDir: 1 | -1 = view.noseForward !== null && view.noseForward > 0 ? 1 : -1
+  // 立っているときの股関節〜足首の高さ（高い方から 1 割のところ）。正面・後ろからは左右の中点で
   const standLeg = quantile(
-    base.frames.map((fr) => fr.px[s.ankle].y - fr.px[s.hip].y),
+    profile.frontal ? base.frames.map((fr) => frontalValues(fr.px, leftDir)?.hipHeight ?? NaN).filter(Number.isFinite) : base.frames.map((fr) => fr.px[s.ankle].y - fr.px[s.hip].y),
     0.9,
   )
   const body = resolveBody(input.body)
-  const ctx: SeriesCtx = { s, f: base.f, leg: base.leg, standLeg: standLeg > 0 ? standLeg : base.leg, body }
+  const ctx: SeriesCtx = { s, f: base.f, leg: base.leg, standLeg: standLeg > 0 ? standLeg : base.leg, body, leftDir }
   const series: Record<string, number[]> = {}
   for (const def of profile.series) {
     const value = def.value
@@ -90,7 +95,7 @@ export function prepareMotion(input: MotionInput, kind: MotionKind = 'squat'): P
     series.ratio_lo = load?.ratioLo ?? none
     series.ratio_hi = load?.ratioHi ?? none
   }
-  const prep: PreparedMotion = { ...base, kind, standLeg: ctx.standLeg, series, body, load }
+  const prep: PreparedMotion = { ...base, kind, standLeg: ctx.standLeg, series, body, load, view, leftDir }
   if (profile.load) prep.bar = barSeries(prep) ?? undefined
   if (profile.crank) prep.crank = crankAngles(prep) ?? undefined
   return prep
@@ -138,6 +143,8 @@ export interface MotionAnalysis {
   body?: ResolvedBody
   /** 真横から撮れていたか（false なら、anyView でない値は参考にならない。古い記録は undefined） */
   sideView?: boolean
+  /** 撮った向き（横・正面・後ろ・斜め） */
+  view?: ViewInfo
 }
 
 /**
@@ -158,7 +165,15 @@ export function cycleValues(c: MotionCycle, prep: PreparedMotion): Record<string
   return out
 }
 
-export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): MotionAnalysis {
+/** スクワットは、撮った向きで、横からの計算（squat）か正面・後ろからの計算（squat_front）かを選ぶ */
+export function kindForView(input: MotionInput, kind: MotionKind): MotionKind {
+  if (kind !== 'squat' && kind !== 'squat_front') return kind
+  const v = viewOf(input.frames, input.width, input.height).view
+  return v === 'front' || v === 'rear' ? 'squat_front' : 'squat'
+}
+
+export function analyzeMotion(input: MotionInput, requested: MotionKind = 'squat'): MotionAnalysis {
+  const kind = kindForView(input, requested)
   const profile = PROFILES[kind]
   const warnings: string[] = []
   const prep = prepareMotion(input, kind)
@@ -180,8 +195,7 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
   // 真横から撮れているか（左右の股関節の間隔 / 胴の長さ）
   let sideView = true
   const s = sidePoints(prep.nearSide)
-  const ratios = profile
-    .sideCheckFrames(prep)
+  const ratios = (profile.frontal ? [] : profile.sideCheckFrames(prep))
     .map((i) => prep.frames[i])
     .filter((fr) => [23, 24].every((i) => vis(fr.lm[i]) >= MIN_VISIBILITY * 0.6))
     .map((fr) => {
@@ -193,7 +207,7 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
   if (ratios.length >= 5 && quantile(ratios, 0.5) > SIDE_HIP_RATIO_MAX) {
     sideView = false
     warnings.push(
-      `体が真横を向いていないようです（腰の幅から見た向き）。${anyViewLabels(profile)}は使えますが、角度・位置などのほかの値は、横から見た見かけの値として求めているため、この動画では参考になりません。次は体の真横から撮ってください。`,
+      `体が真横を向いていないようです（腰の幅から見た向き）。${anyViewLabels(profile)}は使えますが、角度・位置などのほかの値は、横から見た見かけの値として求めているため、この動画では参考になりません。次は体の真横から撮ってください。${kind === 'squat' ? '左右の差を見たいときは、斜めではなく真正面か真後ろから撮ると、左右の差を測ります。' : ''}`,
     )
   }
   // カメラ側の点が隠れていないか（器具・体の陰）
@@ -224,6 +238,7 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
     constraints: prep.constraints.length ? prep.constraints : undefined,
     body: prep.load ? prep.body : undefined,
     sideView,
+    view: prep.view,
   }
 }
 
@@ -260,7 +275,8 @@ export function compareMotion(prev: MotionAnalysis, cur: MotionAnalysis): Motion
 export function upgradeMotion(r: MotionRecord): MotionRecord {
   const kind = r.kind ?? 'squat'
   if (r.analysis.algorithmVersion === MOTION_ALGORITHM_VERSION && r.analysis.kind === kind) return r
-  return { ...r, kind, analysis: analyzeMotion(motionInputOf(r), kind) }
+  const analysis = analyzeMotion(motionInputOf(r), kind)
+  return { ...r, kind: analysis.kind, analysis }
 }
 
 /** 記録から、なめらかにした点・コマごとの値・区切りを作り直す（画面で使う） */

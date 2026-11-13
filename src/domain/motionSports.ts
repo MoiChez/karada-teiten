@@ -9,6 +9,7 @@ import { bodyCom, type LoadSeries, type ResolvedBody } from './motionLoad'
 import { drivePeaks, type SequencePart } from './motionSequence'
 import type { BarSeries } from './motionBar'
 import type { CrankAngles } from './motionCrank'
+import { frontalValues, type ViewInfo } from './motionFrontal'
 
 type Side = ReturnType<typeof sidePoints>
 
@@ -21,6 +22,8 @@ export interface SeriesCtx {
   standLeg: number
   /** 身長・体重・持つ重さ（入力がなければ仮定の値） */
   body: ResolvedBody
+  /** 体の左へ向かう、画面の横の向き（正面・真後ろから撮ったとき） */
+  leftDir: 1 | -1
 }
 
 export interface SeriesDef {
@@ -48,6 +51,10 @@ export interface PreparedMotion extends PreparedBase {
   bar?: BarSeries
   /** クランクの角度（自転車） */
   crank?: CrankAngles
+  /** 撮った向き */
+  view?: ViewInfo
+  /** 体の左へ向かう、画面の横の向き（正面・真後ろから撮ったとき） */
+  leftDir: 1 | -1
 }
 
 export interface MotionEvent {
@@ -136,6 +143,8 @@ export interface SportProfile {
   load?: boolean
   /** クランクの角度を求めるか（自転車） */
   crank?: boolean
+  /** 正面・真後ろから撮る種目（左右の差を測る。真横の確認はしない） */
+  frontal?: boolean
   /** グラフに示す、出典のある目安の範囲 */
   chartRefs?: Record<string, { lo: number; hi: number; label: string }>
 }
@@ -518,7 +527,7 @@ const SQUAT: SportProfile = {
   ],
   hiddenHint: 'ラックの柱や器具が脚にかからない位置から、体の真横で撮ると確かになります。',
   guide: [
-    'スマホを縦向きにして、腰の高さに置きます。体の真横から 2.5〜3 m 離れます（しゃがんだときも、頭から足まで入る距離）。',
+    'スマホを縦向きにして、腰の高さに置きます。体の真横から 2.5〜3 m 離れます（しゃがんだときも、頭から足まで入る距離）。真横から撮ると、膝・股関節の角度や重心を測ります。真正面か真後ろから撮ると、腰の横ずれ・膝の開き・肩の傾きなどの左右の差を測ります（撮った向きは自動で見分けます）。',
     '体の線が分かる服にします。腕は前に伸ばすか、胸の前で組みます（体の横に下ろすと、股関節が隠れます）。バーベルを担ぐときは、そのままで大丈夫です。',
     'ラックの中で行うときは、柱や器具が脚や腰にかからない位置から、体の真横で撮ります。後ろの鏡に映った姿が大きく写らない向きがおすすめです。',
     '合図のあと、横向きのまま、いつもの速さで 3〜5 回しゃがんで立ちます。終わったら「撮り終える」を押します。',
@@ -903,5 +912,130 @@ const BIKE: SportProfile = {
   crank: true,
 }
 
-export const PROFILES: Record<MotionKind, SportProfile> = { squat: SQUAT, erg: ERG, bike: BIKE }
+// ---------- 正面・真後ろから撮ったスクワット ----------
+
+const fv = (p: Point[], c: SeriesCtx) => frontalValues(p, c.leftDir)
+const LR_NOTE = '体の左右は、後ろから撮ったときは画面の左を体の左、正面から撮ったときは画面の右を体の左としています。正面から見た見かけの位置で、骨の位置ではありません。'
+
+const F_DEPTH: SeriesDef = {
+  key: 'depth',
+  label: 'しゃがむ深さ',
+  short: '深さ',
+  unit: '%',
+  digits: 0,
+  doc: '左右の股関節の中点がどれだけ下がったかを、立っているときの股関節の中点から足首の中点までの高さに対する割合で表した値です。0% が立った姿勢です。',
+  value: (p, c) => {
+    const v = fv(p, c)
+    return v ? ((c.standLeg - v.hipHeight) / c.standLeg) * 100 : NaN
+  },
+}
+const HIP_SHIFT: SeriesDef = {
+  key: 'hip_shift',
+  label: '腰の横ずれ（体の左が +）',
+  short: '腰ずれ',
+  unit: '%',
+  digits: 0,
+  doc: `左右の股関節の中点が、左右の足首の中点からどれだけ横にずれているかを、足首の間隔に対する割合で表した値です。体の左へずれると + です。${LR_NOTE}`,
+  value: (p, c) => fv(p, c)?.hipShift ?? NaN,
+}
+const KNEE_RATIO: SeriesDef = {
+  key: 'knee_ratio',
+  label: '膝の間隔 ÷ 足首の間隔',
+  short: '膝間隔',
+  unit: '倍',
+  digits: 2,
+  doc: '左右の膝の点の横の間隔が、左右の足首の点の横の間隔の何倍かです。1 より小さいと、膝が足首より内側に寄っています。正面から見た見かけの位置で、膝の向き（内側にねじれているか）までは分かりません。',
+  value: (p, c) => fv(p, c)?.kneeRatio ?? NaN,
+}
+const KNEE_L: SeriesDef = {
+  key: 'knee_l',
+  label: '左の膝の外への開き（足首から）',
+  short: '左膝',
+  unit: '%',
+  digits: 0,
+  doc: `左の膝の点が、左の足首の点より外（体の左）にどれだけあるかを、足首の間隔に対する割合で表した値です。内側にあると − です。${LR_NOTE}`,
+  value: (p, c) => fv(p, c)?.kneeLOut ?? NaN,
+}
+const KNEE_R: SeriesDef = {
+  key: 'knee_r',
+  label: '右の膝の外への開き（足首から）',
+  short: '右膝',
+  unit: '%',
+  digits: 0,
+  doc: `右の膝の点が、右の足首の点より外（体の右）にどれだけあるかです。内側にあると − です。${LR_NOTE}`,
+  value: (p, c) => fv(p, c)?.kneeROut ?? NaN,
+}
+// 骨盤の傾きは出さない（人形の動画で、腰が横にずれると、傾いていないのに 4° ほど傾いて見えたため）
+const SHOULDER: SeriesDef = {
+  key: 'shoulder',
+  label: '肩の傾き（体の左が上がると +）',
+  short: '肩',
+  unit: '°',
+  digits: 1,
+  doc: `左右の肩の点を結ぶ線の、水平からの傾きです。バーを担いでいるときは、バーの傾きの目安になります。体の左が上がると + です。${LR_NOTE}`,
+  value: (p, c) => fv(p, c)?.shoulderTilt ?? NaN,
+}
+
+const atBottom =
+  (key: string): MetricDef['value'] =>
+  (c, prep) =>
+    at(prep, key, eventOf(c, 'bottom')?.index)
+/** 1 回の中で、0 からいちばん離れた値（符号つき） */
+const farthest =
+  (key: string): MetricDef['value'] =>
+  (c, prep) => {
+    const v = prep.series[key]
+    let best: number | null = null
+    for (let k = c.startIndex; k <= c.endIndex; k++) if (Number.isFinite(v[k]) && (best === null || Math.abs(v[k]) > Math.abs(best))) best = v[k]
+    return best
+  }
+
+const SQUAT_FRONT: SportProfile = {
+  kind: 'squat_front',
+  label: 'スクワット（正面・背面）',
+  unitLabel: '回',
+  mainEvent: 'bottom',
+  jumpLabel: (n) => `${n} 回目の底`,
+  series: [F_DEPTH, HIP_SHIFT, KNEE_RATIO, KNEE_L, KNEE_R, SHOULDER],
+  defaultSeries: 'hip_shift',
+  metrics: [
+    { key: 'depth', label: 'いちばん深いところ', short: '深さ', unit: '%', digits: 0, doc: F_DEPTH.doc, floor: 2, anyView: true, value: cycleMax('depth') },
+    { key: 'hip_shift_bottom', label: '腰の横ずれ（いちばん深いところ。体の左が +）', short: '腰ずれ', unit: '%', digits: 0, doc: HIP_SHIFT.doc, floor: 2, value: atBottom('hip_shift') },
+    { key: 'hip_shift_peak', label: '腰の横ずれ（1 回の中でいちばん大きいとき）', short: '腰ずれ最大', unit: '%', digits: 0, doc: HIP_SHIFT.doc, floor: 2, value: farthest('hip_shift') },
+    { key: 'knee_ratio_bottom', label: '膝の間隔 ÷ 足首の間隔（いちばん深いところ）', short: '膝間隔', unit: '倍', digits: 2, doc: KNEE_RATIO.doc, floor: 0.03, value: atBottom('knee_ratio') },
+    {
+      key: 'knee_ratio_min',
+      label: '膝の間隔 ÷ 足首の間隔（1 回の中でいちばん狭いとき）',
+      short: '膝間隔最小',
+      unit: '倍',
+      digits: 2,
+      doc: KNEE_RATIO.doc,
+      floor: 0.03,
+      value: (c, prep) => minIn(prep.series.knee_ratio, c.startIndex, c.endIndex),
+    },
+    { key: 'knee_l_bottom', label: '左の膝の外への開き（いちばん深いところ）', short: '左膝', unit: '%', digits: 0, doc: KNEE_L.doc, floor: 2, value: atBottom('knee_l') },
+    { key: 'knee_r_bottom', label: '右の膝の外への開き（いちばん深いところ）', short: '右膝', unit: '%', digits: 0, doc: KNEE_R.doc, floor: 2, value: atBottom('knee_r') },
+    { key: 'shoulder_bottom', label: '肩の傾き（いちばん深いところ。体の左が上がると +）', short: '肩', unit: '°', digits: 1, doc: SHOULDER.doc, floor: 1, value: atBottom('shoulder') },
+    ...SQUAT.metrics.filter((m) => m.key === 'descent' || m.key === 'ascent'),
+  ],
+  valid: (p) => p[11].y < p[23].y && p[12].y < p[24].y && p[25].y < p[27].y && p[26].y < p[28].y,
+  smoothing: 1.5,
+  findCycles: squatCycles,
+  sideCheckFrames: () => [],
+  keyPoints: () => [
+    [23, '股関節'],
+    [24, '股関節'],
+    [25, '膝'],
+    [26, '膝'],
+    [27, '足首'],
+    [28, '足首'],
+  ],
+  hiddenHint: 'ラックの柱や器具が脚にかからない位置から、体の真正面か真後ろで撮ると確かになります。',
+  guide: SQUAT.guide,
+  orientation: 'portrait',
+  muscles: SQUAT.muscles,
+  frontal: true,
+}
+
+export const PROFILES: Record<MotionKind, SportProfile> = { squat: SQUAT, squat_front: SQUAT_FRONT, erg: ERG, bike: BIKE }
 export const MOTION_KIND_LIST: MotionKind[] = ['squat', 'erg', 'bike']

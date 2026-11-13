@@ -13,6 +13,7 @@ export function FrameVideo({
   nearSide,
   com,
   bar,
+  bothSides,
 }: {
   images: { t: number; blob: Blob }[]
   width: number
@@ -25,6 +26,8 @@ export function FrameVideo({
   com?: { c: Point; heel: Point; toe: Point }[]
   /** バーの位置（手首の点。画像に対する比）と、コマごとの軌道の始まり（その回の始めのコマ。回の外は -1） */
   bar?: { points: Point[]; from: number[] }
+  /** 両側を同じ明るさで描く（正面・後ろから撮ったとき） */
+  bothSides?: boolean
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const ts = useMemo(() => images.map((im) => im.t), [images])
@@ -51,6 +54,7 @@ export function FrameVideo({
         nearSide,
         com: com?.[k],
         trail: bar && bar.from[k] >= 0 ? bar.points.slice(bar.from[k], k + 1) : undefined,
+        bothSides,
       })
     }
 
@@ -92,7 +96,7 @@ export function FrameVideo({
       off()
       lastBitmap?.close()
     }
-  }, [images, ts, clock, overlay, overlayTs, nearSide, com, bar])
+  }, [images, ts, clock, overlay, overlayTs, nearSide, com, bar, bothSides])
 
   return (
     <canvas
@@ -115,11 +119,13 @@ export interface OverlayInput {
   com?: { c: Point; heel: Point; toe: Point }
   /** バーの軌跡（その回の始めから今まで） */
   trail?: Point[]
+  /** 両側を同じ明るさで描く（正面・後ろから撮ったとき） */
+  bothSides?: boolean
 }
 
 /** 骨格の線・重心の線・バーの軌跡を、w × h の範囲に描く（画面の動画と、書き出す動画で同じ描き方にする） */
 export function drawOverlay(ctx: CanvasRenderingContext2D, w: number, h: number, o: OverlayInput) {
-  const near = (i: number) => i === 0 || (o.nearSide === 'left' ? i % 2 === 1 : i % 2 === 0)
+  const near = (i: number) => o.bothSides || i === 0 || (o.nearSide === 'left' ? i % 2 === 1 : i % 2 === 0)
   const s = Math.max(w, h) / 400
   const X = (p: Point) => p.x * w
   const Y = (p: Point) => p.y * h

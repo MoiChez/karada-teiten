@@ -327,7 +327,9 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
         </p>
       )}
       <p className="mt-2 text-sm text-ink-3">
-        3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。
+        {profile.frontal
+          ? `3D の体は全員に共通の標準の体で、${a.view?.view === 'front' ? '正面' : '後ろ'}から撮った関節の左右・上下の動きを反映しています。前後の位置は推定モデルの奥行きの推定で、正面・後ろからの映像では外れやすいため参考です。体の左右は、${a.view?.view === 'front' ? '画面の右を体の左' : '画面の左を体の左'}としています。`
+          : '3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。'}
         {a.sideView === false && '真横から撮っていないため、3D の体の形も正しくありません。'}
         {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。膝・足首・腰は、器具の前提で置き直した位置です（「撮影の情報」に説明があります）。'}
         {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。膝は、太もも・すねの長さから置き直した位置です。'}
@@ -348,7 +350,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
 
       {profile.load && <BodyPanel body={work.body} used={a.body} onApply={changeBody} />}
 
-      <SectionTitle sub="横から見た見かけの角度・位置です。正常範囲とは比べていません。自分の過去の記録と比べるための値です。">1 {profile.unitLabel}ごとの値</SectionTitle>
+      <SectionTitle sub={`${profile.frontal ? '正面から見た見かけの位置・傾き' : '横から見た見かけの角度・位置'}です。正常範囲とは比べていません。自分の過去の記録と比べるための値です。`}>1 {profile.unitLabel}ごとの値</SectionTitle>
       <div className="overflow-x-auto rounded-[var(--radius-panel)] bg-surface shadow-lift">
         <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + shown.length * 64}px` }}>
           <thead className="text-sm text-ink-3">

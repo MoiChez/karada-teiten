@@ -8,7 +8,8 @@ import { pointState } from './metrics'
 import type { ConstraintNote, FrameSize } from './motionConstraints'
 import type { BodyParams } from './motionLoad'
 
-export type MotionKind = 'squat' | 'erg' | 'bike'
+/** squat_front は、正面・真後ろから撮ったスクワット（撮った向きから自動で切り替える） */
+export type MotionKind = 'squat' | 'squat_front' | 'erg' | 'bike'
 
 // ---------- 保存する形 ----------
 
@@ -381,7 +382,9 @@ export function turnsFromBody(lm: Landmark[], width: number, height: number): nu
 
 /**
  * 何コマかの体の向きから、映像を回す回数を決める。過半数（3 コマ以上）が同じ向きを示したときだけ回す。
- * 1 コマの推定の乱れ（骨格が逆さに出るなど）で、映像全体を回してしまわないため
+ * 1 コマの推定の乱れ（骨格が逆さに出るなど）で、映像全体を回してしまわないため。
+ * 上下逆さ（180°）には回さない。スマホの動画が逆さになることはほとんどなく、後ろ姿で頭と足を取り違えた推定に引きずられて、
+ * 正しい向きの映像を逆さにしてしまったため（人形の動画で確認）
  */
 export function voteTurns(votes: (number | null)[]): number {
   const counts = new Map<number, number>()
@@ -394,5 +397,5 @@ export function voteTurns(votes: (number | null)[]): number {
       bestCount = c
     }
   }
-  return best !== 0 && bestCount >= 3 ? best : 0
+  return (best === 1 || best === -1) && bestCount >= 3 ? best : 0
 }
