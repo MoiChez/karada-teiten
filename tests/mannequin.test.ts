@@ -150,6 +150,49 @@ describe('マネキンを測った姿勢に合わせる', () => {
     }
   })
 
+  it('動きの再生では、首を胴に対して 30° までしか曲げず、胴の高さの手首を胸の前に出す（肩の高さの手は動かさない）', async () => {
+    const root = await load('male')
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const finish = (wristY: number, wristZ: number, wristW: number): Pose3D => {
+      const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+      const set = (l: number, r: number, y: number, z: number, w: number) => {
+        points[l] = p(w, y, z)
+        points[r] = p(-w, y, z)
+      }
+      // エルゴのフィニッシュ: 胴が 25° 後ろに傾き、首は胴に対して 60° 前に折れ、手首は胴の線の上
+      set(23, 24, 0.3, 0, 0.06)
+      set(11, 12, 0.572, -0.127, 0.11)
+      set(7, 8, 0.67, -0.058, 0.06)
+      points[0] = p(0, 0.65, 0.0)
+      set(13, 14, 0.42, -0.2, 0.125)
+      set(15, 16, wristY, wristZ, wristW)
+      set(25, 26, 0.33, 0.25, 0.06)
+      set(27, 28, 0.2, 0.48, 0.06)
+      set(29, 30, 0.18, 0.46, 0.06)
+      set(31, 32, 0.22, 0.58, 0.065)
+      return { points, depthSource: 'side_photo' }
+    }
+    const pose = finish(0.477, -0.083, 0.13)
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: true })
+    root.updateMatrixWorld(true)
+    const hip = mid(pointOf(root, 23), pointOf(root, 24))
+    const sh = mid(pointOf(root, 11), pointOf(root, 12))
+    const ear = mid(pointOf(root, 7), pointOf(root, 8))
+    expect(angleDeg(sh.clone().sub(hip), ear.clone().sub(sh))).toBeLessThan(31)
+    for (const i of [15, 16]) {
+      const w = pointOf(root, i)
+      const u = (w.y - hip.y) / (sh.y - hip.y)
+      // 胸の前の面（胴の線から水平に 0.09）まで出ている。高さは測った位置のまま
+      expect(w.z - (hip.z + (sh.z - hip.z) * u)).toBeGreaterThan(0.08)
+      expect(Math.abs(w.y - vec(pose, i).y)).toBeLessThan(0.02)
+    }
+    // 肩の高さで胴の線より後ろにある手（背中にかつぐバー）は、測った位置のまま
+    const bar = finish(0.572, -0.17, 0.2)
+    poseMannequin(root, bar, { anchor: 'hips', planarLegs: true })
+    root.updateMatrixWorld(true)
+    for (const i of [15, 16]) expect(pointOf(root, i).distanceTo(vec(bar, i))).toBeLessThan(0.02)
+  })
+
   it('プロフィールの性別から体のモデルを選ぶ', () => {
     expect(mannequinKindOf('male')).toBe('male')
     expect(mannequinKindOf('female')).toBe('female')

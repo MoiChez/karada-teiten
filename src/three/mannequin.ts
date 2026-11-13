@@ -147,7 +147,10 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
 
   // 首と頭: 肩の中点→耳の中点の向き、耳の線と鼻の向き（首と頭の付け根がずれているので数回くり返す）
   if (has(7, 8, 11, 12)) {
-    const tNeck = mid(T(7)!, T(8)!).sub(mid(T(11)!, T(12)!))
+    let tNeck = mid(T(7)!, T(8)!).sub(mid(T(11)!, T(12)!))
+    // 動きの再生では、首を胴に対して 30° より大きく曲げない。ハンドルを引き切ると肩甲骨が寄って、推定の肩の点が
+    // 背骨より後ろへずれ、首が大きく前へ折れて見える（頭が胸に落ちる）ため
+    if (opts.anchor === 'hips' && has(23, 24)) tNeck = limitAngle(tNeck, mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!)), NECK_LIMIT_DEG)
     for (let k = 0; k < 3; k++) {
       rotateWorld(B('neck_01'), swing(mid(P(7), P(8)).sub(mid(P(11), P(12))), tNeck))
       if (has(0)) {
@@ -176,6 +179,20 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
         root.updateMatrixWorld(true)
       }
     }
+    // 手首が胴の高さ（股関節〜肩の 85% まで）にあって、胸の前の面より後ろにあるときは、水平に前へ出して胸の前の面に置く。
+    // フィニッシュでハンドルを胸に引くと、推定の手首が胴の線（股関節の中点〜肩の中点）の上に来て、手を脇腹に
+    // 当てたように見えるため（利用者のエルゴの動画では、ハンドルは胸の前にあり、斜め前寄りから撮った画面の上で、
+    // カメラ側の手首が胴の線に重なっていた）。胴の線は、合わせた後の 3D の体で、手首と同じ高さで測る。
+    // 肩の高さの手（背中にかつぐバー）は動かさない。範囲の端では出す量を徐々に減らす（手が跳ばないように）
+    const hipMid = mid(P(23), P(24))
+    const shMid = has(11, 12) ? mid(P(11), P(12)) : null
+    const handInFront = (w: THREE.Vector3) => {
+      if (!shMid || shMid.y - hipMid.y < 0.5 * shMid.distanceTo(hipMid)) return w
+      const u = (w.y - hipMid.y) / (shMid.y - hipMid.y)
+      const k = Math.min(1, Math.max(0, (u + 0.1) / 0.1), Math.max(0, (0.85 - u) / 0.1))
+      const d = w.z - (hipMid.z + (shMid.z - hipMid.z) * u)
+      return d >= HAND_FRONT || k <= 0 ? w : w.clone().setZ(w.z + (HAND_FRONT - d) * k)
+    }
     // 曲げる向きの好み（体の左が +X、前が +Z）: 膝は前と上、ひじは後ろと下と少し外。
     // 脚が伸び切る・腕が伸び切るときは、目標の膝・ひじが一直線の上に来て、曲げる向きがコマごとに反転しやすいため
     const KNEE = new THREE.Vector3(0, 0.4, 1)
@@ -187,7 +204,7 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
       ['upperarm_r', 'lowerarm_r', 12, 14, 16, elbow(-1), false],
     ] as const) {
       if (!has(b, c)) continue
-      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, T(c)!, planar, prefer)
+      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, c === 15 || c === 16 ? handInFront(T(c)!) : T(c)!, planar, prefer)
       // 曲げた後の位置で次の骨を合わせるので、上の P は曲げる前の値。下で付け根から測り直す
       fitted.push(upper, lower)
     }
@@ -235,6 +252,24 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
   root.position.copy(target.sub(ankle.multiplyScalar(scale)))
   root.updateMatrixWorld(true)
   return { scale, fitted }
+}
+
+/** 動きの再生で、首を胴に対して曲げる最大の角度（度） */
+const NECK_LIMIT_DEG = 30
+/** 胴の高さにある手首を、胴の線から水平に前へ出す最小の距離（体の高さを 1 として）。
+ *  標準の体の胸の前の面は、胴の線から 0.08 ほど前（胴が 25° 傾くと水平に 0.09 ほど） */
+const HAND_FRONT = 0.09
+
+/** v の向きを、base の向きから max 度以内にする（base との角度が大きいときだけ、二つを含む面の中で回す） */
+function limitAngle(v: THREE.Vector3, base: THREE.Vector3, maxDeg: number) {
+  const a = v.angleTo(base)
+  const max = (maxDeg * Math.PI) / 180
+  if (a <= max || base.lengthSq() < 1e-12) return v
+  const axis = new THREE.Vector3().crossVectors(base, v)
+  if (axis.lengthSq() < 1e-12) return v
+  axis.normalize()
+  const len = v.length()
+  return base.clone().normalize().applyAxisAngle(axis, max).multiplyScalar(len)
 }
 
 /**
