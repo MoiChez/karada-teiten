@@ -127,6 +127,29 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     fitted.push('pelvis')
   }
 
+  // 動きの再生では、胴の前後の傾きの多くを骨盤の傾きで受け持ち、背骨は傾きの 35% だけ曲げる（反らせるのは 5°、
+  // 丸めるのは 30° まで）。骨盤を立てたまま背骨だけで傾けると、エルゴのフィニッシュで腰が大きく反って腹と胸が前へ
+  // 突き出し、人の体ではありえない形になっていたため（実際は骨盤ごと後ろへ倒れる。キャッチ・自転車・スクワットの前傾も同じ）
+  if (opts.anchor === 'hips' && has(11, 12, 23, 24)) {
+    const left = P(23).sub(P(24)).normalize()
+    const fwd = new THREE.Vector3().crossVectors(left, new THREE.Vector3(0, 1, 0)).normalize()
+    const up = new THREE.Vector3().crossVectors(fwd, left)
+    const lean = (u: THREE.Vector3) => Math.atan2(u.dot(fwd), u.dot(up))
+    let d = lean(mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!))) - lean(mid(P(11), P(12)).sub(mid(P(23), P(24))))
+    d = Math.atan2(Math.sin(d), Math.cos(d))
+    const bend = Math.min(SPINE_FLEX_MAX, Math.max(-SPINE_EXT_MAX, SPINE_SHARE * d))
+    rotateWorld(B('pelvis'), new THREE.Quaternion().setFromAxisAngle(left, d - bend))
+    // 胴の長さを合わせる（股関節の中点〜肩の中点を、測った長さにする。標準の体と人の胴の長さの違いで、
+    // 肩や頭が動画からずれないように）。背骨の付け根から上をまとめて大きさを変えるので、腕と頭も同じ割合で変わる。
+    // 背骨の付け根を中心に大きさが変わり、股関節から見た胴の向きが少しずれるので、胴の向きを合わせる前に行う
+    const cur = mid(P(11), P(12)).distanceTo(mid(P(23), P(24))) / Hm
+    const want = mid(T(11)!, T(12)!).distanceTo(mid(T(23)!, T(24)!))
+    if (cur > 1e-6) {
+      B('spine_01').scale.setScalar(Math.min(1.35, Math.max(0.8, want / cur)))
+      root.updateMatrixWorld(true)
+    }
+  }
+
   // 胴: 股関節の中点→肩の中点の向きと、肩の線。背骨の 3 本に分けて少しずつ曲げる
   if (has(11, 12, 23, 24)) {
     const tUp = mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!))
@@ -141,6 +164,11 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
       const cSide = P(11).sub(P(12))
       const q = frameRotation(cUp, cSide, tUp, tSide)
       rotateWorld(B(name), new THREE.Quaternion().slerp(q, frac))
+    }
+    // 背骨の骨はそれぞれの付け根で回るので、股関節の中点から見た胴の向きが少しずれる（前へ 40° 倒すと 3° ほど）。
+    // いちばん上の骨で数回合わせ直す
+    for (let k = 0; k < 3; k++) {
+      rotateWorld(B('spine_03'), frameRotation(mid(P(11), P(12)).sub(mid(P(23), P(24))), P(11).sub(P(12)), tUp, tSide))
     }
     fitted.push('trunk')
   }
@@ -169,16 +197,6 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     root.updateMatrixWorld(true)
     root.position.add(mid(T(23)!, T(24)!).sub(mid(P(23), P(24))))
     root.updateMatrixWorld(true)
-    // 胴の長さを合わせる（股関節の中点〜肩の中点を、測った長さにする。標準の体と人の胴の長さの違いで、
-    // 肩や頭が動画からずれないように）。背骨の付け根から上をまとめて大きさを変えるので、腕と頭も同じ割合で変わる
-    if (has(11, 12)) {
-      const cur = mid(P(11), P(12)).distanceTo(mid(P(23), P(24)))
-      const want = mid(T(11)!, T(12)!).distanceTo(mid(T(23)!, T(24)!))
-      if (cur > 1e-6) {
-        B('spine_01').scale.setScalar(Math.min(1.35, Math.max(0.8, want / cur)))
-        root.updateMatrixWorld(true)
-      }
-    }
     // 手首が胴の高さ（股関節〜肩の 85% まで）にあって、胸の前の面より後ろにあるときは、水平に前へ出して胸の前の面に置く。
     // フィニッシュでハンドルを胸に引くと、推定の手首が胴の線（股関節の中点〜肩の中点）の上に来て、手を脇腹に
     // 当てたように見えるため（利用者のエルゴの動画では、ハンドルは胸の前にあり、斜め前寄りから撮った画面の上で、
@@ -254,6 +272,10 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
   return { scale, fitted }
 }
 
+/** 動きの再生で、胴の前後の傾きのうち背骨で曲げる割合と、背骨を反らせる・丸める最大の角度（残りは骨盤の傾き） */
+const SPINE_SHARE = 0.35
+const SPINE_EXT_MAX = (5 * Math.PI) / 180
+const SPINE_FLEX_MAX = (30 * Math.PI) / 180
 /** 動きの再生で、首を胴に対して曲げる最大の角度（度） */
 const NECK_LIMIT_DEG = 30
 /** 胴の高さにある手首を、胴の線から水平に前へ出す最小の距離（体の高さを 1 として）。

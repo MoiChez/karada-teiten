@@ -193,6 +193,53 @@ describe('マネキンを測った姿勢に合わせる', () => {
     for (const i of [15, 16]) expect(pointOf(root, i).distanceTo(vec(bar, i))).toBeLessThan(0.02)
   })
 
+  it('動きの再生では、胴の前後の傾きの多くを骨盤で受け持ち、背骨を反らせすぎない（フィニッシュで腹が前に突き出ない）', async () => {
+    const root = await load('male')
+    root.updateMatrixWorld(true)
+    const pelvis = root.getObjectByName('pelvis')!
+    const restQ = pelvis.getWorldQuaternion(new THREE.Quaternion())
+    const lean = (v: THREE.Vector3) => (Math.atan2(v.z, v.y) * 180) / Math.PI
+    const trunk = () => mid(pointOf(root, 11), pointOf(root, 12)).sub(mid(pointOf(root, 23), pointOf(root, 24)))
+    const restLean = lean(trunk())
+    // 骨盤が最初の姿勢から前（+）・後ろ（-）へ傾いた角度
+    const pelvisTilt = () => {
+      const q = pelvis.getWorldQuaternion(new THREE.Quaternion()).multiply(restQ.clone().invert())
+      return lean(new THREE.Vector3(0, 1, 0).applyQuaternion(q))
+    }
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    // 座って胴を deg だけ前（+）・後ろ（-）へ傾けた姿勢
+    const seated = (deg: number): Pose3D => {
+      const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+      const set = (l: number, r: number, y: number, z: number, w: number) => {
+        points[l] = p(w, y, z)
+        points[r] = p(-w, y, z)
+      }
+      const a = (deg * Math.PI) / 180
+      set(23, 24, 0.3, 0, 0.06)
+      set(11, 12, 0.3 + 0.3 * Math.cos(a), 0.3 * Math.sin(a), 0.11)
+      set(7, 8, 0.3 + 0.4 * Math.cos(a), 0.4 * Math.sin(a), 0.06)
+      set(13, 14, 0.3 + 0.18 * Math.cos(a), 0.18 * Math.sin(a) + 0.1, 0.125)
+      set(15, 16, 0.3 + 0.18 * Math.cos(a), 0.18 * Math.sin(a) + 0.3, 0.13)
+      set(25, 26, 0.33, 0.25, 0.06)
+      set(27, 28, 0.2, 0.48, 0.06)
+      set(29, 30, 0.18, 0.46, 0.06)
+      set(31, 32, 0.22, 0.58, 0.065)
+      return { points, depthSource: 'side_photo' }
+    }
+    for (const deg of [-30, -15, 0, 20, 40, 60]) {
+      poseMannequin(root, seated(deg), { anchor: 'hips', planarLegs: true })
+      root.updateMatrixWorld(true)
+      const got = lean(trunk())
+      // 胴の向きは測った向きのまま
+      expect(Math.abs(got - deg), `${deg}°`).toBeLessThan(1.5)
+      // 背骨の曲がり（胴の傾きの変化のうち、骨盤の傾きでない分）は、反らせて 5°、丸めて 30° まで
+      const bend = got - restLean - pelvisTilt()
+      expect(bend, `${deg}°`).toBeGreaterThan(-5.5)
+      expect(bend, `${deg}°`).toBeLessThan(30.5)
+      if (Math.abs(deg - restLean) > 10) expect(Math.abs(pelvisTilt()), `${deg}°`).toBeGreaterThan(0.5 * Math.abs(deg - restLean))
+    }
+  })
+
   it('プロフィールの性別から体のモデルを選ぶ', () => {
     expect(mannequinKindOf('male')).toBe('male')
     expect(mannequinKindOf('female')).toBe('female')
