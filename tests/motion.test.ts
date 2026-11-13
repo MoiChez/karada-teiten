@@ -3,7 +3,7 @@ import type { Landmark } from '../src/domain/types'
 import {
   analyzeMotion,
   compareMotion,
-  findReps,
+  findCycles,
   motionInputOf,
   motionMetric,
   packLandmarks,
@@ -94,7 +94,7 @@ function expectedDepth(knee: number) {
 describe('スクワットの角度と区切り', () => {
   it('膝・股関節・上体・すねの角度と深さを、1 回ごとの最大として出す', () => {
     const a = analyzeMotion(squatInput(100))
-    expect(a.reps).toHaveLength(3)
+    expect(a.cycles).toHaveLength(3)
     expect(a.warnings).toEqual([])
     const v = (k: Parameters<typeof motionMetric>[1]) => motionMetric(a, k)!.value!
     // なめらか化で山が少し削れる分を許す
@@ -115,7 +115,7 @@ describe('スクワットの角度と区切り', () => {
     expect(d).toBeGreaterThan(0.8)
     expect(d).toBeLessThan(1.5)
     expect(u).toBeCloseTo(d, 1)
-    expect(a.reps[0].bottom - 600).toBeCloseTo(1500, -2)
+    expect(a.cycles[0].events[0].t - 600).toBeCloseTo(1500, -2)
   })
 
   it('顔が左向きでも同じ値になる', () => {
@@ -130,14 +130,14 @@ describe('スクワットの角度と区切り', () => {
   it('撮り始めや撮り終わりで途中までしか写っていない回は数えず、そのことを知らせる', () => {
     // 1 回目の途中から始まり、3 回目の途中で終わる
     const a = analyzeMotion(squatInput(100, { from: 1500, to: 600 + 2 * 3600 + 1500 }))
-    expect(a.reps).toHaveLength(1)
+    expect(a.cycles).toHaveLength(1)
     expect(a.warnings.some((w) => w.includes('撮り始め'))).toBe(true)
     expect(a.warnings.some((w) => w.includes('撮り終わり'))).toBe(true)
   })
 
   it('浅い動き（深さ 15% 未満）は 1 回と数えず、そのことを知らせる', () => {
     const a = analyzeMotion(squatInput(30))
-    expect(a.reps).toHaveLength(0)
+    expect(a.cycles).toHaveLength(0)
     expect(motionMetric(a, 'knee')!.status).toBe('unavailable')
     expect(a.warnings.some((w) => w.includes('見つけられませんでした'))).toBe(true)
   })
@@ -153,7 +153,7 @@ describe('スクワットの角度と区切り', () => {
     const k = 40
     input.frames[k] = { ...input.frames[k], lm: input.frames[k].lm.map((l) => ({ ...l, x: l.x + 0.02 })) }
     const a = analyzeMotion(input)
-    expect(a.reps).toHaveLength(3)
+    expect(a.cycles).toHaveLength(3)
     expect(motionMetric(a, 'knee')!.value!).toBeGreaterThan(97)
   })
 
@@ -183,9 +183,9 @@ describe('動きの 3D', () => {
     const prep = prepareMotion(squatInput(100))!
     const poses = motionPoses(prep)
     expect(poses).toHaveLength(prep.frames.length)
-    const { reps } = findReps(prep)
+    const { cycles } = findCycles(prep)
     const stand = poses[0].pose
-    const bottom = poses[reps[0].bottomIndex].pose
+    const bottom = poses[cycles[0].events[0].index].pose
     expect(Math.min(stand.points[29]!.y, stand.points[31]!.y)).toBeCloseTo(0, 2)
     expect(stand.points[27]!.z).toBeCloseTo(0, 2)
     expect(bottom.points[23]!.y).toBeLessThan(stand.points[23]!.y - 0.1)
@@ -248,7 +248,7 @@ describe('撮り方の注意', () => {
     // 奥側の肩が 250 ピクセル離れて見える（腕を上げてバーを担ぐ）
     const a = edit((lm) => (lm[12] = { ...lm[12], x: lm[12].x + 0.25 }))
     expect(a.warnings).toEqual([])
-    expect(a.reps).toHaveLength(3)
+    expect(a.cycles).toHaveLength(3)
   })
 
   it('左右の股関節が離れて見える（斜めから撮った）ときは、真横でないことを知らせる', () => {
@@ -261,6 +261,6 @@ describe('撮り方の注意', () => {
     const w = a.warnings.find((x) => x.includes('はっきり写っていない'))
     expect(w).toContain('膝')
     expect(w).not.toContain('足首')
-    expect(a.reps).toHaveLength(3)
+    expect(a.cycles).toHaveLength(3)
   })
 })

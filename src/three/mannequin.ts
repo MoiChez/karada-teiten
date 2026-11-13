@@ -4,6 +4,7 @@
 import * as THREE from 'three'
 import type { Pose3D, Vec3 } from '../domain/fusion3d'
 import type { BodyArea, UserProfile } from '../domain/types'
+import type { MuscleKey } from '../domain/motionSports'
 
 export type MannequinKind = 'male' | 'female' | 'neutral'
 
@@ -203,8 +204,11 @@ const AREA_WEIGHT: Partial<Record<BodyArea, (w: (bone: string) => number) => num
 /** 色づけの最大の濃さ（体の陰影が見えるように、部位の色で塗りつぶさない） */
 const ACCENT_MAX = 0.75
 
-/** 体の色を頂点ごとに付ける（highlight の部位をなめらかに色づける） */
-export function paintMannequin(root: THREE.Object3D, base: string, accent: string, highlight: Set<BodyArea>) {
+/**
+ * 頂点ごとの色づけの重み weight(骨の重み, 前向きの度合い, 後ろ向きの度合い) で、体の色を塗る。
+ * 前向き・後ろ向きは、最初の姿勢の頂点の法線の前後（+Z が体の前）から求める（太ももの前と裏などを分けるため）
+ */
+function paintBy(root: THREE.Object3D, base: string, accent: string, weight: ((w: (bone: string) => number, front: number, back: number) => number) | null) {
   const c0 = new THREE.Color(base)
   const c1 = new THREE.Color(accent)
   root.traverse((o) => {
@@ -213,6 +217,7 @@ export function paintMannequin(root: THREE.Object3D, base: string, accent: strin
     const g = mesh.geometry
     const idx = g.getAttribute('skinIndex')
     const wt = g.getAttribute('skinWeight')
+    const nrm = g.getAttribute('normal')
     const n = g.getAttribute('position').count
     const names = mesh.skeleton.bones.map((b) => b.name)
     let color = g.getAttribute('color') as THREE.BufferAttribute | undefined
@@ -220,23 +225,47 @@ export function paintMannequin(root: THREE.Object3D, base: string, accent: strin
       color = new THREE.BufferAttribute(new Float32Array(n * 3), 3)
       g.setAttribute('color', color)
     }
-    const fns = [...highlight].map((a) => AREA_WEIGHT[a]).filter((f): f is NonNullable<typeof f> => !!f)
     const weights = new Map<string, number>()
     const w = (bone: string) => weights.get(bone) ?? 0
     const c = new THREE.Color()
+    const ramp = (v: number) => Math.min(1, Math.max(0, (v - 0.05) / 0.35))
     for (let i = 0; i < n; i++) {
       let h = 0
-      if (fns.length) {
+      if (weight) {
         weights.clear()
         for (let k = 0; k < 4; k++) {
           const wk = wt.getComponent(i, k)
           if (wk > 0) weights.set(names[idx.getComponent(i, k)], (weights.get(names[idx.getComponent(i, k)]) ?? 0) + wk)
         }
-        for (const f of fns) h = Math.max(h, f(w))
+        const nz = nrm ? nrm.getZ(i) : 0
+        h = weight(w, ramp(nz), ramp(-nz))
       }
       c.copy(c0).lerp(c1, ACCENT_MAX * Math.min(1, h))
       color.setXYZ(i, c.r, c.g, c.b)
     }
     color.needsUpdate = true
   })
+}
+
+/** 体の色を頂点ごとに付ける（highlight の部位をなめらかに色づける） */
+export function paintMannequin(root: THREE.Object3D, base: string, accent: string, highlight: Set<BodyArea>) {
+  const fns = [...highlight].map((a) => AREA_WEIGHT[a]).filter((f): f is NonNullable<typeof f> => !!f)
+  paintBy(root, base, accent, fns.length ? (w) => Math.max(0, ...fns.map((f) => f(w))) : null)
+}
+
+/** 筋肉のある場所（色づけの重み）。骨の重みと、体の前・後ろ側で分ける。教育用の大まかな場所で、筋肉の形そのものではない */
+export const MUSCLE_WEIGHT: Record<MuscleKey, (w: (bone: string) => number, front: number, back: number) => number> = {
+  quads: (w, f) => (w('thigh_l') + w('thigh_r')) * f,
+  hamstrings: (w, _f, b) => (w('thigh_l') + w('thigh_r')) * b * (1 - Math.min(1, 3 * w('pelvis'))),
+  glutes: (w, _f, b) => (w('pelvis') + 3 * w('pelvis') * (w('thigh_l') + w('thigh_r'))) * b,
+  calves: (w, _f, b) => (w('calf_l') + w('calf_r')) * b,
+  erectors: (w, _f, b) => (w('spine_01') + w('spine_02')) * b,
+  lats: (w, _f, b) => (w('spine_02') + w('spine_03')) * b + (w('clavicle_l') + w('clavicle_r')) * b * 0.5,
+  biceps: (w, f) => (w('upperarm_l') + w('upperarm_r')) * f,
+}
+
+/** 選んだ筋肉のある場所を色づける（なしなら色を戻す） */
+export function paintMuscles(root: THREE.Object3D, base: string, accent: string, keys: MuscleKey[]) {
+  const fns = keys.map((k) => MUSCLE_WEIGHT[k])
+  paintBy(root, base, accent, fns.length ? (w, f, b) => Math.max(0, ...fns.map((fn) => fn(w, f, b))) : null)
 }

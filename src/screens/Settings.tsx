@@ -10,17 +10,7 @@ import { exportJson, importJson, sessionsToCsv, validateExport } from '../data/e
 import { POSE_MODEL, modelVersion } from '../pose/landmarker'
 import { Button, Details, Dialog, Notice, Screen, SectionTitle, Segmented } from '../components/ui'
 import { useSettings, useToast } from '../state/stores'
-
-function download(name: string, content: Blob) {
-  const url = URL.createObjectURL(content)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 2000)
-}
+import { download } from '../components/download'
 
 export function Settings() {
   const { settings, update } = useSettings()

@@ -1,9 +1,9 @@
 // 動きの撮影（スクワット）。横から撮り、撮り終わってから 1 コマずつ骨格を推定する。
 // 動画（コマの画像）は、残すと選んだときだけ端末に保存する。残さないときも、この画面を閉じるまでは結果で再生できる
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { ChevronLeft, FileVideo, Loader2, Video } from 'lucide-react'
-import { MOTION_KINDS, analyzeMotion, fullBodyInFrame, motionInputOf, turnsFromBody, voteTurns, type MotionRecord } from '../domain/motion'
+import { MOTION_KIND_LIST, PROFILES, analyzeMotion, fullBodyInFrame, motionInputOf, turnsFromBody, voteTurns, type MotionKind, type MotionRecord } from '../domain/motion'
 import { quarterTurnsOf, screenRollDeg } from '../domain/tilt'
 import type { DeviceTilt } from '../domain/types'
 import { APP_VERSION, newId } from '../domain/session'
@@ -12,7 +12,7 @@ import { beep, speak, useDeviceTilt, vibrate } from '../pose/device'
 import { FILE_MAX_MS, detectRecorded, detectVideoFile, recordFrames, type DetectedClip, type Progress } from '../pose/motionVideo'
 import { keepMotionVideo } from '../state/motionMedia'
 import { data } from '../data/repo'
-import { Button, Notice, Screen, cx } from '../components/ui'
+import { Button, Notice, Screen, Segmented, cx } from '../components/ui'
 
 type Phase = 'guide' | 'camera' | 'countdown' | 'recording' | 'analyzing' | 'failed'
 type CamState = 'starting' | 'live' | 'denied' | 'unavailable' | 'insecure' | 'error'
@@ -32,7 +32,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export function MotionCapture() {
   const navigate = useNavigate()
-  const kind = 'squat' as const
+  const [params] = useSearchParams()
+  const initial = params.get('kind')
+  const [kind, setKind] = useState<MotionKind>(MOTION_KIND_LIST.includes(initial as MotionKind) ? (initial as MotionKind) : 'squat')
+  const profile = PROFILES[kind]
   const [phase, setPhase] = useState<Phase>('guide')
   const [keepVideo, setKeepVideo] = useState(false)
   const [cam, setCam] = useState<CamState>('starting')
@@ -158,8 +161,9 @@ export function MotionCapture() {
   const turns = bodyTurns.current ?? sensor?.turns ?? 0
   const residual = sensor && sensor.turns === turns ? sensor.residualDeg : null
   const level = residual === null ? null : Math.abs(residual) <= 2
-  // 回したあとの映像が横長なら、縦に持つと人を大きく写せる
-  const landscapeOut = vdims ? (Math.abs(turns) % 2 === 1 ? vdims.w < vdims.h : vdims.w > vdims.h) : false
+  // 回したあとの映像の向きが、種目のおすすめ（スクワットは縦、エルゴと自転車は横）と違えば知らせる
+  const landscapeOut = vdims ? (Math.abs(turns) % 2 === 1 ? vdims.w < vdims.h : vdims.w > vdims.h) : null
+  const turnHint = landscapeOut === null ? null : profile.orientation === 'portrait' && landscapeOut ? 'スマホを縦向きにすると、体を大きく写せます' : profile.orientation === 'landscape' && !landscapeOut ? 'スマホを横向きにすると、広く写せます' : null
 
   const finishWith = async (clip: DetectedClip, source: MotionRecord['source'], rollDeg: number | undefined) => {
     const base: Omit<MotionRecord, 'analysis'> = {
@@ -181,9 +185,9 @@ export function MotionCapture() {
       videoSaved: false,
       frames: clip.frames,
     }
-    const analysis = analyzeMotion(motionInputOf(base))
-    if (!analysis.reps.length) {
-      setFailure(analysis.warnings.length ? analysis.warnings : ['しゃがむ動きを見つけられませんでした。'])
+    const analysis = analyzeMotion(motionInputOf(base), kind)
+    if (!analysis.cycles.length) {
+      setFailure(analysis.warnings.length ? analysis.warnings : ['動きの区切りを見つけられませんでした。'])
       setPhase('failed')
       return
     }
@@ -215,7 +219,7 @@ export function MotionCapture() {
     if (needsPermission) request()
     stopRef.current = false
     setPhase('countdown')
-    speak(`${COUNTDOWN_SEC}秒後に撮影を始めます。横向きに立ってください`)
+    speak(`${COUNTDOWN_SEC}秒後に撮影を始めます。${kind === 'squat' ? '横向きに立ってください' : '準備してください'}`)
     for (let n = COUNTDOWN_SEC; n > 0; n--) {
       if (stopRef.current) return setPhase('camera')
       setCount(n)
@@ -278,7 +282,7 @@ export function MotionCapture() {
     }
   }
 
-  const label = MOTION_KINDS[kind].label
+  const label = profile.label
 
   if (phase === 'guide' || phase === 'failed' || phase === 'analyzing') {
     return (
@@ -317,15 +321,22 @@ export function MotionCapture() {
                 </Notice>
               </div>
             )}
-            <p className="mt-2 text-[15px] text-ink-2">
-              横から{label}の動きを撮って、1 回ごとに、しゃがむ深さ・膝と股関節の曲がり・上体とすねの前傾・しゃがむ時間と立ち上がる時間を測ります。撮った動画と 3D の体を並べて、スロー再生やコマ送りで見られます。
+            <div className="mt-2">
+              <Segmented legend="種目" value={kind} onChange={setKind} columns={3} options={MOTION_KIND_LIST.map((k) => ({ value: k, label: k === 'erg' ? 'エルゴ' : k === 'bike' ? '自転車' : PROFILES[k].label }))} />
+            </div>
+            <p className="text-[15px] text-ink-2">
+              横から{label}の動きを撮って、1 {profile.unitLabel}ごとに、{profile.metrics
+                .slice(0, 5)
+                .map((m) => m.label)
+                .join('・')}
+              などを測ります。撮った動画と 3D の体を並べて、スロー再生やコマ送りで見られます。
             </p>
             <h2 className="mt-6 font-bold">撮る前に</h2>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[15px]">
-              <li>スマホを縦向きにして、腰の高さに置きます。体の真横から 2.5〜3 m 離れます（しゃがんだときも、頭から足まで入る距離）。</li>
-              <li>体の線が分かる服にします。腕は前に伸ばすか、胸の前で組みます（体の横に下ろすと、股関節が隠れます）。バーベルを担ぐときは、そのままで大丈夫です。</li>
-              <li>ラックの中で行うときは、柱や器具が脚や腰にかからない位置から、体の真横で撮ります。後ろの鏡に映った姿が大きく写らない向きがおすすめです。</li>
-              <li>合図のあと、横向きのまま、いつもの速さで 3〜5 回しゃがんで立ちます。終わったら「撮り終える」を押します（最長 {RECORD_MS / 1000} 秒）。</li>
+              {profile.guide.map((g) => (
+                <li key={g}>{g}</li>
+              ))}
+              <li>撮影は最長 {RECORD_MS / 1000} 秒です。</li>
             </ol>
             <label className="mt-5 flex min-h-11 items-start gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3 text-[15px]">
               <input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-[var(--color-ink)]" checked={keepVideo} onChange={(e) => setKeepVideo(e.target.checked)} />
@@ -390,13 +401,13 @@ export function MotionCapture() {
                 傾き {Math.abs(residual).toFixed(1)}°{level ? '' : '（まっすぐに）'}
               </span>
             )}
-            {landscapeOut && <span className="rounded-full bg-black/60 px-3 py-1">スマホを縦向きにすると、体を大きく写せます</span>}
+            {turnHint && <span className="rounded-full bg-black/60 px-3 py-1">{turnHint}</span>}
           </div>
         )}
         {phase === 'countdown' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 text-center" role="status" aria-live="assertive">
             <span className="text-[96px] leading-none font-bold num">{count}</span>
-            <p className="mt-3 px-6 text-[17px]">カメラに対して横向きに立ってください</p>
+            <p className="mt-3 px-6 text-[17px]">{kind === 'squat' ? 'カメラに対して横向きに立ってください' : '動き始める準備をしてください'}</p>
           </div>
         )}
         {phase === 'recording' && (
@@ -415,7 +426,7 @@ export function MotionCapture() {
               撮影を始める
             </Button>
             <p className="text-center text-sm text-paper/80">
-              押すと {COUNTDOWN_SEC} 秒後に撮り始めます。3〜5 回しゃがんだら「撮り終える」を押してください。
+              押すと {COUNTDOWN_SEC} 秒後に撮り始めます。終わったら「撮り終える」を押してください。
             </p>
           </>
         ) : (

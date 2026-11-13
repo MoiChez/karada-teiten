@@ -23,6 +23,7 @@ import { Status } from './screens/Status'
 import { CheckInScreen } from './screens/CheckIn'
 import { MotionCapture } from './screens/MotionCapture'
 import { MotionList, MotionResult } from './screens/MotionResult'
+import { MotionCompare } from './screens/MotionCompare'
 
 // 3D は重いので必要になった時に読み込む
 const View3D = lazy(() => import('./screens/View3D'))
@@ -84,6 +85,7 @@ export function App() {
             <Route path="/history" element={<WithNav><History /></WithNav>} />
             <Route path="/motion" element={<WithNav><MotionList /></WithNav>} />
             <Route path="/motion/capture" element={<MotionCapture />} />
+            <Route path="/motion/compare" element={<MotionCompare />} />
             <Route path="/motion/:id" element={<WithNav><MotionResult /></WithNav>} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/status" element={<Status />} />

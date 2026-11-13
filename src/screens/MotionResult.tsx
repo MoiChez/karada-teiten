@@ -1,53 +1,46 @@
-// 動きの一覧と結果。撮った動画と 3D の体を並べ、同じ時刻で再生する。下に角度のグラフ（今の時刻に縦線）を置く
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react'
+// 動きの一覧と結果。撮った動画と 3D の体を並べ、同じ時刻で再生する。下に角度のグラフ、1 回ごとの値、平均、書き出し
+import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
-import { ChevronRight, Pause, Play, StepBack, StepForward, Trash2, Video } from 'lucide-react'
+import { ChevronRight, Columns2, Download, Trash2, Video } from 'lucide-react'
 import {
-  MOTION_KINDS,
-  MOTION_METRICS,
-  MOTION_METRIC_KEYS,
-  SERIES,
-  SERIES_KEYS,
+  MOTION_KIND_LIST,
+  MUSCLE_LABELS,
+  PROFILES,
   compareMotion,
-  findReps,
-  motionInputOf,
   motionMetric,
-  prepareMotion,
+  prepareRecord,
+  type MetricDef,
   type MotionMetric,
-  type MotionMetricKey,
   type MotionRecord,
-  type SeriesKey,
 } from '../domain/motion'
 import { motionPoses } from '../domain/motionPose'
+import { motionCyclesCsv, motionFramesCsv, motionJson } from '../domain/motionExport'
 import type { UserProfile } from '../domain/types'
 import { fmtDate, fmtNum } from '../domain/format'
 import { data } from '../data/repo'
 import { useMotions, useProfile } from '../data/hooks'
 import { forgetMotionVideo, memoryMotionVideo, type MotionVideoData } from '../state/motionMedia'
 import { useToast } from '../state/stores'
-import { indexAt, useClock, useClockValue, type Clock } from '../components/motionClock'
-import { FrameVideo } from '../components/FrameVideo'
-import { AngleChart } from '../components/AngleChart'
-import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
+import { useClock } from '../components/motionClock'
+import { MotionPlayer } from '../components/MotionPlayer'
+import { download } from '../components/download'
+import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle } from '../components/ui'
 
-// 3D（three.js）は重いので、結果を開いたときに読み込む
-const MotionBody3D = lazy(() => import('../three/MotionBody3D'))
+export function fmtMotionValue(def: Pick<MetricDef, 'unit' | 'digits'>, v: number | null | undefined, withUnit = true) {
+  if (v === null || v === undefined) return '—'
+  const n = fmtNum(v, def.digits)
+  if (!withUnit) return n
+  return def.unit === '%' || def.unit === '°' ? `${n}${def.unit}` : `${n} ${def.unit}`
+}
 
-function fmtMetric(key: MotionMetricKey, m: MotionMetric | undefined) {
+export function fmtMotionMetric(def: MetricDef, m: MotionMetric | undefined) {
   if (!m || m.status !== 'ok' || m.value === null) return '測定不可'
-  const { unit, digits } = MOTION_METRICS[key]
-  return `${fmtNum(m.value, digits)}${unit === '秒' ? ' 秒' : unit}`
+  return fmtMotionValue(def, m.value)
 }
 
-/** 表の数字（単位は見出しに出す） */
-function fmtValue(key: MotionMetricKey, v: number) {
-  return fmtNum(v, MOTION_METRICS[key].digits)
-}
-
-function diffText(key: MotionMetricKey, d: number) {
-  const { unit, digits } = MOTION_METRICS[key]
-  const u = unit === '%' ? ' ポイント' : unit === '秒' ? ' 秒' : unit
-  return `${d > 0 ? '+' : d < 0 ? '−' : '±'}${fmtNum(Math.abs(d), digits)}${u}`
+export function motionDiffText(def: MetricDef, d: number) {
+  const u = def.unit === '%' ? ' ポイント' : def.unit === '°' ? '°' : ` ${def.unit}`
+  return `${d > 0 ? '+' : d < 0 ? '−' : '±'}${fmtNum(Math.abs(d), def.digits)}${u}`
 }
 
 // ---------- 一覧 ----------
@@ -55,42 +48,46 @@ function diffText(key: MotionMetricKey, d: number) {
 export function MotionList() {
   const motions = useMotions()
   if (motions === undefined) return <Screen title="動きを撮る" back="/">{null}</Screen>
+  const buttons = (
+    <div className="grid gap-2">
+      {MOTION_KIND_LIST.map((k) => (
+        <ButtonLink key={k} to={`/motion/capture?kind=${k}`} variant={k === 'squat' ? 'primary' : 'secondary'} size="lg" block icon={<Video aria-hidden className="size-5" />}>
+          {PROFILES[k].label}を撮る
+        </ButtonLink>
+      ))}
+    </div>
+  )
   return (
     <Screen title="動きを撮る" back="/">
       {!motions.length ? (
-        <EmptyState
-          title="横からスクワットを撮って、関節の角度の動きを記録します"
-          action={
-            <ButtonLink to="/motion/capture" variant="primary" size="lg" block icon={<Video aria-hidden className="size-5" />}>
-              スクワットを撮る
-            </ButtonLink>
-          }
-        >
-          撮った動画と 3D の体を並べて、スロー再生やコマ送りで見られます。しゃがむ深さや膝・股関節の曲がりを、1 回ごとに測ります。
+        <EmptyState title="横から動きを撮って、関節の角度の動きを記録します" action={buttons}>
+          撮った動画と 3D の体を並べて、スロー再生やコマ送りで見られます。スクワット・ローイングエルゴ・固定式の自転車で、1 回ごとに角度や時間を測ります。
         </EmptyState>
       ) : (
         <>
-          <ButtonLink to="/motion/capture" variant="primary" size="lg" block className="mt-2" icon={<Video aria-hidden className="size-5" />}>
-            スクワットを撮る
-          </ButtonLink>
+          <div className="mt-2">{buttons}</div>
           <SectionTitle>記録</SectionTitle>
           <ul className="divide-y divide-line rounded-[var(--radius-panel)] bg-surface shadow-lift">
-            {motions.map((m) => (
-              <li key={m.id}>
-                <Link to={`/motion/${m.id}`} className="flex min-h-14 items-center gap-3 px-4 py-3 hover:bg-sunken">
-                  <Video aria-hidden className="size-5 shrink-0 text-measure" />
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium num">
-                      {fmtDate(m.createdAt, true)}・{MOTION_KINDS[m.kind].label}
-                    </p>
-                    <p className="text-sm text-ink-3 num">
-                      {m.analysis.reps.length} 回・深さ {fmtMetric('depth', motionMetric(m.analysis, 'depth'))}・膝 {fmtMetric('knee', motionMetric(m.analysis, 'knee'))}
-                    </p>
-                  </div>
-                  <ChevronRight aria-hidden className="size-5 text-ink-3" />
-                </Link>
-              </li>
-            ))}
+            {motions.map((m) => {
+              const p = PROFILES[m.kind]
+              return (
+                <li key={m.id}>
+                  <Link to={`/motion/${m.id}`} className="flex min-h-14 items-center gap-3 px-4 py-3 hover:bg-sunken">
+                    <Video aria-hidden className="size-5 shrink-0 text-measure" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium num">
+                        {fmtDate(m.createdAt, true)}・{p.label}
+                      </p>
+                      <p className="text-sm text-ink-3 num">
+                        {m.analysis.cycles.length} {p.unitLabel}
+                        {p.metrics.slice(0, 2).map((d) => `・${d.short} ${fmtMotionMetric(d, motionMetric(m.analysis, d.key))}`)}
+                      </p>
+                    </div>
+                    <ChevronRight aria-hidden className="size-5 text-ink-3" />
+                  </Link>
+                </li>
+              )
+            })}
           </ul>
         </>
       )}
@@ -100,10 +97,8 @@ export function MotionList() {
 
 // ---------- 結果 ----------
 
-export function MotionResult() {
-  const { id } = useParams()
-  const motions = useMotions()
-  const profile = useProfile()
+/** 記録の動画（このページで撮ったばかりならメモリから、残していれば端末から）。なければ null */
+export function useMotionVideo(id: string | undefined): MotionVideoData | null | undefined {
   const [video, setVideo] = useState<MotionVideoData | null | undefined>(undefined)
   useEffect(() => {
     let alive = true
@@ -121,6 +116,14 @@ export function MotionResult() {
       alive = false
     }
   }, [id])
+  return video
+}
+
+export function MotionResult() {
+  const { id } = useParams()
+  const motions = useMotions()
+  const profile = useProfile()
+  const video = useMotionVideo(id)
   if (motions === undefined || profile === undefined || video === undefined) return <Screen title="動きの記録" back="/motion">{null}</Screen>
   const idx = motions.findIndex((m) => m.id === id)
   if (idx < 0) return <Navigate to="/motion" replace />
@@ -129,16 +132,22 @@ export function MotionResult() {
   return <MotionResultBody key={rec.id} rec={rec} prev={prev} video={video} sex={profile?.sex} />
 }
 
+function fileStem(rec: MotionRecord) {
+  const d = new Date(rec.createdAt)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `karada-${rec.kind}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
+}
+
 function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?: MotionRecord; video: MotionVideoData | null; sex?: UserProfile['sex'] }) {
   const navigate = useNavigate()
   const toast = useToast((t) => t.show)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const prep = useMemo(() => prepareMotion(motionInputOf(rec)), [rec])
-  const reps = useMemo(() => (prep ? findReps(prep).reps : []), [prep])
-  const poses = useMemo(() => (prep ? motionPoses(prep) : []), [prep])
+  const [muscles, setMuscles] = useState(false)
+  const profile = PROFILES[rec.kind]
+  const built = useMemo(() => prepareRecord(rec), [rec])
+  const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
   const changes = useMemo(() => (prev ? compareMotion(prev.analysis, rec.analysis) : []), [prev, rec])
   const a = rec.analysis
-  const label = MOTION_KINDS[rec.kind].label
 
   const del = async () => {
     await data.deleteMotion(rec.id)
@@ -149,7 +158,7 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
 
   return (
     <Screen
-      title={label}
+      title={profile.label}
       back="/motion"
       action={
         <IconButton label="この記録を削除" onClick={() => setConfirmDelete(true)}>
@@ -159,9 +168,12 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-ink-3 num">{fmtDate(rec.createdAt, true)}</span>
-        <Badge tone="measure">{a.reps.length} 回</Badge>
+        <Badge tone="measure">
+          {a.cycles.length} {profile.unitLabel}
+        </Badge>
         <Badge>{rec.source === 'camera' ? 'アプリで撮影' : '選んだ動画'}</Badge>
         <Badge>{rec.videoSaved ? '動画を保存' : '動画は未保存'}</Badge>
+        {rec.edits?.length ? <Badge tone="level">点を直した記録</Badge> : null}
       </div>
 
       {a.warnings.length > 0 && (
@@ -176,35 +188,50 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
         </div>
       )}
 
-      {prep && poses.length > 1 ? (
-        <Player rec={rec} prep={prep} reps={reps} poses={poses} video={video} sex={sex} />
+      {built && poses.length > 1 ? (
+        <PlayerWithClock rec={rec} built={built} poses={poses} video={video} sex={sex} muscles={muscles} />
       ) : (
         <div className="mt-3">
           <Notice tone="info">再生に使える体の点がありません。</Notice>
         </div>
       )}
+      <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
+        <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={muscles} onChange={(e) => setMuscles(e.target.checked)} />
+        3D の体に、{profile.label}で一般に主に使われる筋肉の場所を色で示す
+      </label>
+      {muscles && (
+        <p className="text-sm text-ink-3">
+          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません（筋肉の力は、外から加わる力を測らないと求められません）。
+        </p>
+      )}
+      <p className="mt-2 text-sm text-ink-3">
+        3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。
+        {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。'}
+        {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。'}
+        グラフの帯は 1 {profile.unitLabel}ごとの区間です。
+      </p>
 
-      <SectionTitle sub="横から見た見かけの角度です。正常範囲とは比べていません。自分の過去の記録と比べるための値です。">1 回ごとの値</SectionTitle>
+      <SectionTitle sub="横から見た見かけの角度・位置です。正常範囲とは比べていません。自分の過去の記録と比べるための値です。">1 {profile.unitLabel}ごとの値</SectionTitle>
       <div className="overflow-x-auto rounded-[var(--radius-panel)] bg-surface shadow-lift">
-        <table className="w-full min-w-[520px] text-right text-[15px] num">
+        <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + profile.metrics.length * 64}px` }}>
           <thead className="text-sm text-ink-3">
             <tr className="border-b border-line">
-              <th className="px-3 py-2 text-left font-medium">回</th>
-              {MOTION_METRIC_KEYS.map((k) => (
-                <th key={k} className="px-2 py-2 font-medium">
-                  {k === 'descent' ? 'しゃがむ' : k === 'ascent' ? '立つ' : SERIES[k as SeriesKey].short}
-                  <span className="block text-xs font-normal">{MOTION_METRICS[k].unit}</span>
+              <th className="px-3 py-2 text-left font-medium">{profile.unitLabel}</th>
+              {profile.metrics.map((d) => (
+                <th key={d.key} className="px-2 py-2 font-medium">
+                  {d.short}
+                  <span className="block text-xs font-normal">{d.unit}</span>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {a.reps.map((r, i) => (
+            {a.cycles.map((c, i) => (
               <tr key={i} className="border-b border-line last:border-0">
                 <td className="px-3 py-2 text-left">{i + 1}</td>
-                {MOTION_METRIC_KEYS.map((k) => (
-                  <td key={k} className="px-2 py-2">
-                    {fmtValue(k, r.values[k])}
+                {profile.metrics.map((d) => (
+                  <td key={d.key} className="px-2 py-2">
+                    {fmtMotionValue(d, c.values[d.key], false)}
                   </td>
                 ))}
               </tr>
@@ -213,42 +240,64 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
         </table>
       </div>
 
-      <SectionTitle sub={prev ? `前回（${fmtDate(prev.createdAt)}）との差。回ごとの揺れから見て、差が測定のばらつきを超えるかを示します。` : '2 回目の記録から、前回との差を表示します。'}>
+      <SectionTitle sub={prev ? `前回（${fmtDate(prev.createdAt)}）との差。${profile.unitLabel}ごとの揺れから見て、差が測定のばらつきを超えるかを示します。` : '2 回目の記録から、前回との差を表示します。'}>
         平均
       </SectionTitle>
+      {prev && (
+        <ButtonLink to={`/motion/compare?a=${prev.id}&b=${rec.id}`} variant="secondary" block className="mb-3" icon={<Columns2 aria-hidden className="size-5" />}>
+          前回と並べて比べる
+        </ButtonLink>
+      )}
       <ul className="space-y-3">
-        {MOTION_METRIC_KEYS.map((key) => {
-          const m = motionMetric(a, key)
-          const doc = MOTION_METRICS[key]
-          const ch = changes.find((c) => c.key === key)
-          const pm = prev ? motionMetric(prev.analysis, key) : undefined
+        {profile.metrics.map((def) => {
+          const m = motionMetric(a, def.key)
+          const ch = changes.find((c) => c.key === def.key)
+          const pm = prev ? motionMetric(prev.analysis, def.key) : undefined
           return (
-            <li key={key} className="rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
+            <li key={def.key} className="rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
               <div className="flex items-baseline justify-between gap-3">
-                <h3 className="font-bold">{doc.label}</h3>
-                <span className="text-[22px] font-bold num">{fmtMetric(key, m)}</span>
+                <h3 className="font-bold">{def.label}</h3>
+                <span className="shrink-0 text-[22px] font-bold num">{fmtMotionMetric(def, m)}</span>
               </div>
               {m?.status === 'ok' && m.sd !== null && (
                 <p className="mt-0.5 text-right text-sm text-ink-3 num">
-                  回ごとの揺れ ±{fmtNum(m.sd, doc.digits + (doc.unit === '秒' ? 0 : 1))}
-                  {doc.unit === '秒' ? ' 秒' : doc.unit}・{m.reps} 回
+                  {profile.unitLabel}ごとの揺れ ±{fmtMotionValue({ unit: def.unit, digits: def.digits + 1 }, m.sd)}・{m.reps} {profile.unitLabel}
                 </p>
               )}
               {prev && pm && (
                 <p className="mt-2 text-[15px] text-ink-2 num">
-                  前回 {fmtMetric(key, pm)}
+                  前回 {fmtMotionMetric(def, pm)}
                   {ch && (
                     <>
-                      {' '}→ 差 {diffText(key, ch.diff)} <Badge tone={ch.noticeable ? 'attention' : 'neutral'}>{ch.noticeable ? '差が見られる' : 'ばらつきの範囲内'}</Badge>
+                      {' '}→ 差 {motionDiffText(def, ch.diff)} <Badge tone={ch.noticeable ? 'attention' : 'neutral'}>{ch.noticeable ? '差が見られる' : 'ばらつきの範囲内'}</Badge>
                     </>
                   )}
                 </p>
               )}
-              <Details summary="この値について">{doc.doc}</Details>
+              <Details summary="この値について">{def.doc}</Details>
             </li>
           )
         })}
       </ul>
+
+      <SectionTitle sub="この端末の中でファイルを作ります。どこにも送りません。">書き出す</SectionTitle>
+      <div className="grid gap-2">
+        <Button
+          variant="secondary"
+          block
+          icon={<Download aria-hidden className="size-5" />}
+          disabled={!built}
+          onClick={() => built && download(`${fileStem(rec)}-frames.csv`, new Blob([motionFramesCsv(rec, built.prep, built.cycles)], { type: 'text/csv' }))}
+        >
+          コマごとの値（CSV）
+        </Button>
+        <Button variant="secondary" block icon={<Download aria-hidden className="size-5" />} onClick={() => download(`${fileStem(rec)}-cycles.csv`, new Blob([motionCyclesCsv(rec)], { type: 'text/csv' }))}>
+          1 {profile.unitLabel}ごとの値（CSV）
+        </Button>
+        <Button variant="secondary" block icon={<Download aria-hidden className="size-5" />} onClick={() => download(`${fileStem(rec)}.json`, new Blob([motionJson(rec)], { type: 'application/json' }))}>
+          記録そのもの（JSON。動画は含めない）
+        </Button>
+      </div>
 
       <div className="mt-6">
         <Details summary="撮影の情報">
@@ -264,6 +313,7 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
               映像 {rec.video.width}×{rec.video.height}
               {rec.video.quarterTurns ? `（${rec.video.quarterTurns * 90}° 回して使用）` : ''}・{rec.modelVersion}
             </li>
+            {rec.edits?.length ? <li>手で直した点 {rec.edits.length} か所（推定した点は書き換えずに残しています）</li> : null}
           </ul>
         </Details>
       </div>
@@ -292,178 +342,24 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
   )
 }
 
-// ---------- 再生 ----------
-
-function Player({
+function PlayerWithClock({
   rec,
-  prep,
-  reps,
+  built,
   poses,
   video,
   sex,
+  muscles,
 }: {
   rec: MotionRecord
-  prep: NonNullable<ReturnType<typeof prepareMotion>>
-  reps: ReturnType<typeof findReps>['reps']
+  built: NonNullable<ReturnType<typeof prepareRecord>>
   poses: ReturnType<typeof motionPoses>
   video: MotionVideoData | null
   sex?: UserProfile['sex']
+  muscles: boolean
 }) {
-  const ts = useMemo(() => prep.frames.map((f) => f.t), [prep])
+  const ts = built.prep.frames.map((f) => f.t)
   const start = video?.images.length ? Math.min(video.images[0].t, ts[0]) : ts[0]
   const end = video?.images.length ? Math.max(video.images[video.images.length - 1].t, ts[ts.length - 1]) : ts[ts.length - 1]
   const clock = useClock(start, end)
-  const [series, setSeries] = useState<SeriesKey>('knee')
-  const [overlayOn, setOverlayOn] = useState(true)
-  const overlay = useMemo(() => prep.frames.map((f) => ({ t: f.t, lm: f.lm })), [prep])
-  const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-
-  // 最初は 1 回目のいちばん深いところで止めておく（動きの形がひと目で分かるように）
-  useEffect(() => {
-    if (reps[0]) clock.set(reps[0].bottom)
-    if (!reduced) {
-      clock.setSpeed(0.5)
-      clock.play()
-    }
-  }, [clock, reps, reduced])
-
-  // 縦長の動画は 3D と左右に並べ、横長の動画は上下に並べる（枠は動画の縦横比に合わせる）
-  const sideBySide = !!video && video.height >= video.width
-  return (
-    <div className="mt-4">
-      <div className={cx('grid gap-2', sideBySide ? 'grid-cols-2' : 'grid-cols-1')}>
-        {video && (
-          <div className="overflow-hidden rounded-[var(--radius-panel)] bg-ink" style={{ aspectRatio: `${video.width} / ${video.height}` }}>
-            <FrameVideo images={video.images} width={video.width} height={video.height} clock={clock} overlay={overlayOn ? overlay : undefined} nearSide={prep.nearSide} />
-          </div>
-        )}
-        {/* 並べるときは、動画の枠と同じ高さにする（3D の側は高さを持たない） */}
-        <div className={cx('relative', sideBySide ? 'min-h-[240px]' : 'h-[min(46dvh,380px)]')}>
-          <div className="absolute inset-0">
-            <Suspense fallback={<div className="size-full rounded-[var(--radius-panel)] bg-surface" />}>
-              <MotionBody3D poses={poses} clock={clock} sex={sex} facing={rec.analysis.facing} className="h-full" />
-            </Suspense>
-          </div>
-        </div>
-      </div>
-      {!video && <p className="mt-2 text-sm text-ink-3">動画は保存していないため、3D の体だけを再生します。</p>}
-
-      <Transport clock={clock} ts={ts} />
-
-      {reps.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label="いちばん深いところへ移る">
-          {reps.map((r, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => {
-                clock.pause()
-                clock.set(r.bottom)
-              }}
-              className="min-h-10 rounded-full border border-line bg-surface px-3 text-sm hover:bg-sunken"
-            >
-              {i + 1} 回目の底
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-3">
-        <Segmented legend="グラフの値" value={series} onChange={setSeries} columns={5} options={SERIES_KEYS.map((k) => ({ value: k, label: SERIES[k].short }))} />
-      </div>
-      <AngleChart ts={ts} values={prep.series[series]} unit={SERIES[series].unit} digits={SERIES[series].digits} reps={reps} clock={clock} label={SERIES[series].label} />
-      <NowTable clock={clock} ts={ts} prep={prep} />
-      {video && (
-        <label className="mt-2 flex min-h-11 items-center gap-2 text-[15px]">
-          <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={overlayOn} onChange={(e) => setOverlayOn(e.target.checked)} />
-          動画に骨格の線を重ねる（明るい線がカメラ側の半身）
-        </label>
-      )}
-      <p className="mt-2 text-sm text-ink-3">
-        3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。帯は 1 回ごとの区間、黄色の点はいちばん深いところです。
-      </p>
-    </div>
-  )
+  return <MotionPlayer rec={rec} prep={built.prep} cycles={built.cycles} poses={poses} video={video} sex={sex} clock={clock} muscles={muscles} />
 }
-
-function Transport({ clock, ts }: { clock: Clock; ts: number[] }) {
-  const playing = useClockValue(clock, (c) => c.isPlaying())
-  const t = useClockValue(clock, (c) => c.get())
-  const speed = useClockValue(clock, (c) => c.getSpeed())
-  const step = (dir: 1 | -1) => {
-    clock.pause()
-    const k = indexAt(ts, clock.get())
-    const next = ts[Math.min(ts.length - 1, Math.max(0, k + dir))]
-    // 同じコマにいるときは次のコマへ
-    clock.set(next === clock.get() && ts[k + dir] !== undefined ? ts[k + dir] : next)
-  }
-  return (
-    <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-2 shadow-lift">
-      <div className="flex items-center gap-1.5">
-        <IconButton label="1 コマ戻る" onClick={() => step(-1)}>
-          <StepBack aria-hidden className="size-5" />
-        </IconButton>
-        <Button
-          variant="secondary"
-          aria-label={playing ? '一時停止' : '再生'}
-          onClick={() => (playing ? clock.pause() : clock.play())}
-          icon={playing ? <Pause aria-hidden className="size-5" /> : <Play aria-hidden className="size-5" />}
-        >
-          {playing ? '止める' : '再生'}
-        </Button>
-        <IconButton label="1 コマ進む" onClick={() => step(1)}>
-          <StepForward aria-hidden className="size-5" />
-        </IconButton>
-        <span className="ml-auto text-sm text-ink-2 num">
-          {fmtNum((t - clock.start) / 1000, 1)} / {fmtNum((clock.end - clock.start) / 1000, 1)} 秒
-        </span>
-      </div>
-      <input
-        type="range"
-        min={clock.start}
-        max={clock.end}
-        step={1}
-        value={t}
-        aria-label="再生する位置"
-        onChange={(e) => {
-          clock.pause()
-          clock.set(Number(e.target.value))
-        }}
-        className="mt-1 w-full accent-[var(--color-measure)]"
-      />
-      <div className="mt-1 grid grid-cols-4 gap-1" role="group" aria-label="再生の速さ">
-        {[1, 0.5, 0.25, 0.1].map((v) => (
-          <button
-            key={v}
-            type="button"
-            aria-pressed={speed === v}
-            onClick={() => clock.setSpeed(v)}
-            className={cx('min-h-10 rounded-[var(--radius-control)] border text-sm num', speed === v ? 'border-ink bg-ink text-paper' : 'border-line bg-surface hover:bg-sunken')}
-          >
-            {v === 1 ? '等速' : `${v}倍`}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** 今の時刻の 5 つの値 */
-function NowTable({ clock, ts, prep }: { clock: Clock; ts: number[]; prep: NonNullable<ReturnType<typeof prepareMotion>> }) {
-  const t = useClockValue(clock, (c) => c.get())
-  const k = indexAt(ts, t)
-  return (
-    <dl className="mt-2 grid grid-cols-5 gap-1 rounded-[var(--radius-panel)] bg-surface p-2 text-center shadow-lift">
-      {SERIES_KEYS.map((key) => (
-        <div key={key}>
-          <dt className="text-xs text-ink-3">{SERIES[key].short}</dt>
-          <dd className="text-[15px] font-bold num">
-            {fmtNum(prep.series[key][k], SERIES[key].digits)}
-            {SERIES[key].unit}
-          </dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-

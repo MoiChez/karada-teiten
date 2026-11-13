@@ -1,4 +1,4 @@
-// 角度（または深さ）の時間変化のグラフ。今の時刻に縦線を引き、触ったところへ移る。1 回ごとの区間に帯を付ける
+// 角度（または位置）の時間変化のグラフ。今の時刻に縦線を引き、触ったところへ移る。1 回ごとの区間に帯を付ける
 import { useMemo, useRef } from 'react'
 import { fmtNum } from '../domain/format'
 import { indexAt, useClockValue, type Clock } from './motionClock'
@@ -19,7 +19,7 @@ export function AngleChart({
   values,
   unit,
   digits,
-  reps,
+  cycles,
   clock,
   label,
 }: {
@@ -27,7 +27,8 @@ export function AngleChart({
   values: number[]
   unit: string
   digits: number
-  reps: { start: number; bottom: number; end: number }[]
+  /** 1 回ごとの区間と、点を打つ時刻 */
+  cycles: { start: number; end: number; mark?: number }[]
   clock: Clock
   label: string
 }) {
@@ -80,7 +81,7 @@ export function AngleChart({
           if (e.buttons) seekAt(e.clientX)
         }}
       >
-        {reps.map((r, i) => (
+        {cycles.map((r, i) => (
           <rect key={i} x={geo.x(r.start)} y={PAD.t} width={Math.max(1, geo.x(r.end) - geo.x(r.start))} height={H - PAD.t - PAD.b} fill="var(--color-measure-soft)" />
         ))}
         {geo.ticks.map((v) => (
@@ -97,9 +98,10 @@ export function AngleChart({
           </text>
         ))}
         <path d={geo.path} fill="none" stroke="var(--color-measure)" strokeWidth="1.8" strokeLinejoin="round" />
-        {reps.map((r, i) => {
-          const k = indexAt(ts, r.bottom)
-          return <circle key={i} cx={geo.x(r.bottom)} cy={geo.y(values[k])} r="3.5" fill="var(--color-level)" stroke="var(--color-ink)" strokeWidth="1" />
+        {cycles.map((r, i) => {
+          if (r.mark === undefined) return null
+          const k = indexAt(ts, r.mark)
+          return <circle key={i} cx={geo.x(r.mark)} cy={geo.y(values[k])} r="3.5" fill="var(--color-level)" stroke="var(--color-ink)" strokeWidth="1" />
         })}
         <Cursor clock={clock} x={geo.x} />
       </svg>
