@@ -163,7 +163,7 @@ export function Home() {
       <div className="mt-2 flex items-center justify-between gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3">
         <div className="flex items-center gap-2">
           <Video aria-hidden className="size-5 text-measure" />
-          <span className="text-[15px]">動きを撮る（スクワット）</span>
+          <span className="text-[15px]">動きを撮る（スクワット・エルゴ・自転車）</span>
         </div>
         <ButtonLink to="/motion" size="sm" variant="secondary">
           開く

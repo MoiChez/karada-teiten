@@ -23,15 +23,21 @@
 ```ts
 {
   id, createdAt, appVersion, modelVersion
-  kind: 'squat'
+  kind: 'squat' | 'erg' | 'bike'
   source: 'camera' | 'upload'
   video: { width, height, durationMs, frameCount, fps, quarterTurns, rollDeg? }
   videoSaved: boolean                    // 動画（motionVideos）を残したか
   frames: { t: number; p: number[]; w?: number[] }[]
   // p: 33 点 × [x, y, 見えている度合い]（画像に対する比、小数 4 桁）
   // w: 33 点 × [x, y, z]（推定モデルの 3D。メートル、腰の中心が原点、小数 3 桁）
-  analysis: MotionAnalysis               // algorithmVersion が古ければ frames から計算し直す
+  edits?: { t: number; i: number; x: number; y: number }[]
+  // 手で直した点（版 0.12 から）。t: コマの時刻、i: 点の番号、x・y: 画像に対する比。frames は書き換えない
+  analysis: MotionAnalysis               // algorithmVersion が古ければ frames と edits から計算し直す（版 0.12 は 3）
 }
+// MotionAnalysis: { algorithmVersion, kind, facing, nearSide, validFrames,
+//   cycles: { start, end, events: { key, t }[], values: Record<string, number | null> }[],
+//   metrics: { key, value, sd, uncertainty, reps, status }[], warnings: string[],
+//   constraints?: { key: 'footplate' | 'rail' | 'knee'; applied: boolean }[] }  // 使った器具の前提
 ```
 
 JSON の書き出しに `motions` として含める（動画は含めない。読み込んだ記録は「動画を残していない」扱い）。動画は記録を削除すると一緒に消え、「すべてのデータを削除」でも消える。

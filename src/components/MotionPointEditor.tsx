@@ -80,11 +80,12 @@ export function MotionPointEditor({ prep, clock, spread, onEdit }: { prep: Prepa
       {Object.entries(points).map(([name, i]) => {
         const p = pos(i)
         const edited = frame.edited.includes(i)
+        const placed = !edited && frame.constrained.includes(i)
         return (
           <button
             key={name}
             type="button"
-            aria-label={`${NAMES[name]}の点。ドラッグか矢印キーで動かせます${edited ? '（直した点）' : ''}`}
+            aria-label={`${NAMES[name]}の点。ドラッグか矢印キーで動かせます${edited ? '（直した点）' : placed ? '（器具の前提で置いた点）' : ''}`}
             className="absolute flex size-10 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full focus-visible:outline-2 active:cursor-grabbing"
             style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
             onPointerDown={(e) => {
@@ -110,7 +111,7 @@ export function MotionPointEditor({ prep, clock, spread, onEdit }: { prep: Prepa
               commit(i, Math.min(1, Math.max(0, frame.lm[i].x + d[0])), Math.min(1, Math.max(0, frame.lm[i].y + d[1])))
             }}
           >
-            <span className={cx('block size-3.5 rounded-full border-2', edited ? 'border-ink bg-level' : 'border-level bg-ink')} />
+            <span className={cx('block size-3.5 rounded-full border-2', edited ? 'border-ink bg-level' : placed ? 'border-level border-dashed bg-transparent' : 'border-level bg-ink')} />
           </button>
         )
       })}

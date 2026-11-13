@@ -17,12 +17,13 @@ import {
   type MotionVideoInfo,
 } from './motionCore'
 import { PROFILES, type MotionCycle, type PreparedMotion, type SeriesCtx } from './motionSports'
+import type { ConstraintNote } from './motionConstraints'
 
 export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 2
+export const MOTION_ALGORITHM_VERSION = 3
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },
@@ -61,7 +62,7 @@ export function motionInputOf(r: Pick<MotionRecord, 'frames' | 'video'> & { edit
 /** 検出できたコマから、なめらかにした点とコマごとの値を求める */
 export function prepareMotion(input: MotionInput, kind: MotionKind = 'squat'): PreparedMotion | null {
   const profile = PROFILES[kind]
-  const base = prepareBase(input, profile.valid, profile.smoothing)
+  const base = prepareBase(input, profile.valid, profile.smoothing, profile.constrain)
   if (!base) return null
   const s = sidePoints(base.nearSide)
   // 立っているときの股関節〜足首の高さ（高い方から 1 割のところ）
@@ -111,6 +112,8 @@ export interface MotionAnalysis {
   cycles: MotionCycleSummary[]
   metrics: MotionMetric[]
   warnings: string[]
+  /** 使った器具の前提（エルゴ・自転車） */
+  constraints?: ConstraintNote[]
 }
 
 /**
@@ -190,6 +193,7 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
     cycles: cycles.map((c, k) => ({ start: c.start, end: c.end, events: c.events.map((e) => ({ key: e.key, t: e.t })), values: values[k] })),
     metrics,
     warnings,
+    constraints: prep.constraints.length ? prep.constraints : undefined,
   }
 }
 

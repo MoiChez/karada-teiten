@@ -5,6 +5,7 @@ import { MIN_VISIBILITY } from './constants'
 import { RAD2DEG } from './geometry'
 import { sidePoints } from './landmarks'
 import { pointState } from './metrics'
+import type { ConstraintNote, FrameSize } from './motionConstraints'
 
 export type MotionKind = 'squat' | 'erg' | 'bike'
 
@@ -82,6 +83,8 @@ export interface PreparedFrame {
   world?: Landmark[]
   /** 手で直した点 */
   edited: number[]
+  /** 器具の前提（フットプレート・レール・骨の長さ）で置き直した点 */
+  constrained: number[]
 }
 
 export interface PreparedBase {
@@ -93,7 +96,12 @@ export interface PreparedBase {
   leg: number
   /** 区間の切れ目（このコマの前で途切れている） */
   breaks: Set<number>
+  /** 使った器具の前提 */
+  constraints: ConstraintNote[]
 }
+
+/** 器具の前提で点を置き直す処理（種目ごと）。frames の px と lm を書き換える */
+export type Constrain = (frames: PreparedFrame[], s: ReturnType<typeof sidePoints>, size: FrameSize, leg: number) => ConstraintNote[]
 
 /** これより長い途切れ（ミリ秒）があれば、前後を別の区間にする */
 const MAX_GAP_MS = 250
@@ -212,7 +220,12 @@ function applyEdits(frames: MotionInput['frames'], edits: MotionEdit[] | undefin
  * sigma は、なめらかにする強さ（コマ数）。速い動きほど弱くする（強すぎると、角度の山と谷が削られる）。
  * 手で直した点は、なめらか化の後もその位置のままにする（前後のコマに引き戻されないように）
  */
-export function prepareBase(input: MotionInput, valid: (p: Point[], s: ReturnType<typeof sidePoints>) => boolean, sigma = 1.5): PreparedBase | null {
+export function prepareBase(
+  input: MotionInput,
+  valid: (p: Point[], s: ReturnType<typeof sidePoints>) => boolean,
+  sigma = 1.5,
+  constrain?: Constrain,
+): PreparedBase | null {
   const { width, height } = input
   const usable = applyEdits(
     input.frames.filter((fr) => fr.lm.length >= 33),
@@ -262,13 +275,19 @@ export function prepareBase(input: MotionInput, valid: (p: Point[], s: ReturnTyp
     px: uprightPx(lms[k], width, height, input.rollDeg),
     world: worlds?.[k],
     edited: fr.edited,
+    constrained: [],
   }))
-  const leg = quantile(
-    frames.map((fr) => Math.hypot(fr.px[s.hip].x - fr.px[s.knee].x, fr.px[s.hip].y - fr.px[s.knee].y) + Math.hypot(fr.px[s.knee].x - fr.px[s.ankle].x, fr.px[s.knee].y - fr.px[s.ankle].y)),
-    0.5,
-  )
+  const legOf = () =>
+    quantile(
+      frames.map((fr) => Math.hypot(fr.px[s.hip].x - fr.px[s.knee].x, fr.px[s.hip].y - fr.px[s.knee].y) + Math.hypot(fr.px[s.knee].x - fr.px[s.ankle].x, fr.px[s.knee].y - fr.px[s.ankle].y)),
+      0.5,
+    )
+  const rawLeg = legOf()
+  if (!(rawLeg > 0)) return null
+  const constraints = constrain ? constrain(frames, s, { width, height, rollDeg: input.rollDeg }, rawLeg) : []
+  const leg = constraints.length ? legOf() : rawLeg
   if (!(leg > 0)) return null
-  return { frames, f, nearSide, leg, breaks }
+  return { frames, f, nearSide, leg, breaks, constraints }
 }
 
 /** 区間の番号（途切れで分ける） */

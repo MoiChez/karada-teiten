@@ -3,7 +3,8 @@
 import type { Point } from './types'
 import { angleFromVerticalDeg, interiorAngleDeg } from './geometry'
 import { sidePoints } from './landmarks'
-import { findPeaks, segmentsOf, type MotionKind, type PreparedBase } from './motionCore'
+import { constrainBike, constrainErg } from './motionConstraints'
+import { findPeaks, segmentsOf, type Constrain, type MotionKind, type PreparedBase } from './motionCore'
 
 type Side = ReturnType<typeof sidePoints>
 
@@ -90,6 +91,8 @@ export interface SportProfile {
   valid: (p: Point[], s: Side) => boolean
   /** 点をなめらかにする強さ（ガウスの σ、コマ数）。速い動きほど弱くする */
   smoothing: number
+  /** 器具の前提で点を置き直す（エルゴ・自転車） */
+  constrain?: Constrain
   findCycles: (prep: PreparedMotion) => { cycles: MotionCycle[]; warnings: string[] }
   /** 真横の確認に使うコマ（立っているコマなど） */
   sideCheckFrames: (prep: PreparedMotion) => number[]
@@ -558,6 +561,7 @@ const ERG: SportProfile = {
   valid: (p, s) => p[s.shoulder].y < p[s.hip].y,
   // キャッチで動きが折り返すので、スクワットより弱くする
   smoothing: 1.0,
+  constrain: constrainErg,
   findCycles: ergCycles,
   sideCheckFrames: hipWidthFrames,
   keyPoints: (s) => [
@@ -686,6 +690,7 @@ const BIKE: SportProfile = {
   valid: (p, s) => p[s.shoulder].y < p[s.hip].y && p[s.knee].y < p[s.ankle].y,
   // 90 回転/分では 1 回転が 20 コマしかない。σ = 1.5 だと膝の角度の山と谷が 1 割ほど削られるので、弱くする
   smoothing: 0.7,
+  constrain: (frames, s, size) => constrainBike(frames, s, size),
   findCycles: bikeCycles,
   sideCheckFrames: hipWidthFrames,
   keyPoints: (s) => [

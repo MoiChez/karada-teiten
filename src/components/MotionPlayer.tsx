@@ -1,5 +1,5 @@
 // 動きの再生: 撮った動画と 3D の体を並べ、1 つの時計で動かす。下に角度のグラフと、今の時刻の値
-import { Suspense, lazy, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Pause, Play, StepBack, StepForward } from 'lucide-react'
 import { PROFILES, eventOf, type MotionCycle, type MotionRecord, type PreparedMotion } from '../domain/motion'
 import type { Pose3D } from '../domain/fusion3d'
@@ -25,6 +25,7 @@ export function MotionPlayer({
   clock,
   muscles,
   videoOverlay,
+  autoplay = true,
 }: {
   rec: MotionRecord
   prep: PreparedMotion
@@ -37,6 +38,8 @@ export function MotionPlayer({
   muscles: boolean
   /** 動画の上に重ねるもの（点の補正など）。なければ骨格の線を重ねる */
   videoOverlay?: ReactNode
+  /** 開いたときに再生を始めるか（点を直している間は、計算し直すたびに動き出さないように止めておく） */
+  autoplay?: boolean
 }) {
   const profile = PROFILES[rec.kind]
   const ts = useMemo(() => prep.frames.map((f) => f.t), [prep])
@@ -47,15 +50,18 @@ export function MotionPlayer({
   const def = profile.series.find((d) => d.key === series) ?? profile.series[0]
   const equipment = useMemo(() => motionEquipment(rec.kind, poses, prep.nearSide), [rec.kind, poses, prep.nearSide])
 
-  // 最初は 1 回目の出来事（底・キャッチなど）から、ゆっくり再生する
+  // 最初だけ、1 回目の出来事（底・キャッチなど）から、ゆっくり再生する
+  const started = useRef(false)
   useEffect(() => {
+    if (started.current) return
+    started.current = true
     const first = cycles[0] && eventOf(cycles[0], profile.mainEvent)
     if (first) clock.set(first.t)
-    if (!reduced) {
+    if (!reduced && autoplay) {
       clock.setSpeed(0.5)
       clock.play()
     }
-  }, [clock, cycles, profile.mainEvent, reduced])
+  }, [clock, cycles, profile.mainEvent, reduced, autoplay])
 
   // 縦長の動画は 3D と左右に並べ、横長の動画は上下に並べる（枠は動画の縦横比に合わせる）
   const sideBySide = !!video && video.height >= video.width

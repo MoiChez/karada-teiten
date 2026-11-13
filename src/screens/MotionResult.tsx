@@ -1,15 +1,18 @@
 // 動きの一覧と結果。撮った動画と 3D の体を並べ、同じ時刻で再生する。下に角度のグラフ、1 回ごとの値、平均、書き出し
 import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
-import { ChevronRight, Columns2, Download, Trash2, Video } from 'lucide-react'
+import { ChevronRight, Columns2, Download, PencilRuler, Redo2, Trash2, Undo2, Video } from 'lucide-react'
 import {
   MOTION_KIND_LIST,
   MUSCLE_LABELS,
   PROFILES,
+  analyzeMotion,
   compareMotion,
+  motionInputOf,
   motionMetric,
   prepareRecord,
   type MetricDef,
+  type MotionEdit,
   type MotionMetric,
   type MotionRecord,
 } from '../domain/motion'
@@ -23,8 +26,10 @@ import { forgetMotionVideo, memoryMotionVideo, type MotionVideoData } from '../s
 import { useToast } from '../state/stores'
 import { useClock } from '../components/motionClock'
 import { MotionPlayer } from '../components/MotionPlayer'
+import { MotionPointEditor } from '../components/MotionPointEditor'
+import type { ConstraintNote } from '../domain/motionConstraints'
 import { download } from '../components/download'
-import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle } from '../components/ui'
+import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle, Segmented } from '../components/ui'
 
 export function fmtMotionValue(def: Pick<MetricDef, 'unit' | 'digits'>, v: number | null | undefined, withUnit = true) {
   if (v === null || v === undefined) return '—'
@@ -132,22 +137,72 @@ export function MotionResult() {
   return <MotionResultBody key={rec.id} rec={rec} prev={prev} video={video} sex={profile?.sex} />
 }
 
+/** 器具の前提の説明（使ったとき、使わなかったとき） */
+const CONSTRAINT_TEXT: Record<ConstraintNote['key'], [string, string]> = {
+  footplate: ['足首はフットプレートに留まっている前提で、中央の位置に置きました。', '足首の点が大きく動いていたため、フットプレートに留める前提は使っていません（スマホを固定して撮ると使えます）。'],
+  rail: ['腰はレールに沿って一直線に動く前提で、線の上に乗せました。', '腰の点が一直線に動いていなかったため、レールの前提は使っていません。'],
+  knee: [
+    '膝は、脚がよく伸びたコマで測った太もも・すねの長さから置き直しました（体が縮んだところで、推定した膝の点がずれやすいため）。',
+    '膝の位置は置き直していません。',
+  ],
+}
+
 function fileStem(rec: MotionRecord) {
   const d = new Date(rec.createdAt)
   const p = (n: number) => String(n).padStart(2, '0')
   return `karada-${rec.kind}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
 }
 
-function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?: MotionRecord; video: MotionVideoData | null; sex?: UserProfile['sex'] }) {
+/** 同じ点・同じコマの前の補正を、新しい補正で置き換える */
+function mergeEdits(base: MotionEdit[], added: MotionEdit[]): MotionEdit[] {
+  const key = (e: MotionEdit) => `${e.t}:${e.i}`
+  const fresh = new Set(added.map(key))
+  return [...base.filter((e) => !fresh.has(key(e))), ...added]
+}
+
+function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord; prev?: MotionRecord; video: MotionVideoData | null; sex?: UserProfile['sex'] }) {
   const navigate = useNavigate()
   const toast = useToast((t) => t.show)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [muscles, setMuscles] = useState(false)
-  const profile = PROFILES[rec.kind]
+  // 点の補正（この画面を開いている間の取り消し・やり直しを持つ。直すたびに保存する）
+  const [work, setWork] = useState(() => ({ edits: saved.edits ?? [], analysis: saved.analysis }))
+  const [past, setPast] = useState<MotionEdit[][]>([])
+  const [future, setFuture] = useState<MotionEdit[][]>([])
+  const [editing, setEditing] = useState(false)
+  const [spread, setSpread] = useState<0 | 5>(5)
+  const edits = work.edits
+  const profile = PROFILES[saved.kind]
+  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, analysis: work.analysis }), [saved, work])
   const built = useMemo(() => prepareRecord(rec), [rec])
   const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
   const changes = useMemo(() => (prev ? compareMotion(prev.analysis, rec.analysis) : []), [prev, rec])
   const a = rec.analysis
+  // 直した点で計算し直して、すぐ保存する
+  const change = (next: MotionEdit[]) => {
+    const analysis = analyzeMotion(motionInputOf({ ...saved, edits: next }), saved.kind)
+    setWork({ edits: next, analysis })
+    void data.saveMotionEdits(saved.id, next, analysis)
+  }
+  const apply = (next: MotionEdit[]) => {
+    setPast((p) => [...p, edits])
+    setFuture([])
+    change(next)
+  }
+  const undo = () => {
+    const last = past[past.length - 1]
+    if (!last) return
+    setPast(past.slice(0, -1))
+    setFuture((f) => [edits, ...f])
+    change(last)
+  }
+  const redo = () => {
+    const next = future[0]
+    if (!next) return
+    setFuture(future.slice(1))
+    setPast((p) => [...p, edits])
+    change(next)
+  }
 
   const del = async () => {
     await data.deleteMotion(rec.id)
@@ -189,12 +244,54 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
       )}
 
       {built && poses.length > 1 ? (
-        <PlayerWithClock rec={rec} built={built} poses={poses} video={video} sex={sex} muscles={muscles} />
+        <PlayerWithClock rec={rec} built={built} poses={poses} video={video} sex={sex} muscles={muscles} editor={editing && video ? { spread, onEdit: (added) => apply(mergeEdits(edits, added)) } : undefined} />
       ) : (
         <div className="mt-3">
           <Notice tone="info">再生に使える体の点がありません。</Notice>
         </div>
       )}
+      <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant={editing ? 'primary' : 'secondary'} disabled={!video} aria-pressed={editing} onClick={() => setEditing(!editing)} icon={<PencilRuler aria-hidden className="size-5" />}>
+            {editing ? '点を直すのを終える' : '点を直す'}
+          </Button>
+          <IconButton label="取り消す" disabled={!past.length} onClick={undo}>
+            <Undo2 aria-hidden className="size-5" />
+          </IconButton>
+          <IconButton label="やり直す" disabled={!future.length} onClick={redo}>
+            <Redo2 aria-hidden className="size-5" />
+          </IconButton>
+          {edits.length > 0 && (
+            <Button variant="quiet" onClick={() => apply([])}>
+              直した点をすべて戻す
+            </Button>
+          )}
+        </div>
+        {!video ? (
+          <p className="mt-2 text-sm text-ink-3">点を直すには動画が必要です。動画を残した記録か、撮った直後の画面で使えます。</p>
+        ) : editing ? (
+          <>
+            <p className="mt-2 text-sm text-ink-2">
+              動画を止めて、ずれている点をドラッグします（矢印キーでも動かせます）。コマ送りで前後のコマも直せます。直すたびに角度と区切りを計算し直して保存します。推定した点は書き換えずに残します。
+            </p>
+            <div className="mt-2">
+              <Segmented
+                legend="直す範囲"
+                value={spread}
+                onChange={setSpread}
+                columns={2}
+                options={[
+                  { value: 5, label: '前後 5 コマにもなじませる' },
+                  { value: 0, label: 'このコマだけ' },
+                ]}
+              />
+            </div>
+            <p className="text-sm text-ink-3">直せるのは画面の上の位置だけで、奥行きは直せません。黄色い点が直した点です（{edits.length} か所）。</p>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-ink-3">直さなくても使えます。点が体から大きくずれているコマがあるときだけ、直してください。</p>
+        )}
+      </div>
       <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
         <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={muscles} onChange={(e) => setMuscles(e.target.checked)} />
         3D の体に、{profile.label}で一般に主に使われる筋肉の場所を色で示す
@@ -206,8 +303,8 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
       )}
       <p className="mt-2 text-sm text-ink-3">
         3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。
-        {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。'}
-        {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。'}
+        {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。膝・足首・腰は、器具の前提で置き直した位置です（「撮影の情報」に説明があります）。'}
+        {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。膝は、太もも・すねの長さから置き直した位置です。'}
         グラフの帯は 1 {profile.unitLabel}ごとの区間です。
       </p>
 
@@ -314,6 +411,9 @@ function MotionResultBody({ rec, prev, video, sex }: { rec: MotionRecord; prev?:
               {rec.video.quarterTurns ? `（${rec.video.quarterTurns * 90}° 回して使用）` : ''}・{rec.modelVersion}
             </li>
             {rec.edits?.length ? <li>手で直した点 {rec.edits.length} か所（推定した点は書き換えずに残しています）</li> : null}
+            {a.constraints?.map((c) => (
+              <li key={c.key}>{CONSTRAINT_TEXT[c.key][c.applied ? 0 : 1]}</li>
+            ))}
           </ul>
         </Details>
       </div>
@@ -349,6 +449,7 @@ function PlayerWithClock({
   video,
   sex,
   muscles,
+  editor,
 }: {
   rec: MotionRecord
   built: NonNullable<ReturnType<typeof prepareRecord>>
@@ -356,10 +457,24 @@ function PlayerWithClock({
   video: MotionVideoData | null
   sex?: UserProfile['sex']
   muscles: boolean
+  editor?: { spread: number; onEdit: (edits: MotionEdit[]) => void }
 }) {
   const ts = built.prep.frames.map((f) => f.t)
   const start = video?.images.length ? Math.min(video.images[0].t, ts[0]) : ts[0]
   const end = video?.images.length ? Math.max(video.images[video.images.length - 1].t, ts[ts.length - 1]) : ts[ts.length - 1]
   const clock = useClock(start, end)
-  return <MotionPlayer rec={rec} prep={built.prep} cycles={built.cycles} poses={poses} video={video} sex={sex} clock={clock} muscles={muscles} />
+  return (
+    <MotionPlayer
+      rec={rec}
+      prep={built.prep}
+      cycles={built.cycles}
+      poses={poses}
+      video={video}
+      sex={sex}
+      clock={clock}
+      muscles={muscles}
+      autoplay={!editor}
+      videoOverlay={editor ? <MotionPointEditor prep={built.prep} clock={clock} spread={editor.spread} onEdit={editor.onEdit} /> : undefined}
+    />
+  )
 }
