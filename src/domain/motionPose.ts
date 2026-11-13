@@ -3,7 +3,7 @@
 // 左右の位置だけは、推定モデルの 3D の点（奥行きの推定）から取る。なければ標準の体の幅を当てる（表示だけに使う）。
 // 自転車では、奥側の脚をカメラ側の脚の半回転ずれた動きにする（左右の脚は逆の位置にあるため）
 import type { Pose3D, Vec3 } from './fusion3d'
-import type { Landmark, Point } from './types'
+import type { Point } from './types'
 import type { MotionCycle, PreparedMotion } from './motionSports'
 import { sidePoints } from './landmarks'
 import { PAIRS, bodySideIndex } from './motionFrontal'
@@ -31,18 +31,6 @@ const nearOf = (i: number, near: 'left' | 'right') => {
   if (i === 0) return 0
   const left = i % 2 === 1 ? i : i - 1
   return near === 'left' ? left : left + 1
-}
-
-/** 推定モデルの 3D の点から、体の左右の向きの単位ベクトル（水平面の中）を求める */
-function lateralAxis(worlds: Landmark[][]) {
-  let x = 0
-  let z = 0
-  for (const w of worlds) {
-    x += w[23].x - w[24].x + (w[11].x - w[12].x)
-    z += w[23].z - w[24].z + (w[11].z - w[12].z)
-  }
-  const n = Math.hypot(x, z)
-  return n > 0 ? { x: x / n, z: z / n } : null
 }
 
 /** 奥側の脚の点（自転車で半回転ずらす点） */
@@ -82,15 +70,6 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
     fr.map((_, k) => at(k, s.ankle).x),
     0.5,
   )
-  const worlds = fr.every((f) => f.world) ? fr.map((f) => f.world!) : null
-  const axis = worlds ? lateralAxis(worlds) : null
-  const Hw = worlds
-    ? quantile(
-        worlds.map((w) => w[s.heel].y - w[s.ear].y),
-        0.9,
-      )
-    : 0
-  const useWorld = !!axis && Hw > 0
   // 自転車: 1 回転の長さの中央値の半分
   const periods = cycles.map((c) => c.end - c.start).sort((a, b) => a - b)
   const half = prep.kind === 'bike' && periods.length ? periods[Math.floor(periods.length / 2)] / 2 : 0
@@ -123,21 +102,8 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
     }
     return best
   }
-  // 左右の位置: 横からの映像では推定モデルの奥行きがコマごとに大きく揺れ、体がくねくね動いて見えるため、
-  // 点ごとに全コマの中央値を使って動かさない（横から見た前後・上下の動きだけを反映する）
-  const lateral = new Map<number, number>()
-  if (useWorld) {
-    for (const i of USED) {
-      const vals = fr.map((f) => {
-        const w = f.world!
-        const hx = (w[23].x + w[24].x) / 2
-        const hz = (w[23].z + w[24].z) / 2
-        return ((w[i].x - hx) * axis!.x + (w[i].z - hz) * axis!.z) / Hw
-      })
-      lateral.set(i, quantile(vals, 0.5))
-    }
-  }
-
+  // 左右の位置は、標準の体の幅で固定する。横からの映像では推定モデルの奥行き（左右）の推定が当てにならず、
+  // コマごとに使うと体がくねくね揺れ、中央値でも脚が大きく開いて見えたため（座った姿勢では体の高さの換算も外れる）
   return fr.map((f, k) => {
     const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
     const j = half && far.size ? opposite(k) : k
@@ -149,7 +115,7 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
         p = { x: h.x + r.x, y: h.y + r.y }
       }
       const base = i === 0 ? 0 : i % 2 === 1 ? i : i - 1
-      const x = lateral.get(i) ?? (i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06))
+      const x = i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06)
       points[i] = { x, y: (floorY - p.y) / H, z: (prep.f * (p.x - ankleX)) / H }
     }
     return { t: f.t, pose: { points, depthSource: 'side_photo' as const } }
@@ -157,8 +123,11 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
 }
 
 /**
- * 正面・後ろから撮ったスクワットの 3D。左右と上下は画面の上の点（両側。体の左右に付け替える）から、
- * 前後だけは推定モデルの 3D の点（奥行きの推定）から取る。体の高さ（耳〜かかと）を 1、かかとを床、足首の中点を左右の 0 とする
+ * 正面・後ろから撮ったスクワットの 3D。左右と上下は画面の上の点（両側。体の左右に付け替える）から取る。
+ * 前後は、正面からは画面に出ないので、骨の長さから組み立てる: 立っているときの太もも・すね・胴などの画面の上の長さを
+ * その骨の長さとし、しゃがんで見かけが短くなった分だけ前後に傾いているとする（膝は足首より前、腰は膝より後ろ、
+ * 肩は腰より前、つま先はかかとより前）。推定モデルの奥行きは、正面・後ろからの映像では当てにならないため使わない。
+ * 体の高さ（耳〜かかと）を 1、かかとを床、足首の中点を左右と前後の 0 とする
  */
 function frontalPoses(prep: PreparedMotion): { t: number; pose: Pose3D }[] {
   const fr = prep.frames
@@ -176,30 +145,74 @@ function frontalPoses(prep: PreparedMotion): { t: number; pose: Pose3D }[] {
     fr.map((f) => (f.px[27].x + f.px[28].x) / 2),
     0.5,
   )
-  const worlds = fr.every((f) => f.world && f.world.length >= 33) ? fr.map((f) => f.world!) : null
-  const Hw = worlds
-    ? quantile(
-        worlds.map((w) => Math.max(w[29].y, w[30].y) - (w[7].y + w[8].y) / 2),
-        0.9,
-      )
-    : 0
-  // 推定モデルの奥行きは、カメラに近いほど小さい。正面から撮ったときは、体の前がカメラ側
-  const fwd = prep.view?.view === 'front' ? -1 : 1
-  return fr.map((f) => {
-    const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
-    const w = f.world
-    const hipZ = w ? (w[23].z + w[24].z) / 2 : 0
-    const place = (dst: number, src: number) => {
-      const p = f.px[src]
-      const z = w && Hw > 0 ? (fwd * (w[src].z - hipZ)) / Hw : 0
-      points[dst] = { x: (L * (p.x - cx)) / H, y: (floorY - p.y) / H, z }
-    }
-    place(0, 0)
+  const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
+  const midP = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
+  // コマごとに、体の左・右の点を付け替えた並び
+  const sided = fr.map((f) => {
+    const out: Point[] = [...f.px]
     for (const pair of Object.values(PAIRS)) {
       const [li, ri] = bodySideIndex(f.px, pair, L)
-      place(pair[0], li)
-      place(pair[1], ri)
+      out[pair[0]] = f.px[li]
+      out[pair[1]] = f.px[ri]
     }
+    return out
+  })
+  /** 骨の長さ（画面の上の長さの、長い方から 1 割のところ。立っているときの長さ） */
+  const bone = (a: number, b: number, c?: number, e?: number) =>
+    quantile(
+      sided.map((p) => (c !== undefined && e !== undefined ? (d(p[a], p[b]) + d(p[c], p[e])) / 2 : d(p[a], p[b]))),
+      0.9,
+    )
+  const shank = bone(25, 27, 26, 28)
+  const thigh = bone(23, 25, 24, 26)
+  const trunkLen = quantile(
+    sided.map((p) => d(midP(p[11], p[12]), midP(p[23], p[24]))),
+    0.9,
+  )
+  const upperArm = bone(11, 13, 12, 14)
+  const foreArm = bone(13, 15, 14, 16)
+  const footLen = 0.13 * H
+  /** 骨の長さ len のうち、画面の上で見えている長さ seen を除いた、前後の長さ */
+  const depth = (len: number, seen: number) => Math.sqrt(Math.max(0, len * len - seen * seen))
+
+  return fr.map((f, k) => {
+    const p = sided[k]
+    const z: number[] = Array(33).fill(0)
+    for (const [hip, knee, ankle, heel, toe] of [
+      [23, 25, 27, 29, 31],
+      [24, 26, 28, 30, 32],
+    ] as const) {
+      z[ankle] = 0
+      z[knee] = depth(shank, d(p[knee], p[ankle]))
+      z[hip] = z[knee] - depth(thigh, d(p[hip], p[knee]))
+      z[heel] = -0.03 * H
+      z[toe] = depth(footLen, d(p[toe], p[ankle]))
+    }
+    const zHip = (z[23] + z[24]) / 2
+    const zSh = zHip + depth(trunkLen, d(midP(p[11], p[12]), midP(p[23], p[24])))
+    z[11] = zSh
+    z[12] = zSh
+    // 腕: ひじは肩より少し後ろ、手首はひじの前後（見かけの長さから。向きは推定モデルの奥行きの符号を使う）
+    const w = f.world
+    const sign = (a: number, b: number) => {
+      if (!w) return 1
+      // 推定モデルの奥行きは、カメラに近いほど小さい。正面から撮ったときは体の前がカメラ側
+      const fwd = prep.view?.view === 'front' ? -1 : 1
+      return fwd * (w[a].z - w[b].z) >= 0 ? 1 : -1
+    }
+    for (const [sh, el, wr] of [
+      [11, 13, 15],
+      [12, 14, 16],
+    ] as const) {
+      z[el] = z[sh] + sign(el, sh) * depth(upperArm, d(p[el], p[sh]))
+      z[wr] = z[el] + sign(wr, el) * depth(foreArm, d(p[wr], p[el]))
+    }
+    // 頭: 耳は肩の上、鼻は耳より前
+    z[7] = zSh + 0.01 * H
+    z[8] = zSh + 0.01 * H
+    z[0] = zSh + 0.07 * H
+    const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
+    for (const i of [0, ...Object.values(PAIRS).flat()]) points[i] = { x: (L * (p[i].x - cx)) / H, y: (floorY - p[i].y) / H, z: z[i] / H }
     return { t: f.t, pose: { points, depthSource: 'side_photo' as const } }
   })
 }
