@@ -60,12 +60,24 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
         )
       : prep.leg / LEG_TO_HEIGHT
   if (!(H > 0)) return []
+  // 動かない点（自転車は腰、ほかは足首）を中央の位置に留めるように、コマごとに全体をずらす。
+  // 手持ちでカメラが動いても、3D の体と器具の形がずれないように（その点の本当の小さな動きは消える）
+  const anchor = prep.kind === 'bike' ? s.hip : s.ankle
+  const ax = quantile(
+    fr.map((f) => f.px[anchor].x),
+    0.5,
+  )
+  const ay = quantile(
+    fr.map((f) => f.px[anchor].y),
+    0.5,
+  )
+  const at = (k: number, i: number): Point => ({ x: fr[k].px[i].x - (fr[k].px[anchor].x - ax), y: fr[k].px[i].y - (fr[k].px[anchor].y - ay) })
   const floorY = quantile(
-    fr.map((f) => Math.max(f.px[s.heel].y, f.px[s.foot].y)),
+    fr.map((_, k) => Math.max(at(k, s.heel).y, at(k, s.foot).y)),
     0.9,
   )
   const ankleX = quantile(
-    fr.map((f) => f.px[s.ankle].x),
+    fr.map((_, k) => at(k, s.ankle).x),
     0.5,
   )
   const worlds = fr.every((f) => f.world) ? fr.map((f) => f.world!) : null
@@ -91,17 +103,18 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
   }
   const last = ts[ts.length - 1]
 
-  return fr.map((f) => {
+  return fr.map((f, k) => {
     const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
     const w = f.world
     const hipMid = w ? { x: (w[23].x + w[24].x) / 2, z: (w[23].z + w[24].z) / 2 } : null
     for (const i of USED) {
-      let p = f.px[nearOf(i, prep.nearSide)]
+      let p = at(k, nearOf(i, prep.nearSide))
       if (half && far.has(i)) {
         // 半回転先（終わりを過ぎるなら半回転前）のカメラ側の脚の形を、今の股関節の位置に置く
         const tt = f.t + half <= last ? f.t + half : f.t - half
         const r = nearRel(tt, nearOf(i, prep.nearSide))
-        p = { x: f.px[s.hip].x + r.x, y: f.px[s.hip].y + r.y }
+        const h = at(k, s.hip)
+        p = { x: h.x + r.x, y: h.y + r.y }
       }
       let x: number
       if (useWorld && w && hipMid) {

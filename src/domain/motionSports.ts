@@ -85,6 +85,8 @@ export interface MetricDef {
   reference?: string
   /** 条件がそろったときだけ出す値（値がなければ表に出さない） */
   optional?: boolean
+  /** 真横から撮っていなくても使える値（回数・深さ・時間）。ほかの値は、真横から撮っていないと参考にならない */
+  anyView?: boolean
 }
 
 /** 種目で一般に主に使われる筋肉（3D の体に場所を色で示すだけ。個人の測定値ではない） */
@@ -393,13 +395,14 @@ const SQUAT: SportProfile = {
   series: [DEPTH, KNEE, HIP, TRUNK, SHIN, THIGH, COM_FOOT, RATIO],
   defaultSeries: 'knee',
   metrics: [
-    { key: 'depth', label: 'いちばん深いところ', short: '深さ', unit: '%', digits: 0, doc: DEPTH.doc, floor: 2, value: cycleMax('depth') },
+    { key: 'depth', label: 'いちばん深いところ', short: '深さ', unit: '%', digits: 0, doc: DEPTH.doc, floor: 2, anyView: true, value: cycleMax('depth') },
     { key: 'knee', label: '膝の曲がり（最大）', short: '膝', unit: '°', digits: 0, doc: KNEE.doc, floor: 2, value: cycleMax('knee') },
     { key: 'hip', label: '股関節の曲がり（最大）', short: '股関節', unit: '°', digits: 0, doc: HIP.doc, floor: 2, value: cycleMax('hip') },
     { key: 'trunk', label: '上体の前傾（最大）', short: '上体', unit: '°', digits: 0, doc: TRUNK.doc, floor: 2, value: cycleMax('trunk') },
     { key: 'shin', label: 'すねの前傾（最大）', short: 'すね', unit: '°', digits: 0, doc: SHIN.doc, floor: 2, value: cycleMax('shin') },
     {
       key: 'descent',
+      anyView: true,
       label: 'しゃがむ時間',
       short: 'しゃがむ',
       unit: '秒',
@@ -410,6 +413,7 @@ const SQUAT: SportProfile = {
     },
     {
       key: 'ascent',
+      anyView: true,
       label: '立ち上がる時間',
       short: '立つ',
       unit: '秒',
@@ -602,6 +606,7 @@ const ERG: SportProfile = {
   metrics: [
     {
       key: 'rate',
+      anyView: true,
       label: 'ストロークレート',
       short: 'レート',
       unit: '回/分',
@@ -612,6 +617,7 @@ const ERG: SportProfile = {
     },
     {
       key: 'drive',
+      anyView: true,
       label: 'ドライブの時間',
       short: 'ドライブ',
       unit: '秒',
@@ -622,6 +628,7 @@ const ERG: SportProfile = {
     },
     {
       key: 'recovery',
+      anyView: true,
       label: 'リカバリーの時間',
       short: 'リカバリー',
       unit: '秒',
@@ -632,6 +639,7 @@ const ERG: SportProfile = {
     },
     {
       key: 'ratio',
+      anyView: true,
       label: 'リカバリー ÷ ドライブ',
       short: '比',
       unit: '倍',
@@ -808,6 +816,7 @@ const BIKE: SportProfile = {
   metrics: [
     {
       key: 'cadence',
+      anyView: true,
       label: 'ケイデンス',
       short: '回転数',
       unit: '回/分',

@@ -143,7 +143,7 @@ export function CrankChart({ prep, cycles }: { prep: PreparedMotion; cycles: Mot
         <path d={line} fill="none" stroke="var(--color-measure)" strokeWidth="2" />
       </svg>
       <figcaption className="mt-1 text-xs text-ink-3">
-        {def.label}（{def.unit}）を、クランクの角度 10° ごとに平均した線と、回転ごとの揺れ（± 標準偏差の帯）です。クランクの角度は、足首の点の軌跡に当てた円（半径 {fmtNum(crank.circle.r, 0)} ピクセル、円からのずれ {fmtNum(crank.roundness * 100, 0)}%）のまわりの向きで、足首はペダルの軸から少し離れているため、クランクそのものの角度とは少しずれます。
+        {def.label}（{def.unit}）を、クランクの角度 10° ごとに平均した線と、回転ごとの揺れ（± 標準偏差の帯）です。クランクの角度は、腰から見た足首の点の軌跡に当てた円（円からのずれ {fmtNum(crank.roundness * 100, 0)}%）のまわりの向きです。{crank.aspect < 0.85 && `軌跡が楕円に見えた（縦横比 ${fmtNum(crank.aspect, 2)}。斜めから撮ったため）ので、縦横をそろえてから当てています。`}足首はペダルの軸から少し離れているため、クランクそのものの角度とは少しずれます。
         {crank.reversed && '顔の向きから見ると後ろ向きに回っていたため、回る向きに角度を数えています（90° が後ろになります）。'}
       </figcaption>
     </figure>

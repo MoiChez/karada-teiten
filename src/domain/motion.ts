@@ -26,7 +26,7 @@ export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 5
+export const MOTION_ALGORITHM_VERSION = 6
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },
@@ -136,6 +136,8 @@ export interface MotionAnalysis {
   constraints?: ConstraintNote[]
   /** 重心と負担の推定に使った身長・体重・持つ重さ（スクワット。仮定の値かどうかも） */
   body?: ResolvedBody
+  /** 真横から撮れていたか（false なら、anyView でない値は参考にならない。古い記録は undefined） */
+  sideView?: boolean
 }
 
 /**
@@ -176,6 +178,7 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
   const { cycles, warnings: cycleWarnings } = profile.findCycles(prep)
 
   // 真横から撮れているか（左右の股関節の間隔 / 胴の長さ）
+  let sideView = true
   const s = sidePoints(prep.nearSide)
   const ratios = profile
     .sideCheckFrames(prep)
@@ -188,7 +191,10 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
       return torso > 0 ? hw / torso : 0
     })
   if (ratios.length >= 5 && quantile(ratios, 0.5) > SIDE_HIP_RATIO_MAX) {
-    warnings.push('体が真横を向いていないようです。角度は横から見た見かけの値なので、斜めから撮ると変わります。次は体の真横から撮ってください。')
+    sideView = false
+    warnings.push(
+      `体が真横を向いていないようです（腰の幅から見た向き）。${anyViewLabels(profile)}は使えますが、角度・位置などのほかの値は、横から見た見かけの値として求めているため、この動画では参考になりません。次は体の真横から撮ってください。`,
+    )
   }
   // カメラ側の点が隠れていないか（器具・体の陰）
   const hidden = profile
@@ -217,7 +223,13 @@ export function analyzeMotion(input: MotionInput, kind: MotionKind = 'squat'): M
     warnings,
     constraints: prep.constraints.length ? prep.constraints : undefined,
     body: prep.load ? prep.body : undefined,
+    sideView,
   }
+}
+
+/** 真横でなくても使える値の名前（「回数・深さ・しゃがむ時間…」） */
+function anyViewLabels(profile: (typeof PROFILES)[MotionKind]) {
+  return ['回数', ...profile.metrics.filter((m) => m.anyView).map((m) => m.label)].join('・')
 }
 
 export function motionMetric(a: MotionAnalysis | undefined, key: string) {

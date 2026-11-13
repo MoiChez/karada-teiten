@@ -59,11 +59,12 @@ export function MotionPlayer({
   const equipment = useMemo(() => motionEquipment(rec.kind, poses, prep.nearSide), [rec.kind, poses, prep.nearSide])
   // 重心の線（スクワット。画像に対する比）
   const com = useMemo(() => {
-    if (!prep.load) return undefined
+    // 真横から撮っていなければ、重心は出さない（横から見た位置として求めているため）
+    if (!prep.load || rec.analysis.sideView === false) return undefined
     const size = { width: rec.video.width, height: rec.video.height, rollDeg: rec.video.rollDeg }
     const sp = sidePoints(prep.nearSide)
     return prep.frames.map((fr, k) => ({ c: pxToNorm(prep.load!.com[k], size), heel: fr.lm[sp.heel], toe: fr.lm[sp.foot] }))
-  }, [prep, rec.video])
+  }, [prep, rec.video, rec.analysis.sideView])
   // バーの軌道（スクワットで持つ重さを入れたとき。手首の点。その回の始めから今のコマまで）
   const bar = useMemo(() => {
     if (!prep.bar) return undefined
@@ -79,11 +80,11 @@ export function MotionPlayer({
       : null
   // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
   const levels = useMemo(() => {
-    if (!muscles || !prep.load) return undefined
+    if (!muscles || !prep.load || rec.analysis.sideView === false) return undefined
     const values: Partial<Record<MuscleKey, number[]>> = {}
     for (const [m, j] of Object.entries(MUSCLE_JOINT) as [MuscleKey, keyof typeof prep.load.demand][]) values[m] = prep.load.demand[j]
     return { ts, values }
-  }, [muscles, prep, ts])
+  }, [muscles, prep, ts, rec.analysis.sideView])
 
   // 最初だけ、1 回目の出来事（底・キャッチなど）から、ゆっくり再生する
   const started = useRef(false)

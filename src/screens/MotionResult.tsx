@@ -32,7 +32,7 @@ import { CrankChart, SequenceChart } from '../components/MotionProfiles'
 import type { ConstraintNote } from '../domain/motionConstraints'
 import { BODY_PRIOR, type BodyParams, type ResolvedBody } from '../domain/motionLoad'
 import { download } from '../components/download'
-import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle, Segmented } from '../components/ui'
+import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
 
 export function fmtMotionValue(def: Pick<MetricDef, 'unit' | 'digits'>, v: number | null | undefined, withUnit = true) {
   if (v === null || v === undefined) return '—'
@@ -189,6 +189,8 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
   const changes = useMemo(() => (prev ? compareMotion(prev.analysis, rec.analysis) : []), [prev, rec])
   const a = rec.analysis
+  // 真横から撮っていない記録で、横から見た値（角度・位置など）か
+  const offView = (d: MetricDef) => a.sideView === false && !d.anyView
   // 直した点で計算し直して、すぐ保存する
   const change = (next: MotionEdit[]) => {
     const analysis = analyzeMotion(motionInputOf({ ...saved, edits: next, body: work.body }), saved.kind)
@@ -312,20 +314,21 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
       </div>
       <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
         <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={muscles} onChange={(e) => setMuscles(e.target.checked)} />
-        {profile.load ? '3D の体に、推定した筋肉の要求度を色の濃さで示す' : `3D の体に、${profile.label}で一般に主に使われる筋肉の場所を色で示す`}
+        {profile.load && a.sideView !== false ? '3D の体に、推定した筋肉の要求度を色の濃さで示す' : `3D の体に、${profile.label}で一般に主に使われる筋肉の場所を色で示す`}
       </label>
-      {muscles && profile.load && (
+      {muscles && profile.load && a.sideView !== false && (
         <p className="text-sm text-ink-3">
           色が濃いほど、その時刻にその筋肉に求められる力が大きいという推定です。体の部分の重さ（Winter 2009）と床からの力の仮定から求めた関節の負担と、関節の曲がりから出した目安で、筋電図などで測った値ではありません。
         </p>
       )}
-      {muscles && !profile.load && (
+      {muscles && !(profile.load && a.sideView !== false) && (
         <p className="text-sm text-ink-3">
-          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません。この種目はハンドルやペダルにかかる力が分からないため、濃さ（要求度）は付けていません。
+          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません。{profile.load ? '真横から撮っていないため、' : 'この種目はハンドルやペダルにかかる力が分からないため、'}濃さ（要求度）は付けていません。
         </p>
       )}
       <p className="mt-2 text-sm text-ink-3">
         3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。
+        {a.sideView === false && '真横から撮っていないため、3D の体の形も正しくありません。'}
         {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。膝・足首・腰は、器具の前提で置き直した位置です（「撮影の情報」に説明があります）。'}
         {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。膝は、太もも・すねの長さから置き直した位置です。'}
         グラフの帯は 1 {profile.unitLabel}ごとの区間です。
@@ -364,7 +367,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
               <tr key={i} className="border-b border-line last:border-0">
                 <td className="px-3 py-2 text-left">{i + 1}</td>
                 {shown.map((d) => (
-                  <td key={d.key} className="px-2 py-2">
+                  <td key={d.key} className={cx('px-2 py-2', offView(d) && 'text-ink-3')}>
                     {fmtMotionValue(d, c.values[d.key], false)}
                     <CycleBand def={d} c={c} />
                   </td>
@@ -374,6 +377,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
           </tbody>
         </table>
       </div>
+      {a.sideView === false && <p className="mt-1 text-sm text-ink-3">灰色の値は、真横から撮っていないため参考になりません。</p>}
 
       <SectionTitle sub={prev ? `前回（${fmtDate(prev.createdAt)}）との差。${profile.unitLabel}ごとの揺れから見て、差が測定のばらつきを超えるかを示します。` : '2 回目の記録から、前回との差を表示します。'}>
         平均
@@ -393,8 +397,13 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
             <li key={def.key} className="rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
               <div className="flex items-baseline justify-between gap-3">
                 <h3 className="font-bold">{def.label}</h3>
-                <span className="shrink-0 text-[22px] font-bold num">{fmtMotionMetric(def, m)}</span>
+                <span className={cx('shrink-0 text-[22px] font-bold num', offView(def) && 'text-ink-3')}>{fmtMotionMetric(def, m)}</span>
               </div>
+              {offView(def) && (
+                <div className="mt-1 text-right">
+                  <Badge tone="attention">真横でないため参考になりません</Badge>
+                </div>
+              )}
               {band && (
                 <p className="mt-0.5 text-right text-sm text-ink-2 num">
                   <Badge tone="level">条件付きの推定</Badge> 仮定を動かした幅 {band}
