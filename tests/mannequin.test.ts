@@ -150,47 +150,59 @@ describe('マネキンを測った姿勢に合わせる', () => {
     }
   })
 
-  it('動きの再生では、首を胴に対して 30° までしか曲げず、胴の高さの手首を胸の前に出す（肩の高さの手は動かさない）', async () => {
+  it('動きの再生で本人の骨の長さがあると、耳・ひじ・手首・膝・足首が測った点に重なる（肩の点は肩先で、引くと後ろへずれる）', async () => {
     const root = await load('male')
     const p = (x: number, y: number, z: number) => ({ x, y, z })
-    const finish = (wristY: number, wristZ: number, wristW: number): Pose3D => {
-      const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
-      const set = (l: number, r: number, y: number, z: number, w: number) => {
-        points[l] = p(w, y, z)
-        points[r] = p(-w, y, z)
+    const V = (y: number, z: number) => new THREE.Vector3(0, y, z)
+    const dir = (deg: number) => V(Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180))
+    // エルゴのフィニッシュ: 胴が 20° 後ろに傾き、首は胴に対して 20° 前へ。肩の関節は肩甲骨と一緒に 0.03 後ろへ引かれ、
+    // 推定の肩の点はそこから胴に沿って 0.03 上（肩先）。ひじは後ろ下、手首は前
+    const hip = V(0.3, 0)
+    const top = hip.clone().add(dir(-20).multiplyScalar(0.25))
+    const ear = top.clone().add(dir(0).multiplyScalar(0.13))
+    const joint = top.clone().add(dir(-110).multiplyScalar(0.03))
+    const mark = joint.clone().add(dir(-20).multiplyScalar(0.03))
+    const elbow = joint.clone().add(dir(-160).multiplyScalar(0.18))
+    const wrist = elbow.clone().add(dir(70).multiplyScalar(0.16))
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, q: THREE.Vector3, w: number) => {
+      points[l] = p(w, q.y, q.z)
+      points[r] = p(-w, q.y, q.z)
+    }
+    set(23, 24, hip, 0.06)
+    set(11, 12, mark, 0.11)
+    set(7, 8, ear, 0.06)
+    points[0] = p(0, ear.y - 0.01, ear.z + 0.09)
+    set(13, 14, elbow, 0.125)
+    set(15, 16, wrist, 0.13)
+    const knee = hip.clone().add(dir(80).multiplyScalar(0.26))
+    const ankle = knee.clone().add(dir(110).multiplyScalar(0.26))
+    set(25, 26, knee, 0.06)
+    set(27, 28, ankle, 0.06)
+    set(29, 30, ankle.clone().add(V(-0.04, -0.02)), 0.06)
+    set(31, 32, ankle.clone().add(V(0.02, 0.1)), 0.065)
+    const pose: Pose3D = {
+      points,
+      depthSource: 'side_photo',
+      trunkTop: p(0, top.y, top.z),
+      bones: { upperArm: 0.18, foreArm: 0.16, thigh: 0.26, shank: 0.26, trunk: 0.25 },
+    }
+    for (let k = 0; k < 2; k++) {
+      poseMannequin(root, pose, { anchor: 'hips', planarLegs: true })
+      root.updateMatrixWorld(true)
+      const near = (i: number, want: THREE.Vector3) => {
+        const got = pointOf(root, i)
+        return Math.hypot(got.y - want.y, got.z - want.z)
       }
-      // エルゴのフィニッシュ: 胴が 25° 後ろに傾き、首は胴に対して 60° 前に折れ、手首は胴の線の上
-      set(23, 24, 0.3, 0, 0.06)
-      set(11, 12, 0.572, -0.127, 0.11)
-      set(7, 8, 0.67, -0.058, 0.06)
-      points[0] = p(0, 0.65, 0.0)
-      set(13, 14, 0.42, -0.2, 0.125)
-      set(15, 16, wristY, wristZ, wristW)
-      set(25, 26, 0.33, 0.25, 0.06)
-      set(27, 28, 0.2, 0.48, 0.06)
-      set(29, 30, 0.18, 0.46, 0.06)
-      set(31, 32, 0.22, 0.58, 0.065)
-      return { points, depthSource: 'side_photo' }
+      expect(near(7, ear), 'ear').toBeLessThan(0.015)
+      // 肩の関節は鎖骨を回して動かす（鎖骨の付け根を中心に回るので、少しずれる）。ひじはその分ずれる
+      expect(near(13, elbow), 'elbow').toBeLessThan(0.035)
+      expect(near(15, wrist), 'wrist').toBeLessThan(0.01)
+      expect(near(25, knee), 'knee').toBeLessThan(0.01)
+      expect(near(27, ankle), 'ankle').toBeLessThan(0.01)
+      // 3D の肩の関節は、推定の肩の点（肩先）より胴に沿って下
+      expect(near(11, joint), 'shoulder joint').toBeLessThan(0.03)
     }
-    const pose = finish(0.477, -0.083, 0.13)
-    poseMannequin(root, pose, { anchor: 'hips', planarLegs: true })
-    root.updateMatrixWorld(true)
-    const hip = mid(pointOf(root, 23), pointOf(root, 24))
-    const sh = mid(pointOf(root, 11), pointOf(root, 12))
-    const ear = mid(pointOf(root, 7), pointOf(root, 8))
-    expect(angleDeg(sh.clone().sub(hip), ear.clone().sub(sh))).toBeLessThan(31)
-    for (const i of [15, 16]) {
-      const w = pointOf(root, i)
-      const u = (w.y - hip.y) / (sh.y - hip.y)
-      // 胸の前の面（胴の線から水平に 0.09）まで出ている。高さは測った位置のまま
-      expect(w.z - (hip.z + (sh.z - hip.z) * u)).toBeGreaterThan(0.08)
-      expect(Math.abs(w.y - vec(pose, i).y)).toBeLessThan(0.02)
-    }
-    // 肩の高さで胴の線より後ろにある手（背中にかつぐバー）は、測った位置のまま
-    const bar = finish(0.572, -0.17, 0.2)
-    poseMannequin(root, bar, { anchor: 'hips', planarLegs: true })
-    root.updateMatrixWorld(true)
-    for (const i of [15, 16]) expect(pointOf(root, i).distanceTo(vec(bar, i))).toBeLessThan(0.02)
   })
 
   it('動きの再生では、胴の前後の傾きの多くを骨盤で受け持ち、背骨を反らせすぎない（フィニッシュで腹が前に突き出ない）', async () => {

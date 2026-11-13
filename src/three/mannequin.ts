@@ -96,8 +96,8 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     if (!rest.has(name)) rest.set(name, b.quaternion.clone())
     b.quaternion.copy(rest.get(name)!)
   }
-  // 胴の長さの合わせ（動きの再生で使う）を戻す
-  bones.get('spine_01')?.scale.setScalar(1)
+  // 胴の長さと手足の長さの合わせ（動きの再生で使う）を戻す
+  for (const name of SCALED_BONES) bones.get(name)?.scale.setScalar(1)
   root.position.set(0, 0, 0)
   root.scale.setScalar(1)
   root.quaternion.identity()
@@ -127,23 +127,41 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     fitted.push('pelvis')
   }
 
+  // 動きの再生での、両肩の関節の中点の目標（胴の向きと長さに使う）。ふだんは両肩の点の中点。
+  // 胴の長さ（本人の値）があり耳が見えているときは、股関節の中点から胴の長さ、耳の中点から首の長さ（標準の体の比）の
+  // ところに置き、胴の上の端（trunkTop）の側に曲げる。推定の肩の点は肩先で関節より高く、そこに肩の関節を置くと
+  // 3D の頭が耳より上にずれたため。こうすると耳の点に頭が重なる
+  let tShoulder = has(11, 12) ? mid(T(11)!, T(12)!) : null
+  if (opts.anchor === 'hips' && tShoulder && has(23, 24)) {
+    const hipT = mid(T(23)!, T(24)!)
+    const top = pose.trunkTop ? v(pose.trunkTop).setX(tShoulder.x) : tShoulder.clone()
+    tShoulder = top
+    const t0 = mid(P(11), P(12)).distanceTo(mid(P(23), P(24))) / Hm
+    const n0 = has(7, 8) ? mid(P(7), P(8)).distanceTo(mid(P(11), P(12))) / Hm : 0
+    const len = pose.bones?.trunk
+    if (len && n0 > 0 && has(7, 8)) {
+      const ear = mid(T(7)!, T(8)!)
+      tShoulder = jointBetween(hipT, ear, len, (n0 * len) / t0, top) ?? top
+    }
+  }
+
   // 動きの再生では、胴の前後の傾きの多くを骨盤の傾きで受け持ち、背骨は傾きの 35% だけ曲げる（反らせるのは 5°、
   // 丸めるのは 30° まで）。骨盤を立てたまま背骨だけで傾けると、エルゴのフィニッシュで腰が大きく反って腹と胸が前へ
   // 突き出し、人の体ではありえない形になっていたため（実際は骨盤ごと後ろへ倒れる。キャッチ・自転車・スクワットの前傾も同じ）
-  if (opts.anchor === 'hips' && has(11, 12, 23, 24)) {
+  if (opts.anchor === 'hips' && tShoulder && has(23, 24)) {
     const left = P(23).sub(P(24)).normalize()
     const fwd = new THREE.Vector3().crossVectors(left, new THREE.Vector3(0, 1, 0)).normalize()
     const up = new THREE.Vector3().crossVectors(fwd, left)
     const lean = (u: THREE.Vector3) => Math.atan2(u.dot(fwd), u.dot(up))
-    let d = lean(mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!))) - lean(mid(P(11), P(12)).sub(mid(P(23), P(24))))
+    let d = lean(tShoulder.clone().sub(mid(T(23)!, T(24)!))) - lean(mid(P(11), P(12)).sub(mid(P(23), P(24))))
     d = Math.atan2(Math.sin(d), Math.cos(d))
     const bend = Math.min(SPINE_FLEX_MAX, Math.max(-SPINE_EXT_MAX, SPINE_SHARE * d))
     rotateWorld(B('pelvis'), new THREE.Quaternion().setFromAxisAngle(left, d - bend))
-    // 胴の長さを合わせる（股関節の中点〜肩の中点を、測った長さにする。標準の体と人の胴の長さの違いで、
-    // 肩や頭が動画からずれないように）。背骨の付け根から上をまとめて大きさを変えるので、腕と頭も同じ割合で変わる。
+    // 胴の長さを合わせる（股関節の中点〜両肩の関節の中点を、本人の長さにする）。背骨の付け根から上をまとめて
+    // 大きさを変えるので、腕と頭も同じ割合で変わる（腕は下で本人の長さに合わせ直す）。
     // 背骨の付け根を中心に大きさが変わり、股関節から見た胴の向きが少しずれるので、胴の向きを合わせる前に行う
     const cur = mid(P(11), P(12)).distanceTo(mid(P(23), P(24))) / Hm
-    const want = mid(T(11)!, T(12)!).distanceTo(mid(T(23)!, T(24)!))
+    const want = pose.bones?.trunk ?? tShoulder.distanceTo(mid(T(23)!, T(24)!))
     if (cur > 1e-6) {
       B('spine_01').scale.setScalar(Math.min(1.35, Math.max(0.8, want / cur)))
       root.updateMatrixWorld(true)
@@ -151,8 +169,8 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
   }
 
   // 胴: 股関節の中点→肩の中点の向きと、肩の線。背骨の 3 本に分けて少しずつ曲げる
-  if (has(11, 12, 23, 24)) {
-    const tUp = mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!))
+  if (tShoulder && has(11, 12, 23, 24)) {
+    const tUp = tShoulder.clone().sub(mid(T(23)!, T(24)!))
     const tSide = T(11)!.sub(T(12)!)
     const parts: [string, number][] = [
       ['spine_01', 1 / 3],
@@ -174,11 +192,8 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
   }
 
   // 首と頭: 肩の中点→耳の中点の向き、耳の線と鼻の向き（首と頭の付け根がずれているので数回くり返す）
-  if (has(7, 8, 11, 12)) {
-    let tNeck = mid(T(7)!, T(8)!).sub(mid(T(11)!, T(12)!))
-    // 動きの再生では、首を胴に対して 30° より大きく曲げない。ハンドルを引き切ると肩甲骨が寄って、推定の肩の点が
-    // 背骨より後ろへずれ、首が大きく前へ折れて見える（頭が胸に落ちる）ため
-    if (opts.anchor === 'hips' && has(23, 24)) tNeck = limitAngle(tNeck, mid(T(11)!, T(12)!).sub(mid(T(23)!, T(24)!)), NECK_LIMIT_DEG)
+  if (tShoulder && has(7, 8, 11, 12)) {
+    const tNeck = mid(T(7)!, T(8)!).sub(tShoulder)
     for (let k = 0; k < 3; k++) {
       rotateWorld(B('neck_01'), swing(mid(P(7), P(8)).sub(mid(P(11), P(12))), tNeck))
       if (has(0)) {
@@ -197,19 +212,48 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     root.updateMatrixWorld(true)
     root.position.add(mid(T(23)!, T(24)!).sub(mid(P(23), P(24))))
     root.updateMatrixWorld(true)
-    // 手首が胴の高さ（股関節〜肩の 85% まで）にあって、胸の前の面より後ろにあるときは、水平に前へ出して胸の前の面に置く。
-    // フィニッシュでハンドルを胸に引くと、推定の手首が胴の線（股関節の中点〜肩の中点）の上に来て、手を脇腹に
-    // 当てたように見えるため（利用者のエルゴの動画では、ハンドルは胸の前にあり、斜め前寄りから撮った画面の上で、
-    // カメラ側の手首が胴の線に重なっていた）。胴の線は、合わせた後の 3D の体で、手首と同じ高さで測る。
-    // 肩の高さの手（背中にかつぐバー）は動かさない。範囲の端では出す量を徐々に減らす（手が跳ばないように）
-    const hipMid = mid(P(23), P(24))
-    const shMid = has(11, 12) ? mid(P(11), P(12)) : null
-    const handInFront = (w: THREE.Vector3) => {
-      if (!shMid || shMid.y - hipMid.y < 0.5 * shMid.distanceTo(hipMid)) return w
-      const u = (w.y - hipMid.y) / (shMid.y - hipMid.y)
-      const k = Math.min(1, Math.max(0, (u + 0.1) / 0.1), Math.max(0, (0.85 - u) / 0.1))
-      const d = w.z - (hipMid.z + (shMid.z - hipMid.z) * u)
-      return d >= HAND_FRONT || k <= 0 ? w : w.clone().setZ(w.z + (HAND_FRONT - d) * k)
+    // 肩甲骨を寄せる・開く動き: 肩の点が胴の線より後ろ（前）にずれた分だけ、鎖骨を回して肩の関節を後ろ（前）へ動かす
+    // （30° まで）。胴の線に沿ったずれ（肩の点は肩先で関節より高い）と左右のずれは使わない。
+    // エルゴのフィニッシュでハンドルを引き切ると、肩が後ろへ引かれるため。横から撮った記録（胴の上の端があるとき）だけ
+    if (has(11, 12) && tShoulder && pose.trunkTop) {
+      const along = tShoulder.clone().sub(mid(T(23)!, T(24)!)).normalize()
+      for (const [clav, i] of [
+        ['clavicle_l', 11],
+        ['clavicle_r', 12],
+      ] as const) {
+        const c = bones.get(clav)
+        if (!c) continue
+        const C = c.getWorldPosition(new THREE.Vector3())
+        const cur = P(i)
+        const d = T(i)!.sub(cur)
+        d.sub(along.clone().multiplyScalar(d.dot(along))).setX(0)
+        const q = swing(cur.clone().sub(C), cur.clone().add(d).sub(C))
+        const ang = 2 * Math.acos(Math.min(1, Math.abs(q.w)))
+        rotateWorld(c, ang > CLAVICLE_MAX ? new THREE.Quaternion().slerp(q, CLAVICLE_MAX / ang) : q)
+      }
+    }
+    // 手足の長さを、本人の骨の長さ（動きの記録から 1 つに決めた値）にする。標準の体の長さのままだと、
+    // ひじ・膝が動画の点からずれるため。骨の大きさをまとめて変えるので、太さも同じ割合で変わる（0.75〜1.35 倍）。
+    // 手と足の大きさは元に戻す
+    const L = pose.bones
+    if (L) {
+      const fit = (bone: string, a: number, b: number, want: number) => {
+        const cur = P(a).distanceTo(P(b))
+        if (!(cur > 1e-6) || !(want > 0)) return
+        B(bone).scale.multiplyScalar(Math.min(1.35, Math.max(0.75, want / cur)))
+        root.updateMatrixWorld(true)
+      }
+      for (const [upper, lower, end, a, b, c, lu, ll] of [
+        ['thigh_l', 'calf_l', 'foot_l', 23, 25, 27, L.thigh, L.shank],
+        ['thigh_r', 'calf_r', 'foot_r', 24, 26, 28, L.thigh, L.shank],
+        ['upperarm_l', 'lowerarm_l', 'hand_l', 11, 13, 15, L.upperArm, L.foreArm],
+        ['upperarm_r', 'lowerarm_r', 'hand_r', 12, 14, 16, L.upperArm, L.foreArm],
+      ] as const) {
+        fit(upper, a, b, lu)
+        fit(lower, b, c, ll)
+        B(end).scale.setScalar(1 / (B(upper).scale.x * B(lower).scale.x))
+        root.updateMatrixWorld(true)
+      }
     }
     // 曲げる向きの好み（体の左が +X、前が +Z）: 膝は前と上、ひじは後ろと下と少し外。
     // 脚が伸び切る・腕が伸び切るときは、目標の膝・ひじが一直線の上に来て、曲げる向きがコマごとに反転しやすいため
@@ -222,7 +266,7 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
       ['upperarm_r', 'lowerarm_r', 12, 14, 16, elbow(-1), false],
     ] as const) {
       if (!has(b, c)) continue
-      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, c === 15 || c === 16 ? handInFront(T(c)!) : T(c)!, planar, prefer)
+      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, T(c)!, planar, prefer)
       // 曲げた後の位置で次の骨を合わせるので、上の P は曲げる前の値。下で付け根から測り直す
       fitted.push(upper, lower)
     }
@@ -276,23 +320,28 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
 const SPINE_SHARE = 0.35
 const SPINE_EXT_MAX = (5 * Math.PI) / 180
 const SPINE_FLEX_MAX = (30 * Math.PI) / 180
-/** 動きの再生で、首を胴に対して曲げる最大の角度（度） */
-const NECK_LIMIT_DEG = 30
-/** 胴の高さにある手首を、胴の線から水平に前へ出す最小の距離（体の高さを 1 として）。
- *  標準の体の胸の前の面は、胴の線から 0.08 ほど前（胴が 25° 傾くと水平に 0.09 ほど） */
-const HAND_FRONT = 0.09
+/** 動きの再生で、肩甲骨を寄せる・開く動きとして鎖骨を回す最大の角度 */
+const CLAVICLE_MAX = (30 * Math.PI) / 180
 
-/** v の向きを、base の向きから max 度以内にする（base との角度が大きいときだけ、二つを含む面の中で回す） */
-function limitAngle(v: THREE.Vector3, base: THREE.Vector3, maxDeg: number) {
-  const a = v.angleTo(base)
-  const max = (maxDeg * Math.PI) / 180
-  if (a <= max || base.lengthSq() < 1e-12) return v
-  const axis = new THREE.Vector3().crossVectors(base, v)
-  if (axis.lengthSq() < 1e-12) return v
-  axis.normalize()
-  const len = v.length()
-  return base.clone().normalize().applyAxisAngle(axis, max).multiplyScalar(len)
+/**
+ * a から長さ la、b から長さ lb のところにある点（2 本の骨の間の関節）。a・b・side を含む面の中で、side の側を選ぶ。
+ * 届かない（遠すぎる・近すぎる）ときは、a から b の向きに la のところ
+ */
+function jointBetween(a: THREE.Vector3, b: THREE.Vector3, la: number, lb: number, side: THREE.Vector3): THREE.Vector3 | null {
+  const D = b.clone().sub(a)
+  const d = D.length()
+  if (d < 1e-9) return null
+  const ex = D.divideScalar(d)
+  const w = side.clone().sub(a)
+  const ey = w.sub(ex.clone().multiplyScalar(w.dot(ex)))
+  const x = (la * la - lb * lb + d * d) / (2 * d)
+  const h2 = la * la - x * x
+  if (h2 <= 0 || ey.lengthSq() < 1e-12) return a.clone().add(ex.multiplyScalar(la))
+  return a.clone().add(ex.multiplyScalar(x)).add(ey.normalize().multiplyScalar(Math.sqrt(h2)))
 }
+
+/** 動きの再生で大きさを変える骨（毎回 1 に戻してから合わせる） */
+const SCALED_BONES = ['spine_01', 'thigh_l', 'calf_l', 'foot_l', 'thigh_r', 'calf_r', 'foot_r', 'upperarm_l', 'lowerarm_l', 'hand_l', 'upperarm_r', 'lowerarm_r', 'hand_r']
 
 /**
  * 2 本の骨（上と下）を、長さを保ったまま、先端が target に届くように曲げる（届かなければ target の向きにまっすぐ伸ばす）。

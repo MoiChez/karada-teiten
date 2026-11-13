@@ -1,8 +1,8 @@
 // 動きの 3D 再生用に、コマごとの関節の位置（Pose3D）を作る。
 // 前後と上下は、横から撮った画面上の点（カメラ側の半身）から求め、角度のグラフと同じ動きにする。
-// 左右の位置だけは、推定モデルの 3D の点（奥行きの推定）から取る。なければ標準の体の幅を当てる（表示だけに使う）。
+// 左右の位置は標準の体の幅を当てる（表示だけに使う）。本人の骨の長さと胴の上の端も付ける（3D の体を動画に重ねるため）。
 // 自転車では、奥側の脚をカメラ側の脚の半回転ずれた動きにする（左右の脚は逆の位置にあるため）
-import type { Pose3D, Vec3 } from './fusion3d'
+import type { BoneLengths, Pose3D, Vec3 } from './fusion3d'
 import type { Point } from './types'
 import type { MotionCycle, PreparedMotion } from './motionSports'
 import { sidePoints } from './landmarks'
@@ -156,7 +156,7 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
   }
   // 左右の位置は、標準の体の幅で固定する。横からの映像では推定モデルの奥行き（左右）の推定が当てにならず、
   // コマごとに使うと体がくねくね揺れ、中央値でも脚が大きく開いて見えたため（座った姿勢では体の高さの換算も外れる）
-  return fr.map((f, k) => {
+  const out = fr.map((f, k) => {
     const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
     const j = half && far.size ? opposite(k) : k
     for (const i of USED) {
@@ -170,8 +170,109 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
       const x = i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06)
       points[i] = { x, y: (floorY - p.y) / H, z: (prep.f * (p.x - ankleX)) / H }
     }
-    return { t: f.t, pose: { points, depthSource: 'side_photo' as const } }
+    const pose: Pose3D = { points, depthSource: 'side_photo' }
+    const top = trunkTopOf(points)
+    if (top) pose.trunkTop = top
+    return { t: f.t, pose }
   })
+  const bones = sideBoneLengths(out.map((o) => o.pose))
+  for (const o of out) o.pose.bones = bones
+  return out
+}
+
+/** 首（肩の中点→耳の中点）を、胴（股関節の中点→肩の中点）に対して前へ曲げる最大の角度 */
+const NECK_FLEX_MAX = (30 * Math.PI) / 180
+
+/** 前後（z）と上下（y）の面の上の点 */
+interface UV {
+  u: number
+  v: number
+}
+const uvMid = (a: Vec3, b: Vec3): UV => ({ u: (a.z + b.z) / 2, v: (a.y + b.y) / 2 })
+
+/**
+ * 横から撮った記録の、胴の上の端（胴の向きに使う点）。首が胴に対して前へ 30° より大きく折れて見えるときは、
+ * 肩の点が背中側にずれているとみなし、両肩の中点を「股関節の中点と耳の中点を結ぶ線」に向かって、首の角度が 30° に
+ * なるところまで寄せた点を返す（耳と股関節は動かさない。肩の点そのものは書き換えない）。直さないときは両肩の中点。
+ * エルゴのフィニッシュでハンドルを引き切ると、肩甲骨が寄って推定の肩の点が後ろへずれ、胴が実際より後ろに倒れて見え、
+ * 首が胴に対して 60° ほど前に折れていたため。前を見上げる向き（首が胴より後ろへ反る）は直さない
+ */
+export function trunkTopOf(points: (Vec3 | null)[]): Vec3 | undefined {
+  const [l, r, el, er, hl, hr] = [points[11], points[12], points[7], points[8], points[23], points[24]]
+  if (!l || !r || !el || !er || !hl || !hr) return undefined
+  // 前後（z）と上下（y）の面で考える（横から撮った記録は、左右の点の前後・上下が同じ）
+  const S = uvMid(l, r)
+  const E = uvMid(el, er)
+  const Hp = uvMid(hl, hr)
+  /** 胴に対する首の角度（前へ曲げると +） */
+  const flex = (s: { u: number; v: number }) => {
+    const a = { u: s.u - Hp.u, v: s.v - Hp.v }
+    const b = { u: E.u - s.u, v: E.v - s.v }
+    return Math.atan2(a.v * b.u - a.u * b.v, a.u * b.u + a.v * b.v)
+  }
+  const asIs = { x: 0, y: S.v, z: S.u }
+  if (flex(S) <= NECK_FLEX_MAX) return asIs
+  const d = { u: E.u - Hp.u, v: E.v - Hp.v }
+  const dd = d.u * d.u + d.v * d.v
+  if (dd < 1e-9) return asIs
+  const k = ((S.u - Hp.u) * d.u + (S.v - Hp.v) * d.v) / dd
+  const foot = { u: Hp.u + d.u * k, v: Hp.v + d.v * k }
+  const at = (t: number) => ({ u: S.u + (foot.u - S.u) * t, v: S.v + (foot.v - S.v) * t })
+  let lo = 0
+  let hi = 1
+  for (let n = 0; n < 30; n++) {
+    const m = (lo + hi) / 2
+    if (flex(at(m)) > NECK_FLEX_MAX) lo = m
+    else hi = m
+  }
+  const s = at(hi)
+  return { x: 0, y: s.v, z: s.u }
+}
+
+/** 標準の体の「両肩の関節の中点〜耳の中点」の長さの、「股関節の中点〜両肩の関節の中点」に対する比（3D の人形 3 体で 0.50〜0.54） */
+const NECK_TO_TRUNK = 0.52
+
+/**
+ * 横から撮った記録の、本人の骨の長さ（前後・上下の面の上の長さの、長い方から 4 分の 1 のところ）。
+ * 3D の手足を標準の体の長さのままにすると、ひじや膝が動画の点からずれる（利用者のエルゴで、標準の腕は 2 割近く短かった）ため。
+ * 長い方の値を使うのは、斜めから撮ると手足が短く写るコマがあるため（いちばん長い値は推定の揺れを拾うので使わない）
+ */
+function sideBoneLengths(poses: Pose3D[]): BoneLengths | undefined {
+  const len = (a: number, b: number) =>
+    poses
+      .map((p) => {
+        const A = p.points[a]
+        const B = p.points[b]
+        return A && B ? Math.hypot(A.y - B.y, A.z - B.z) : NaN
+      })
+      .filter((v) => Number.isFinite(v))
+  const pick = (a: number, b: number) => {
+    const v = len(a, b)
+    return v.length ? quantile(v, 0.75) : NaN
+  }
+  const out: BoneLengths = { upperArm: pick(11, 13), foreArm: pick(13, 15), thigh: pick(23, 25), shank: pick(25, 27) }
+  if (!Object.values(out).every((v) => v > 0)) return undefined
+  // 胴の長さ: 推定の肩の点は肩先で、3D の肩の関節より高い（利用者のエルゴで、耳〜肩の点は標準の体の耳〜肩の関節の 7 割）。
+  // 肩の点との距離を使うと 3D の頭が耳より上にずれるので、股関節と耳の点（どちらも確かな点）から、胴の向きに沿って
+  // 「胴の長さ t ＋ 首の長さ 0.52 t」で耳に届く t を、コマごとに求めて中央値を取る
+  const ts: number[] = []
+  for (const p of poses) {
+    const [hl, hr, el, er, sl, sr] = [p.points[23], p.points[24], p.points[7], p.points[8], p.points[11], p.points[12]]
+    if (!hl || !hr || !el || !er || !sl || !sr) continue
+    const Hp = uvMid(hl, hr)
+    const top = p.trunkTop ? { u: p.trunkTop.z, v: p.trunkTop.y } : uvMid(sl, sr)
+    const D = { u: uvMid(el, er).u - Hp.u, v: uvMid(el, er).v - Hp.v }
+    const ul = Math.hypot(top.u - Hp.u, top.v - Hp.v)
+    if (!(ul > 1e-6)) continue
+    const du = (D.u * (top.u - Hp.u) + D.v * (top.v - Hp.v)) / ul
+    const a = 1 - NECK_TO_TRUNK * NECK_TO_TRUNK
+    const disc = du * du - a * (D.u * D.u + D.v * D.v)
+    if (disc < 0) continue
+    const t = (du - Math.sqrt(disc)) / a
+    if (t > 0) ts.push(t)
+  }
+  if (ts.length) out.trunk = quantile(ts, 0.5)
+  return out
 }
 
 /**
@@ -270,6 +371,8 @@ function nearestIndex(ts: number[], t: number) {
   return t - ts[lo] <= ts[hi] - t ? lo : hi
 }
 
+const lerp3 = (p: Vec3, q: Vec3, k: number): Vec3 => ({ x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, z: p.z + (q.z - p.z) * k })
+
 /** 時刻 t（ミリ秒）の姿勢。コマの間は直線で補う */
 export function poseAtTime(list: { t: number; pose: Pose3D }[], t: number): Pose3D | null {
   if (!list.length) return null
@@ -287,10 +390,12 @@ export function poseAtTime(list: { t: number; pose: Pose3D }[], t: number): Pose
   const k = b.t > a.t ? (t - a.t) / (b.t - a.t) : 0
   return {
     depthSource: a.pose.depthSource,
+    bones: a.pose.bones,
+    trunkTop: a.pose.trunkTop && b.pose.trunkTop ? lerp3(a.pose.trunkTop, b.pose.trunkTop, k) : (a.pose.trunkTop ?? b.pose.trunkTop),
     points: a.pose.points.map((p, i) => {
       const q = b.pose.points[i]
       if (!p || !q) return p
-      return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, z: p.z + (q.z - p.z) * k }
+      return lerp3(p, q, k)
     }),
   }
 }

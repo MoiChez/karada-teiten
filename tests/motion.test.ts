@@ -13,7 +13,8 @@ import {
   voteTurns,
   type MotionInput,
 } from '../src/domain/motion'
-import { motionPoses, poseAtTime, poseMapping } from '../src/domain/motionPose'
+import { motionPoses, poseAtTime, poseMapping, trunkTopOf } from '../src/domain/motionPose'
+import type { Vec3 } from '../src/domain/fusion3d'
 
 const W = 1000
 const H = 2000
@@ -228,6 +229,55 @@ describe('動きの 3D', () => {
         expect(map.originX + sh.x + local * map.H).toBeCloseTo(prep.frames[k].px[i].x, 6)
         expect(map.floorY + sh.y - p.y * map.H).toBeCloseTo(prep.frames[k].px[i].y, 6)
       }
+    }
+  })
+
+  it('横から撮った記録には、本人の骨の長さ（記録で 1 つ）と胴の上の端を付ける', () => {
+    const poses = motionPoses(prepareMotion(squatInput(100))!)
+    const b = poses[0].pose.bones!
+    for (const v of [b.upperArm, b.foreArm, b.thigh, b.shank, b.trunk!]) {
+      expect(v).toBeGreaterThan(0.08)
+      expect(v).toBeLessThan(0.45)
+    }
+    expect(poses[50].pose.bones).toBe(b)
+    for (const k of [0, 50]) expect(poses[k].pose.trunkTop).toBeTruthy()
+  })
+
+  it('首が胴に対して前へ 30° より大きく折れて見えるときは、胴の上の端を股関節〜耳の線へ寄せて 30° にする（見上げる向きは直さない）', () => {
+    const P = (deg: number, neckDeg: number) => {
+      const r = (d: number) => (d * Math.PI) / 180
+      const pts: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
+      const sy = 0.3 + 0.27 * Math.cos(r(deg))
+      const sz = 0.27 * Math.sin(r(deg))
+      const a = deg + neckDeg
+      for (const [l, rr, y, z, w] of [
+        [23, 24, 0.3, 0, 0.06],
+        [11, 12, sy, sz, 0.11],
+        [7, 8, sy + 0.12 * Math.cos(r(a)), sz + 0.12 * Math.sin(r(a)), 0.06],
+      ] as const) {
+        pts[l] = { x: w, y, z }
+        pts[rr] = { x: -w, y, z }
+      }
+      return pts
+    }
+    const flexOf = (pts: (Vec3 | null)[], top: Vec3) => {
+      const a = Math.atan2(top.z - pts[23]!.z, top.y - pts[23]!.y)
+      const b = Math.atan2(pts[7]!.z - top.z, pts[7]!.y - top.y)
+      return ((b - a) * 180) / Math.PI
+    }
+    // フィニッシュ: 胴が後ろへ 25°、首が胴に対して前へ 60°
+    const fin = P(-25, 60)
+    const top = trunkTopOf(fin)!
+    expect(flexOf(fin, top)).toBeCloseTo(30, 0)
+    expect(top.z).toBeGreaterThan(fin[11]!.z)
+    // 肩の点そのものは書き換えない
+    expect(fin[11]!.z).toBeCloseTo(0.27 * Math.sin((-25 * Math.PI) / 180), 9)
+    // 首が胴に対して 20° 前・40° 後ろ（見上げる）は、両肩の中点のまま
+    for (const neck of [20, -40]) {
+      const pts = P(30, neck)
+      const t = trunkTopOf(pts)!
+      expect(t.y).toBeCloseTo(pts[11]!.y, 9)
+      expect(t.z).toBeCloseTo(pts[11]!.z, 9)
     }
   })
 
