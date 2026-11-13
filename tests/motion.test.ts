@@ -13,7 +13,7 @@ import {
   voteTurns,
   type MotionInput,
 } from '../src/domain/motion'
-import { motionPoses, poseAtTime } from '../src/domain/motionPose'
+import { motionPoses, poseAtTime, poseMapping } from '../src/domain/motionPose'
 
 const W = 1000
 const H = 2000
@@ -197,7 +197,7 @@ describe('動きの 3D', () => {
     expect(stand.points[24]!.x).toBeLessThan(0)
   })
 
-  it('推定モデルの 3D があれば、左右の位置はそこから取る（体の左が +）', () => {
+  it('推定モデルの 3D があっても、横から撮った記録の左右の位置は標準の体の幅で固定する（体の左が +）', () => {
     const input = squatInput(60)
     for (const f of input.frames) {
       // 体の左がカメラ側（z が小さい）。左右の幅 0.3 m、腰の中心が原点、y は下向き
@@ -207,9 +207,28 @@ describe('動きの 3D', () => {
       })
     }
     const prep = prepareMotion(input)!
-    const p = motionPoses(prep)[0].pose
-    expect(p.points[23]!.x).toBeGreaterThan(0.05)
-    expect(p.points[24]!.x).toBeLessThan(-0.05)
+    const poses = motionPoses(prep)
+    for (const k of [0, 30, 60]) {
+      expect(poses[k].pose.points[23]!.x).toBeCloseTo(0.06, 9)
+      expect(poses[k].pose.points[24]!.x).toBeCloseTo(-0.06, 9)
+    }
+  })
+
+  it('3D の点を、動画の画面の位置に戻せる（動画に重ねる 3D のカメラの合わせ方）', () => {
+    const prep = prepareMotion(squatInput(100))!
+    const poses = motionPoses(prep)
+    const map = poseMapping(prep)!
+    const near = prep.nearSide === 'left' ? [23, 25, 27] : [24, 26, 28]
+    for (const k of [0, 20, 45]) {
+      const sh = map.shifts[k]
+      for (const i of near) {
+        const p = poses[k].pose.points[i]!
+        // 顔が画面の右向きなら、画面の右が +Z（左向きなら -Z）
+        const local = map.camera === 'right' ? p.z : -p.z
+        expect(map.originX + sh.x + local * map.H).toBeCloseTo(prep.frames[k].px[i].x, 6)
+        expect(map.floorY + sh.y - p.y * map.H).toBeCloseTo(prep.frames[k].px[i].y, 6)
+      }
+    }
   })
 
   it('コマの間の時刻は、前後のコマから直線で補う', () => {

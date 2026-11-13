@@ -38,12 +38,18 @@ interface Rect {
 }
 
 /** 縦長の画面の割り付け: 見出し・動画と 3D・今の値・グラフ・注意書き */
-function layoutOf(video: MotionVideoData | null) {
+function layoutOf(video: MotionVideoData | null, overlay: boolean) {
   const top = 84
   const inner = OUT_W - 2 * GAP
   let videoRect: Rect | null = null
-  let threeRect: Rect
-  if (video && video.height >= video.width) {
+  let threeRect: Rect | null
+  if (video && overlay) {
+    // 重ねて比べる: 動画を大きく 1 つ置き、右半分に 3D を重ねる
+    const h = Math.min(820, (inner * video.height) / video.width)
+    const w = Math.min(inner, (h * video.width) / video.height)
+    videoRect = { x: (OUT_W - w) / 2, y: top, w, h }
+    threeRect = null
+  } else if (video && video.height >= video.width) {
     const w = (inner - GAP) / 2
     const h = Math.min(620, (w * video.height) / video.width)
     videoRect = { x: GAP, y: top, w, h }
@@ -55,7 +61,7 @@ function layoutOf(video: MotionVideoData | null) {
   } else {
     threeRect = { x: GAP, y: top, w: inner, h: 560 }
   }
-  const mediaBottom = Math.max(videoRect ? videoRect.y + videoRect.h : 0, threeRect.y + threeRect.h)
+  const mediaBottom = Math.max(videoRect ? videoRect.y + videoRect.h : 0, threeRect ? threeRect.y + threeRect.h : 0)
   const values: Rect = { x: GAP, y: mediaBottom + GAP, w: inner, h: 190 }
   const chart: Rect = { x: GAP, y: values.y + values.h + GAP, w: inner, h: OUT_H - (values.y + values.h + GAP) - 70 }
   return { videoRect, threeRect, values, chart }
@@ -86,6 +92,7 @@ export function MotionVideoExport({
   series,
   overlayAt,
   fileStem,
+  overlay,
 }: {
   rec: MotionRecord
   prep: PreparedMotion
@@ -99,6 +106,8 @@ export function MotionVideoExport({
   /** コマ k に重ねるもの（重ねないなら null） */
   overlayAt: (k: number) => OverlayInput | null
   fileStem: string
+  /** 重ねて比べる表示のとき（three は動画に重ねる 3D）。rollDeg は端末の傾きを戻した角度 */
+  overlay?: { rollDeg?: number }
 }) {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -124,7 +133,7 @@ export function MotionVideoExport({
     out.height = OUT_H
     const ctx = out.getContext('2d')
     if (!ctx) return
-    const L = layoutOf(video)
+    const L = layoutOf(video, !!overlay)
     const frameTs = prep.frames.map((f) => f.t)
     const imgTs = video?.images.map((im) => im.t) ?? []
     const values = prep.series[series.key]
@@ -169,17 +178,56 @@ export function MotionVideoExport({
         ctx.roundRect(L.videoRect.x, L.videoRect.y, L.videoRect.w, L.videoRect.h, 16)
         ctx.clip()
         ctx.drawImage(bmp, r.x, r.y, r.w, r.h)
-        ctx.translate(r.x, r.y)
-        const o = overlayAt(k)
-        if (o) drawOverlay(ctx, r.w, r.h, o)
+        const c3 = three.current
+        if (overlay && c3 && c3.width > 0) {
+          // 右半分: 動画を暗くして、同じ位置に 3D の体を重ねる（画面の「重ねて比べる」と同じ）
+          const half = r.x + r.w / 2
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(half, r.y, r.x + r.w - half, r.h)
+          ctx.clip()
+          ctx.fillStyle = 'rgba(6,20,26,0.42)'
+          ctx.fillRect(half, r.y, r.x + r.w - half, r.h)
+          ctx.translate(r.x + r.w / 2, r.y + r.h / 2)
+          if (overlay.rollDeg) ctx.rotate((-overlay.rollDeg * Math.PI) / 180)
+          ctx.drawImage(c3, -r.w / 2, -r.h / 2, r.w, r.h)
+          ctx.restore()
+          ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+          ctx.lineWidth = 3
+          ctx.beginPath()
+          ctx.moveTo(half, r.y)
+          ctx.lineTo(half, r.y + r.h)
+          ctx.stroke()
+          ctx.font = '700 22px system-ui, sans-serif'
+          for (const [label, x, align] of [
+            ['元の動画', r.x + 14, 'left'],
+            ['推定した 3D', r.x + r.w - 14, 'right'],
+          ] as const) {
+            const w = ctx.measureText(label).width + 24
+            ctx.fillStyle = 'rgba(6,20,26,0.6)'
+            ctx.beginPath()
+            ctx.roundRect(align === 'left' ? x : x - w, r.y + 12, w, 36, 18)
+            ctx.fill()
+            ctx.fillStyle = '#ffffff'
+            ctx.textAlign = align
+            ctx.fillText(label, align === 'left' ? x + 12 : x - 12, r.y + 38)
+          }
+          ctx.textAlign = 'left'
+        } else {
+          ctx.translate(r.x, r.y)
+          const o = overlayAt(k)
+          if (o) drawOverlay(ctx, r.w, r.h, o)
+        }
         ctx.restore()
       }
-      // 3D の体（画面に出ている 3D をそのまま写す）
-      roundRect(ctx, L.threeRect, '#ffffff')
-      const c3 = three.current
-      if (c3 && c3.width > 0) {
-        const r = contain(c3, L.threeRect)
-        ctx.drawImage(c3, r.x, r.y, r.w, r.h)
+      // 3D の体（並べる表示のとき。画面に出ている 3D をそのまま写す）
+      if (L.threeRect) {
+        roundRect(ctx, L.threeRect, '#ffffff')
+        const c3 = three.current
+        if (c3 && c3.width > 0) {
+          const r = contain(c3, L.threeRect)
+          ctx.drawImage(c3, r.x, r.y, r.w, r.h)
+        }
       }
       // 今の値
       roundRect(ctx, L.values, '#ffffff')

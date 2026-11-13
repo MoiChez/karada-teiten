@@ -33,7 +33,7 @@ export interface MuscleLevels {
   values: Partial<Record<MuscleKey, number[]>>
 }
 
-function MovingBody({
+export function MovingBody({
   kind,
   sport,
   poses,
@@ -41,6 +41,7 @@ function MovingBody({
   muscles,
   levels,
   floorY,
+  bare,
 }: {
   kind: MannequinKind
   sport: MotionKind
@@ -49,6 +50,8 @@ function MovingBody({
   muscles: boolean
   levels?: MuscleLevels
   floorY: number
+  /** 床と影を描かない（動画に重ねるとき） */
+  bare?: boolean
 }) {
   const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
   const root = useMemo(() => {
@@ -68,14 +71,6 @@ function MovingBody({
     shown.current = ''
     if (!levels) paintMuscles(root, BODY_COLOR, HIGHLIGHT_COLOR, muscles ? PROFILES[sport].muscles : [])
   }, [root, muscles, sport, levels])
-  const feet = useMemo(() => {
-    const out: THREE.Object3D[] = []
-    root.traverse((o) => {
-      if (['lm_29', 'lm_30', 'lm_31', 'lm_32'].includes(o.name)) out.push(o)
-    })
-    return out
-  }, [root])
-  const tmp = useMemo(() => new THREE.Vector3(), [])
   const last = useRef(NaN)
 
   useFrame(() => {
@@ -95,24 +90,20 @@ function MovingBody({
     last.current = t
     const pose = poseAtTime(poses, t)
     if (!pose) return
-    // 座って行う種目は腰を固定して手足を届かせ、立って行う種目は足を床に置く
-    poseMannequin(root, pose, { anchor: sport === 'erg' || sport === 'bike' ? 'hips' : 'ankles' })
-    // 立って行う種目は、いちばん低い足を床（y = 0）に置く。座って行う種目は、足が器具の上で動くのでそのまま
-    if (sport === 'squat' || sport === 'squat_front') {
-      let minY = Infinity
-      for (const f of feet) minY = Math.min(minY, f.getWorldPosition(tmp).y)
-      if (Number.isFinite(minY)) {
-        root.position.y -= minY
-        root.updateMatrixWorld(true)
-      }
-    }
+    // 腰を測った位置に置き、骨の長さを保ったまま足首・手首を測った位置に届かせる（動画に重ねたときに関節が重なるように）。
+    // 横から撮った種目は、膝を前後・上下の面の中で曲げる
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front' })
   })
 
   return (
     <>
       <primitive object={root} />
-      <gridHelper args={[2.4, 24, '#cfd9d8', '#dfe7e6']} position={[0, floorY, 0]} />
-      <ContactShadows position={[0, floorY + 0.002, 0]} opacity={0.4} scale={2.4} blur={2.2} far={1.4} resolution={256} />
+      {!bare && (
+        <>
+          <gridHelper args={[2.4, 24, '#cfd9d8', '#dfe7e6']} position={[0, floorY, 0]} />
+          <ContactShadows position={[0, floorY + 0.002, 0]} opacity={0.4} scale={2.4} blur={2.2} far={1.4} resolution={256} />
+        </>
+      )}
     </>
   )
 }

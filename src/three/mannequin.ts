@@ -84,7 +84,7 @@ function frameRotation(curA: THREE.Vector3, curB: THREE.Vector3, tgtA: THREE.Vec
  * anchor = 'hips'（座って行う種目）: 両股関節の中点を pose に重ね、脚と腕は骨の長さを保ったまま、
  * 足首・手首が pose の位置に届くように曲げる（膝・ひじは pose の膝・ひじの側へ曲げる）。腰が浮き沈みしないように
  */
-export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor?: 'ankles' | 'hips' } = {}): PoseFit {
+export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor?: 'ankles' | 'hips'; planarLegs?: boolean } = {}): PoseFit {
   const bones = new Map<string, THREE.Object3D>()
   root.traverse((o) => {
     if ((o as THREE.Bone).isBone || o.name.startsWith('lm_')) bones.set(o.name, o)
@@ -96,6 +96,8 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     if (!rest.has(name)) rest.set(name, b.quaternion.clone())
     b.quaternion.copy(rest.get(name)!)
   }
+  // 胴の長さの合わせ（動きの再生で使う）を戻す
+  bones.get('spine_01')?.scale.setScalar(1)
   root.position.set(0, 0, 0)
   root.scale.setScalar(1)
   root.quaternion.identity()
@@ -157,21 +159,35 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
     fitted.push(has(0) ? 'neck_head' : 'neck')
   }
 
-  // 座って行う種目: 先に大きさと位置（両股関節の中点）を決め、脚と腕を届かせる
+  // 動きの再生: 先に大きさと位置（両股関節の中点）を決め、脚と腕を届かせる
   if (opts.anchor === 'hips' && has(23, 24)) {
     const scale = 1 / Hm
     root.scale.setScalar(scale)
     root.updateMatrixWorld(true)
     root.position.add(mid(T(23)!, T(24)!).sub(mid(P(23), P(24))))
     root.updateMatrixWorld(true)
-    for (const [upper, lower, a, b, c] of [
-      ['thigh_l', 'calf_l', 23, 25, 27],
-      ['thigh_r', 'calf_r', 24, 26, 28],
-      ['upperarm_l', 'lowerarm_l', 11, 13, 15],
-      ['upperarm_r', 'lowerarm_r', 12, 14, 16],
+    // 胴の長さを合わせる（股関節の中点〜肩の中点を、測った長さにする。標準の体と人の胴の長さの違いで、
+    // 肩や頭が動画からずれないように）。背骨の付け根から上をまとめて大きさを変えるので、腕と頭も同じ割合で変わる
+    if (has(11, 12)) {
+      const cur = mid(P(11), P(12)).distanceTo(mid(P(23), P(24)))
+      const want = mid(T(11)!, T(12)!).distanceTo(mid(T(23)!, T(24)!))
+      if (cur > 1e-6) {
+        B('spine_01').scale.setScalar(Math.min(1.35, Math.max(0.8, want / cur)))
+        root.updateMatrixWorld(true)
+      }
+    }
+    // 曲げる向きの好み（体の左が +X、前が +Z）: 膝は前と上、ひじは後ろと下と少し外。
+    // 脚が伸び切る・腕が伸び切るときは、目標の膝・ひじが一直線の上に来て、曲げる向きがコマごとに反転しやすいため
+    const KNEE = new THREE.Vector3(0, 0.4, 1)
+    const elbow = (side: 1 | -1) => new THREE.Vector3(0.45 * side, -1, -0.5)
+    for (const [upper, lower, a, b, c, prefer, planar] of [
+      ['thigh_l', 'calf_l', 23, 25, 27, KNEE, !!opts.planarLegs],
+      ['thigh_r', 'calf_r', 24, 26, 28, KNEE, !!opts.planarLegs],
+      ['upperarm_l', 'lowerarm_l', 11, 13, 15, elbow(1), false],
+      ['upperarm_r', 'lowerarm_r', 12, 14, 16, elbow(-1), false],
     ] as const) {
       if (!has(b, c)) continue
-      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, T(c)!, true)
+      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, T(c)!, planar, prefer)
       // 曲げた後の位置で次の骨を合わせるので、上の P は曲げる前の値。下で付け根から測り直す
       fitted.push(upper, lower)
     }
@@ -225,7 +241,17 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor
  * 2 本の骨（上と下）を、長さを保ったまま、先端が target に届くように曲げる（届かなければ target の向きにまっすぐ伸ばす）。
  * 曲げる向きは、真ん中の関節の目標 mid の側。a・b・c は今の関節の位置（ワールド）
  */
-function reach(upper: THREE.Object3D, lower: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, midTarget: THREE.Vector3, target: THREE.Vector3, planar = false) {
+function reach(
+  upper: THREE.Object3D,
+  lower: THREE.Object3D,
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  c: THREE.Vector3,
+  midTarget: THREE.Vector3,
+  target: THREE.Vector3,
+  planar = false,
+  prefer?: THREE.Vector3,
+) {
   const l1 = b.distanceTo(a)
   const l2 = c.distanceTo(b)
   const d = target.clone().sub(a)
@@ -240,6 +266,15 @@ function reach(upper: THREE.Object3D, lower: THREE.Object3D, a: THREE.Vector3, b
     const side = new THREE.Vector3(1, 0, 0)
     const inPlane = pole.clone().sub(side.multiplyScalar(pole.x))
     if (inPlane.lengthSq() > 1e-10) pole.copy(inPlane.sub(u.clone().multiplyScalar(inPlane.dot(u))))
+  }
+  // 曲げる向きの好みの側にそろえる（目標がほぼ一直線の上なら、好みの向きそのものにする）
+  if (prefer) {
+    const pref = prefer.clone().sub(u.clone().multiplyScalar(prefer.dot(u)))
+    if (pref.lengthSq() > 1e-10) {
+      pref.normalize()
+      if (pole.length() < 0.15 * l1) pole.copy(pref)
+      else if (pole.dot(pref) < 0) pole.negate()
+    }
   }
   if (pole.lengthSq() < 1e-12) pole.copy(new THREE.Vector3(0, 0, 1).sub(u.clone().multiplyScalar(u.z)))
   pole.normalize()

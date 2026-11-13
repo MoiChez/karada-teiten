@@ -37,8 +37,8 @@ const nearOf = (i: number, near: 'left' | 'right') => {
 const FAR_LEG = (near: 'left' | 'right') => (near === 'left' ? [26, 28, 30, 32] : [25, 27, 29, 31])
 
 /** X: 体の左が +、Y: 上が +、Z: 前が +（体の高さを 1 とする）。かかとが床（Y = 0）、立っているときの足首が Z = 0 */
-export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): { t: number; pose: Pose3D }[] {
-  if (prep.kind === 'squat_front') return frontalPoses(prep)
+/** 横から撮った記録の、3D の座標の決め方（体の高さ・床・前後の 0・動かない点でのずらし） */
+function sideFrame(prep: PreparedMotion) {
   const s = sidePoints(prep.nearSide)
   const fr = prep.frames
   // 立って行う種目は耳〜かかとの高さ、座って行う種目は脚の長さから体の高さを決める
@@ -49,7 +49,6 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
           0.9,
         )
       : prep.leg / LEG_TO_HEIGHT
-  if (!(H > 0)) return []
   // 動かない点（自転車は腰、ほかは足首）を中央の位置に留めるように、コマごとに全体をずらす。
   // 手持ちでカメラが動いても、3D の体と器具の形がずれないように（その点の本当の小さな動きは消える）
   const anchor = prep.kind === 'bike' ? s.hip : s.ankle
@@ -61,7 +60,8 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
     fr.map((f) => f.px[anchor].y),
     0.5,
   )
-  const at = (k: number, i: number): Point => ({ x: fr[k].px[i].x - (fr[k].px[anchor].x - ax), y: fr[k].px[i].y - (fr[k].px[anchor].y - ay) })
+  const shift = (k: number): Point => ({ x: fr[k].px[anchor].x - ax, y: fr[k].px[anchor].y - ay })
+  const at = (k: number, i: number): Point => ({ x: fr[k].px[i].x - shift(k).x, y: fr[k].px[i].y - shift(k).y })
   const floorY = quantile(
     fr.map((_, k) => Math.max(at(k, s.heel).y, at(k, s.foot).y)),
     0.9,
@@ -70,6 +70,58 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
     fr.map((_, k) => at(k, s.ankle).x),
     0.5,
   )
+  return { s, fr, H, at, shift, floorY, ankleX }
+}
+
+/** 正面・後ろから撮った記録の、3D の座標の決め方（体の高さ・床・左右の 0） */
+function frontFrame(prep: PreparedMotion) {
+  const fr = prep.frames
+  const H = quantile(
+    fr.map((f) => Math.max(f.px[29].y, f.px[30].y) - (f.px[7].y + f.px[8].y) / 2),
+    0.9,
+  )
+  const floorY = quantile(
+    fr.map((f) => Math.max(f.px[29].y, f.px[30].y, f.px[31].y, f.px[32].y)),
+    0.9,
+  )
+  const cx = quantile(
+    fr.map((f) => (f.px[27].x + f.px[28].x) / 2),
+    0.5,
+  )
+  return { fr, H, floorY, cx }
+}
+
+/**
+ * 3D の座標を、撮った動画の画面（傾きを戻したピクセル）に重ねるための対応。
+ * 画面の横 = originX + shift.x + （3D の横の座標）× H、画面の縦 = floorY + shift.y − y × H。
+ * 3D の横の座標は、カメラ camera の向きから見た右向き（横からなら ±Z、正面・後ろからなら ±X）
+ */
+export interface PoseMapping {
+  ts: number[]
+  H: number
+  originX: number
+  floorY: number
+  shifts: Point[]
+  /** 動画を撮ったカメラの位置: 顔が画面の右向き（体の右側から） / 左向き / 体の前から / 後ろから */
+  camera: 'right' | 'left' | 'front' | 'rear'
+}
+
+export function poseMapping(prep: PreparedMotion): PoseMapping | null {
+  const ts = prep.frames.map((f) => f.t)
+  if (prep.kind === 'squat_front') {
+    const { H, floorY, cx } = frontFrame(prep)
+    if (!(H > 0)) return null
+    return { ts, H, originX: cx, floorY, shifts: ts.map(() => ({ x: 0, y: 0 })), camera: prep.view?.view === 'front' ? 'front' : 'rear' }
+  }
+  const { H, shift, floorY, ankleX } = sideFrame(prep)
+  if (!(H > 0)) return null
+  return { ts, H, originX: ankleX, floorY, shifts: ts.map((_, k) => shift(k)), camera: prep.f === 1 ? 'right' : 'left' }
+}
+
+export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): { t: number; pose: Pose3D }[] {
+  if (prep.kind === 'squat_front') return frontalPoses(prep)
+  const { s, fr, H, at, floorY, ankleX } = sideFrame(prep)
+  if (!(H > 0)) return []
   // 自転車: 1 回転の長さの中央値の半分
   const periods = cycles.map((c) => c.end - c.start).sort((a, b) => a - b)
   const half = prep.kind === 'bike' && periods.length ? periods[Math.floor(periods.length / 2)] / 2 : 0
@@ -130,21 +182,9 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
  * 体の高さ（耳〜かかと）を 1、かかとを床、足首の中点を左右と前後の 0 とする
  */
 function frontalPoses(prep: PreparedMotion): { t: number; pose: Pose3D }[] {
-  const fr = prep.frames
+  const { fr, H, floorY, cx } = frontFrame(prep)
   const L = prep.leftDir
-  const H = quantile(
-    fr.map((f) => Math.max(f.px[29].y, f.px[30].y) - (f.px[7].y + f.px[8].y) / 2),
-    0.9,
-  )
   if (!(H > 0)) return []
-  const floorY = quantile(
-    fr.map((f) => Math.max(f.px[29].y, f.px[30].y, f.px[31].y, f.px[32].y)),
-    0.9,
-  )
-  const cx = quantile(
-    fr.map((f) => (f.px[27].x + f.px[28].x) / 2),
-    0.5,
-  )
   const d = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y)
   const midP = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
   // コマごとに、体の左・右の点を付け替えた並び
