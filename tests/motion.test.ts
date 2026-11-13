@@ -236,3 +236,31 @@ describe('映像の向き', () => {
     expect(voteTurns([1, 1, null, null, 0])).toBe(0)
   })
 })
+
+describe('撮り方の注意', () => {
+  const edit = (fn: (lm: Landmark[]) => void) => {
+    const input = squatInput(100)
+    for (const f of input.frames) fn(f.lm)
+    return analyzeMotion(input)
+  }
+
+  it('真横から撮れていれば、バーベルを担いで肩の点が広がっても注意しない', () => {
+    // 奥側の肩が 250 ピクセル離れて見える（腕を上げてバーを担ぐ）
+    const a = edit((lm) => (lm[12] = { ...lm[12], x: lm[12].x + 0.25 }))
+    expect(a.warnings).toEqual([])
+    expect(a.reps).toHaveLength(3)
+  })
+
+  it('左右の股関節が離れて見える（斜めから撮った）ときは、真横でないことを知らせる', () => {
+    const a = edit((lm) => (lm[24] = { ...lm[24], x: lm[24].x + 0.15, visibility: 0.9 }))
+    expect(a.warnings.some((w) => w.includes('真横を向いていない'))).toBe(true)
+  })
+
+  it('カメラ側の膝が隠れたコマが多ければ、推測していることを知らせ、値は出す', () => {
+    const a = edit((lm) => (lm[25] = { ...lm[25], visibility: 0.1 }))
+    const w = a.warnings.find((x) => x.includes('はっきり写っていない'))
+    expect(w).toContain('膝')
+    expect(w).not.toContain('足首')
+    expect(a.reps).toHaveLength(3)
+  })
+})

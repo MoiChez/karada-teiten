@@ -323,7 +323,8 @@ export function MotionCapture() {
             <h2 className="mt-6 font-bold">撮る前に</h2>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[15px]">
               <li>スマホを縦向きにして、腰の高さに置きます。体の真横から 2.5〜3 m 離れます（しゃがんだときも、頭から足まで入る距離）。</li>
-              <li>体の線が分かる服にします。腕は前に伸ばすか、胸の前で組みます（体の横に下ろすと、股関節が隠れます）。</li>
+              <li>体の線が分かる服にします。腕は前に伸ばすか、胸の前で組みます（体の横に下ろすと、股関節が隠れます）。バーベルを担ぐときは、そのままで大丈夫です。</li>
+              <li>ラックの中で行うときは、柱や器具が脚や腰にかからない位置から、体の真横で撮ります。後ろの鏡に映った姿が大きく写らない向きがおすすめです。</li>
               <li>合図のあと、横向きのまま、いつもの速さで 3〜5 回しゃがんで立ちます。終わったら「撮り終える」を押します（最長 {RECORD_MS / 1000} 秒）。</li>
             </ol>
             <label className="mt-5 flex min-h-11 items-start gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3 text-[15px]">

@@ -147,8 +147,14 @@ const REP_RETURN_DEPTH = 8
 const ONSET_DEPTH = 3
 /** これより長い途切れ（ミリ秒）があれば、前後を別の区間にする */
 const MAX_GAP_MS = 250
-/** 横向きの確認: 肩幅 / 胴の長さ がこれを超えたら、真横から撮れていない可能性を知らせる */
-const SIDE_RATIO_MAX = 0.35
+/**
+ * 横向きの確認: 左右の股関節の間隔 / 胴の長さ がこれを超えたら、真横から撮れていない可能性を知らせる。
+ * 肩ではなく腰で見るのは、バーベルを担ぐと腕が上がり、肩の点が左右に広がって見えるため。
+ * 実在の人の写真では、真横 0.01〜0.16（バーを担いだ写真 0.14）、斜め後ろ 0.30 前後、正面 0.26〜0.45 だった
+ */
+const SIDE_HIP_RATIO_MAX = 0.2
+/** 計算に使うカメラ側の点（股関節・膝・足首）の、見えている度合いの中央値がこれ未満なら、隠れていることを知らせる */
+const HIDDEN_VIS = 0.5
 
 // ---------- 計算の途中 ----------
 
@@ -500,19 +506,34 @@ export function analyzeMotion(input: MotionInput): MotionAnalysis {
   }
   const { reps, cutStart, cutEnd } = findReps(prep)
 
-  // 真横から撮れているか（立っているコマの肩幅 / 胴の長さ）
+  // 真横から撮れているか（立っているコマの、左右の股関節の間隔 / 胴の長さ）
   const s = sidePoints(prep.nearSide)
   const standing = prep.frames.filter((_, i) => prep.series.depth[i] < REP_RETURN_DEPTH)
   const ratios = standing
-    .filter((fr) => [11, 12, 23, 24].every((i) => vis(fr.lm[i]) >= MIN_VISIBILITY * 0.6))
+    .filter((fr) => [23, 24].every((i) => vis(fr.lm[i]) >= MIN_VISIBILITY * 0.6))
     .map((fr) => {
       const p = fr.px
-      const sw = Math.hypot(p[11].x - p[12].x, p[11].y - p[12].y)
+      const hw = Math.hypot(p[23].x - p[24].x, p[23].y - p[24].y)
       const torso = Math.hypot(p[s.shoulder].x - p[s.hip].x, p[s.shoulder].y - p[s.hip].y)
-      return torso > 0 ? sw / torso : 0
+      return torso > 0 ? hw / torso : 0
     })
-  if (ratios.length >= 5 && quantile(ratios, 0.5) > SIDE_RATIO_MAX) {
+  if (ratios.length >= 5 && quantile(ratios, 0.5) > SIDE_HIP_RATIO_MAX) {
     warnings.push('体が真横を向いていないようです。角度は横から見た見かけの値なので、斜めから撮ると変わります。次は体の真横から撮ってください。')
+  }
+  // カメラ側の脚が隠れていないか（ラックの柱・器具・体の陰）
+  const hidden = (
+    [
+      [s.hip, '股関節'],
+      [s.knee, '膝'],
+      [s.ankle, '足首'],
+    ] as const
+  )
+    .filter(([i]) => quantile(prep.frames.map((fr) => vis(fr.lm[i])), 0.5) < HIDDEN_VIS)
+    .map(([, name]) => name)
+  if (hidden.length) {
+    warnings.push(
+      `カメラ側の${hidden.join('・')}がはっきり写っていないコマが多く、位置を推測して計算しています。ラックの柱や器具が脚にかからない位置から、体の真横で撮ると確かになります。`,
+    )
   }
   if (!reps.length) {
     warnings.push(`しゃがむ動きを見つけられませんでした。腰が、立っているときの股関節から足首までの高さの ${REP_MIN_DEPTH}% 以上下がって、立ち上がるまでを 1 回と数えます。`)
