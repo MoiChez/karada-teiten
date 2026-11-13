@@ -217,6 +217,12 @@ export function analyzeMotion(input: MotionInput, requested: MotionKind = 'squat
     .map(([, name]) => name)
   if (hidden.length) warnings.push(`カメラ側の${hidden.join('・')}がはっきり写っていないコマが多く、位置を推測して計算しています。${profile.hiddenHint}`)
   warnings.push(...cycleWarnings)
+  // 自転車: 足首の点が、顔の向きから見て後ろ向きに回っている（実際に後ろ向きにこぐことはまれなので、推定の取り違えを疑う）
+  if (prep.crank?.reversed) {
+    warnings.push(
+      '足首の点が、顔の向きから見て後ろ向きに回っているように推定されました。実際に前にこいでいた場合は、推定モデルが体の向きか、手前と奥の脚を取り違えています。値と 3D は、推定した動きのとおりに出しています。',
+    )
+  }
 
   const values = cycles.map((c) => cycleValues(c, prep))
   const metrics: MotionMetric[] = profile.metrics.map((m) => {

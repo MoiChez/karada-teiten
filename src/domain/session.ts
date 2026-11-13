@@ -5,7 +5,7 @@ import { assessQuality } from './quality'
 import { computeAllMetrics, confidenceSummary } from './metrics'
 import { deriveTraits } from './traits'
 
-export const APP_VERSION = '0.16.2'
+export const APP_VERSION = '0.16.3'
 
 export function newId(prefix = ''): string {
   const rand =
