@@ -211,6 +211,7 @@ export default function MotionBody3D({
   equipment,
   nearSide,
   className,
+  onCanvas,
 }: {
   poses: { t: number; pose: Pose3D }[]
   clock: Clock
@@ -225,6 +226,8 @@ export default function MotionBody3D({
   equipment: MotionEquipment
   nearSide: 'left' | 'right'
   className?: string
+  /** 3D を描いている canvas（動画の書き出しで写す） */
+  onCanvas?: (c: HTMLCanvasElement) => void
 }) {
   const body = mannequinKindOf(sex)
   const [view, setView] = useState<keyof typeof VIEWS>('side')
@@ -243,7 +246,13 @@ export default function MotionBody3D({
   return (
     <div className={cx('relative flex h-full flex-col overflow-hidden rounded-[var(--radius-panel)] bg-surface', className)}>
       <div className="relative min-h-0 flex-1" style={{ touchAction: 'none' }}>
-        <Canvas camera={{ position: [...pos], fov: 35, near: 0.05, far: 50 }} dpr={[1, 2]} aria-label="動きの 3D 再生。ドラッグで回転できます">
+        <Canvas
+          camera={{ position: [...pos], fov: 35, near: 0.05, far: 50 }}
+          dpr={[1, 2]}
+          gl={{ preserveDrawingBuffer: true }}
+          onCreated={({ gl }) => onCanvas?.(gl.domElement)}
+          aria-label="動きの 3D 再生。ドラッグで回転できます"
+        >
           <BodyLights />
           <LoadBoundary onError={() => setFailed(true)}>
             <Suspense fallback={null}>

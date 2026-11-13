@@ -580,6 +580,7 @@ function PlayerWithClock({
       clock={clock}
       muscles={muscles}
       autoplay={!editor}
+      exportName={editor ? undefined : fileStem(rec)}
       videoOverlay={editor ? <MotionPointEditor prep={built.prep} clock={clock} spread={editor.spread} onEdit={editor.onEdit} /> : undefined}
     />
   )

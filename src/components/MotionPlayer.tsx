@@ -13,6 +13,8 @@ import type { MotionVideoData } from '../state/motionMedia'
 import { indexAt, useClockValue, type Clock } from './motionClock'
 import { FrameVideo } from './FrameVideo'
 import { AngleChart } from './AngleChart'
+import { MotionVideoExport } from './MotionVideoExport'
+import type { OverlayInput } from './FrameVideo'
 import { Button, IconButton, Segmented, cx } from './ui'
 
 // 3D（three.js）は重いので、開いたときに読み込む
@@ -29,6 +31,7 @@ export function MotionPlayer({
   muscles,
   videoOverlay,
   autoplay = true,
+  exportName,
 }: {
   rec: MotionRecord
   prep: PreparedMotion
@@ -43,6 +46,8 @@ export function MotionPlayer({
   videoOverlay?: ReactNode
   /** 開いたときに再生を始めるか（点を直している間は、計算し直すたびに動き出さないように止めておく） */
   autoplay?: boolean
+  /** あれば、この名前で動画に書き出せるようにする */
+  exportName?: string
 }) {
   const profile = PROFILES[rec.kind]
   const ts = useMemo(() => prep.frames.map((f) => f.t), [prep])
@@ -66,6 +71,12 @@ export function MotionPlayer({
     const from = prep.frames.map((_, k) => cycles.find((c) => k >= c.startIndex && k <= c.endIndex)?.startIndex ?? -1)
     return { points: prep.frames.map((fr) => fr.lm[sp.wrist]), from }
   }, [prep, cycles])
+  // 動画の書き出しで、コマ k に重ねるもの（画面の重ね表示と同じ）
+  const three = useRef<HTMLCanvasElement | null>(null)
+  const overlayAt = (k: number): OverlayInput | null =>
+    overlayOn && !videoOverlay && prep.frames[k]
+      ? { lm: prep.frames[k].lm, nearSide: prep.nearSide, com: com?.[k], trail: bar && bar.from[k] >= 0 ? bar.points.slice(bar.from[k], k + 1) : undefined }
+      : null
   // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
   const levels = useMemo(() => {
     if (!muscles || !prep.load) return undefined
@@ -111,7 +122,13 @@ export function MotionPlayer({
         <div className={cx('relative', sideBySide ? 'min-h-[240px]' : 'h-[min(46dvh,380px)]')}>
           <div className="absolute inset-0">
             <Suspense fallback={<div className="size-full rounded-[var(--radius-panel)] bg-surface" />}>
-              <MotionBody3D poses={poses} clock={clock} sex={sex} facing={rec.analysis.facing} kind={rec.kind} muscles={muscles} levels={levels} equipment={equipment} nearSide={prep.nearSide} className="h-full" />
+              <MotionBody3D poses={poses} clock={clock} sex={sex} facing={rec.analysis.facing} kind={rec.kind} muscles={muscles}
+                levels={levels}
+                equipment={equipment}
+                nearSide={prep.nearSide}
+                className="h-full"
+                onCanvas={(c) => (three.current = c)}
+              />
             </Suspense>
           </div>
         </div>
@@ -164,6 +181,7 @@ export function MotionPlayer({
         reference={profile.chartRefs?.[def.key]}
       />
       <NowTable clock={clock} ts={ts} prep={prep} />
+      {exportName && <MotionVideoExport rec={rec} prep={prep} cycles={cycles} video={video} clock={clock} three={three} series={def} overlayAt={overlayAt} fileStem={exportName} />}
       {video && !videoOverlay && (
         <label className="mt-2 flex min-h-11 items-center gap-2 text-[15px]">
           <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={overlayOn} onChange={(e) => setOverlayOn(e.target.checked)} />
