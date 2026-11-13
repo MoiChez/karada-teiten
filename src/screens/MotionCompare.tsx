@@ -120,7 +120,7 @@ function CompareBody({ a, b, videoA, videoB, sex }: { a: MotionRecord; b: Motion
             </tr>
           </thead>
           <tbody>
-            {profile.metrics.filter((d) => !d.hidden).map((d) => {
+            {profile.metrics.filter((d) => !d.hidden && !(d.optional && [a, b].every((r) => motionMetric(r.analysis, d.key)?.status !== 'ok'))).map((d) => {
               const ch = changes.find((c) => c.key === d.key)
               return (
                 <tr key={d.key} className="border-b border-line last:border-0">

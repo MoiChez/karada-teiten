@@ -34,7 +34,7 @@
   // 手で直した点（版 0.12 から）。t: コマの時刻、i: 点の番号、x・y: 画像に対する比。frames は書き換えない
   body?: { heightCm?: number; weightKg?: number; loadKg?: number }
   // 重心と負担の推定に使う値（版 0.13 から。入力されたものだけ。撮ったときのプロフィールの値か、結果の画面で入れた値）
-  analysis: MotionAnalysis               // algorithmVersion が古ければ frames・edits・body から計算し直す（版 0.13 は 4）
+  analysis: MotionAnalysis               // algorithmVersion が古ければ frames・edits・body から計算し直す（版 0.14 は 5）
 }
 // MotionAnalysis: { algorithmVersion, kind, facing, nearSide, validFrames,
 //   cycles: { start, end, events: { key, t }[], values: Record<string, number | null> }[],

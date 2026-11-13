@@ -19,12 +19,14 @@ import {
 import { PROFILES, type MotionCycle, type PreparedMotion, type SeriesCtx } from './motionSports'
 import type { ConstraintNote } from './motionConstraints'
 import { resolveBody, squatLoad, type BodyParams, type ResolvedBody } from './motionLoad'
+import { barSeries } from './motionBar'
+import { crankAngles } from './motionCrank'
 
 export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 4
+export const MOTION_ALGORITHM_VERSION = 5
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },
@@ -88,7 +90,10 @@ export function prepareMotion(input: MotionInput, kind: MotionKind = 'squat'): P
     series.ratio_lo = load?.ratioLo ?? none
     series.ratio_hi = load?.ratioHi ?? none
   }
-  return { ...base, kind, standLeg: ctx.standLeg, series, body, load }
+  const prep: PreparedMotion = { ...base, kind, standLeg: ctx.standLeg, series, body, load }
+  if (profile.load) prep.bar = barSeries(prep) ?? undefined
+  if (profile.crank) prep.crank = crankAngles(prep) ?? undefined
+  return prep
 }
 
 export function findCycles(prep: PreparedMotion) {

@@ -12,6 +12,7 @@ export function FrameVideo({
   overlay,
   nearSide,
   com,
+  bar,
 }: {
   images: { t: number; blob: Blob }[]
   width: number
@@ -22,6 +23,8 @@ export function FrameVideo({
   nearSide: 'left' | 'right'
   /** 推定の重心と、かかと・つま先（画像に対する比。overlay と同じ時刻の並び）。骨格を重ねるときに一緒に描く */
   com?: { c: Point; heel: Point; toe: Point }[]
+  /** バーの位置（手首の点。画像に対する比）と、コマごとの軌道の始まり（その回の始めのコマ。回の外は -1） */
+  bar?: { points: Point[]; from: number[] }
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const ts = useMemo(() => images.map((im) => im.t), [images])
@@ -85,6 +88,21 @@ export function FrameVideo({
         ctx.arc(X(m.c), floor, 2.6 * s, 0, Math.PI * 2)
         ctx.fill()
       }
+      const k = indexAt(overlayTs, clock.get())
+      if (bar && bar.from[k] >= 0) {
+        const pts = bar.points.slice(bar.from[k], k + 1)
+        ctx.lineJoin = 'round'
+        for (const [w, color] of [
+          [4.2, 'rgba(16,40,47,0.55)'],
+          [2.2, 'rgba(255,255,255,0.95)'],
+        ] as const) {
+          ctx.strokeStyle = color
+          ctx.lineWidth = w * s
+          ctx.beginPath()
+          pts.forEach((p, j) => (j ? ctx.lineTo(p.x * c.width, p.y * c.height) : ctx.moveTo(p.x * c.width, p.y * c.height)))
+          ctx.stroke()
+        }
+      }
       for (const i of [11, 12, 23, 24, 25, 26, 27, 28]) {
         if (!near(i)) continue
         ctx.fillStyle = '#10282f'
@@ -135,7 +153,7 @@ export function FrameVideo({
       off()
       lastBitmap?.close()
     }
-  }, [images, ts, clock, overlay, overlayTs, nearSide, com])
+  }, [images, ts, clock, overlay, overlayTs, nearSide, com, bar])
 
   return (
     <canvas

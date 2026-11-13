@@ -12,12 +12,16 @@ const round = (v: number, d: number): number | '' => (Number.isFinite(v) ? Math.
 /** コマごとの値（なめらかにした点から求めた値）。回の番号と、そのコマで起きた出来事（底・キャッチなど）を付ける */
 export function motionFramesCsv(rec: MotionRecord, prep: PreparedMotion, cycles: MotionCycle[]): string {
   const profile = PROFILES[rec.kind]
-  const header = ['時刻（ミリ秒）', ...profile.series.map((d) => `${d.label}（${d.unit}）`), `何${profile.unitLabel}目`, '出来事', '手で直した点']
+  const extra: [string, (i: number) => number][] = []
+  for (const d of profile.series) if (d.band) extra.push([`${d.label}の幅の下限（${d.unit}）`, (i) => prep.series[d.band![0]][i]], [`${d.label}の幅の上限（${d.unit}）`, (i) => prep.series[d.band![1]][i]])
+  if (prep.crank) extra.push(['クランクの角度（°、上死点 0）', (i) => prep.crank!.angle[i]])
+  if (prep.bar) extra.push(['バーの前後（m、足の真ん中から前が +）', (i) => prep.bar!.x[i]], ['バーの高さ（m）', (i) => prep.bar!.y[i]], ['バーの上下の速さ（m/秒）', (i) => prep.bar!.v[i]])
+  const header = ['時刻（ミリ秒）', ...profile.series.map((d) => `${d.label}（${d.unit}）`), ...extra.map(([h]) => h), `何${profile.unitLabel}目`, '出来事', '手で直した点']
   const rows: (string | number | null)[][] = [header]
   prep.frames.forEach((fr, i) => {
     const k = cycles.findIndex((c) => i >= c.startIndex && i <= c.endIndex)
     const ev = cycles.flatMap((c) => c.events.filter((e) => e.index === i).map((e) => e.label)).join(' / ')
-    rows.push([fr.t, ...profile.series.map((d) => round(prep.series[d.key][i], 2)), k >= 0 ? k + 1 : '', ev, fr.edited.join(' ')])
+    rows.push([fr.t, ...profile.series.map((d) => round(prep.series[d.key][i], 2)), ...extra.map(([, f]) => round(f(i), 3)), k >= 0 ? k + 1 : '', ev, fr.edited.join(' ')])
   })
   return toCsv(rows)
 }

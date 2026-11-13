@@ -192,7 +192,8 @@ BIKE_BAR = (0.52, 0.22)  # 股関節から見た手首の位置（前, 上）
 def pose_bike(t):
     reset()
     pose_trunk(45)
-    th = 2 * math.pi * t / BIKE_T
+    # (前, 上) の円で、上（90°）→ 前（0°）→ 下と回るよう、角度を減らしていく（前にこぐ向き）
+    th = -2 * math.pi * t / BIKE_T
     d = {}
     for side, ph in (('l', 0.0), ('r', math.pi)):
         d[side] = (BIKE_CRANK[0] + BIKE_R * math.cos(th + ph), BIKE_CRANK[1] + BIKE_R * math.sin(th + ph))

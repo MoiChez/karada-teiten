@@ -28,6 +28,7 @@ import { useToast } from '../state/stores'
 import { useClock } from '../components/motionClock'
 import { MotionPlayer } from '../components/MotionPlayer'
 import { MotionPointEditor } from '../components/MotionPointEditor'
+import { CrankChart, SequenceChart } from '../components/MotionProfiles'
 import type { ConstraintNote } from '../domain/motionConstraints'
 import { BODY_PRIOR, type BodyParams, type ResolvedBody } from '../domain/motionLoad'
 import { download } from '../components/download'
@@ -182,7 +183,8 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const edits = work.edits
   const profile = PROFILES[saved.kind]
   const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis }), [saved, work])
-  const shown = profile.metrics.filter((d) => !d.hidden)
+  // 条件がそろったときだけ出す値（バーの値など）は、値があるときだけ
+  const shown = profile.metrics.filter((d) => !d.hidden && !(d.optional && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
   const built = useMemo(() => prepareRecord(rec), [rec])
   const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
   const changes = useMemo(() => (prev ? compareMotion(prev.analysis, rec.analysis) : []), [prev, rec])
@@ -328,6 +330,18 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
         {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。膝は、太もも・すねの長さから置き直した位置です。'}
         グラフの帯は 1 {profile.unitLabel}ごとの区間です。
       </p>
+      {rec.kind === 'erg' && built && built.cycles.length > 0 && (
+        <>
+          <SectionTitle sub="ドライブで、脚・上体・腕のそれぞれが、いちばん速く動いた時刻です。">脚・上体・腕が動く順番</SectionTitle>
+          <SequenceChart prep={built.prep} cycles={built.cycles} />
+        </>
+      )}
+      {rec.kind === 'bike' && built && built.cycles.length > 0 && (
+        <>
+          <SectionTitle sub="1 回転の中のクランクの角度ごとに、関節の角度を平均しました。">クランクの角度ごとの曲線</SectionTitle>
+          <CrankChart prep={built.prep} cycles={built.cycles} />
+        </>
+      )}
 
       {profile.load && <BodyPanel body={work.body} used={a.body} onApply={changeBody} />}
 
@@ -516,7 +530,7 @@ function BodyPanel({ body, used, onApply }: { body: BodyParams | undefined; used
         重心と負担の推定に使う値
       </h2>
       <p className="mt-1 text-sm text-ink-3">
-        入れなければ、身長 {BODY_PRIOR.heightCm} cm・体重 {BODY_PRIOR.weightKg} kg・持つ重さ {BODY_PRIOR.loadKg} kg と仮定します。体重と重さは、重心と「股関節と膝の負担の比」を求めるのに使うだけで、力の大きさ（Nm）は出しません。
+        入れなければ、身長 {BODY_PRIOR.heightCm} cm・体重 {BODY_PRIOR.weightKg} kg・持つ重さ {BODY_PRIOR.loadKg} kg と仮定します。体重と重さは、重心と「股関節と膝の負担の比」を求めるのに使うだけで、力の大きさ（Nm）は出しません。持つ重さを入れると、手首の点をバーの位置とみなして、バーの軌道（動画の白い線）と、前後のぶれ・上がる速さも出します。
       </p>
       <div className="mt-3 grid grid-cols-3 gap-2">
         {field('身長', 'cm', h, setH, used?.assumed.height, BODY_PRIOR.heightCm)}

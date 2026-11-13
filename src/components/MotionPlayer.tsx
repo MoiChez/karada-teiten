@@ -59,6 +59,13 @@ export function MotionPlayer({
     const sp = sidePoints(prep.nearSide)
     return prep.frames.map((fr, k) => ({ c: pxToNorm(prep.load!.com[k], size), heel: fr.lm[sp.heel], toe: fr.lm[sp.foot] }))
   }, [prep, rec.video])
+  // バーの軌道（スクワットで持つ重さを入れたとき。手首の点。その回の始めから今のコマまで）
+  const bar = useMemo(() => {
+    if (!prep.bar) return undefined
+    const sp = sidePoints(prep.nearSide)
+    const from = prep.frames.map((_, k) => cycles.find((c) => k >= c.startIndex && k <= c.endIndex)?.startIndex ?? -1)
+    return { points: prep.frames.map((fr) => fr.lm[sp.wrist]), from }
+  }, [prep, cycles])
   // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
   const levels = useMemo(() => {
     if (!muscles || !prep.load) return undefined
@@ -95,6 +102,7 @@ export function MotionPlayer({
               overlay={overlayOn && !videoOverlay ? overlay : undefined}
               nearSide={prep.nearSide}
               com={com}
+              bar={bar}
             />
             {videoOverlay}
           </div>

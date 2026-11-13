@@ -6,6 +6,9 @@ import { sidePoints } from './landmarks'
 import { constrainBike, constrainErg } from './motionConstraints'
 import { findPeaks, segmentsOf, type Constrain, type MotionKind, type PreparedBase } from './motionCore'
 import { bodyCom, type LoadSeries, type ResolvedBody } from './motionLoad'
+import { drivePeaks, type SequencePart } from './motionSequence'
+import type { BarSeries } from './motionBar'
+import type { CrankAngles } from './motionCrank'
 
 type Side = ReturnType<typeof sidePoints>
 
@@ -41,6 +44,10 @@ export interface PreparedMotion extends PreparedBase {
   body: ResolvedBody
   /** 重心と負担の推定（スクワット） */
   load?: LoadSeries
+  /** バーの軌道（スクワットで持つ重さを入れたとき。手首の点で代用） */
+  bar?: BarSeries
+  /** クランクの角度（自転車） */
+  crank?: CrankAngles
 }
 
 export interface MotionEvent {
@@ -76,6 +83,8 @@ export interface MetricDef {
   band?: [string, string]
   /** 出典のある目安（良し悪しの判定ではない） */
   reference?: string
+  /** 条件がそろったときだけ出す値（値がなければ表に出さない） */
+  optional?: boolean
 }
 
 /** 種目で一般に主に使われる筋肉（3D の体に場所を色で示すだけ。個人の測定値ではない） */
@@ -123,6 +132,8 @@ export interface SportProfile {
   muscles: MuscleKey[]
   /** 重心と負担を推定するか（立って行い、外から加わる力が床だけの種目） */
   load?: boolean
+  /** クランクの角度を求めるか（自転車） */
+  crank?: boolean
   /** グラフに示す、出典のある目安の範囲 */
   chartRefs?: Record<string, { lo: number; hi: number; label: string }>
 }
@@ -370,6 +381,9 @@ const cycleMax =
   (c, prep) =>
     maxIn(prep.series[key], c.startIndex, c.endIndex)
 
+const BAR_DOC =
+  'バーそのものは検出していません。カメラ側の手首の点をバーの位置とみなしています（バーを握っている前提）。長さは、立っているときの耳〜かかとの高さを身長 × 0.91 として換算した目安で、身長を入れていないときは 170 cm と仮定しています。'
+
 const SQUAT: SportProfile = {
   kind: 'squat',
   label: 'スクワット',
@@ -434,6 +448,57 @@ const SQUAT: SportProfile = {
       floor: 0.05,
       band: ['ratio_bottom_lo', 'ratio_bottom_hi'],
       value: (c, prep) => at(prep, 'ratio', eventOf(c, 'bottom')?.index),
+    },
+    {
+      key: 'bar_drift',
+      label: 'バーの前後のぶれ（1 回の中）',
+      short: 'バー前後',
+      unit: 'cm',
+      digits: 1,
+      doc: `1 回の中で、バーの位置がいちばん前といちばん後ろの差です。${BAR_DOC}`,
+      floor: 1,
+      optional: true,
+      value: (c, prep) => (prep.bar ? (maxIn(prep.bar.x, c.startIndex, c.endIndex) - minIn(prep.bar.x, c.startIndex, c.endIndex)) * 100 : null),
+    },
+    {
+      key: 'bar_bottom',
+      label: 'いちばん深いところのバーの位置（足の真ん中から、前が +）',
+      short: 'バー底',
+      unit: 'cm',
+      digits: 1,
+      doc: `いちばん深いところで、バーが足の真ん中（かかととつま先の中点）からどれだけ前にあるかです。${BAR_DOC}`,
+      floor: 1,
+      optional: true,
+      value: (c, prep) => (prep.bar ? at({ ...prep, series: { x: prep.bar.x } }, 'x', eventOf(c, 'bottom')?.index)! * 100 : null),
+    },
+    {
+      key: 'bar_v_mean',
+      label: '立ち上がるときのバーの平均の速さ',
+      short: 'バー平均',
+      unit: 'm/秒',
+      digits: 2,
+      doc: `いちばん深いところから立ち上がり終わるまでに、バーが上がった高さを時間で割った値です。${BAR_DOC}`,
+      floor: 0.03,
+      optional: true,
+      value: (c, prep) => {
+        const b = eventOf(c, 'bottom')
+        if (!prep.bar || !b || c.endIndex <= b.index) return null
+        return (prep.bar.y[c.endIndex] - prep.bar.y[b.index]) / ((prep.frames[c.endIndex].t - prep.frames[b.index].t) / 1000)
+      },
+    },
+    {
+      key: 'bar_v_peak',
+      label: '立ち上がるときのバーのいちばん速い速さ',
+      short: 'バー最速',
+      unit: 'm/秒',
+      digits: 2,
+      doc: `いちばん深いところから立ち上がり終わるまでの、バーの上向きの速さの最大です。${BAR_DOC}`,
+      floor: 0.05,
+      optional: true,
+      value: (c, prep) => {
+        const b = eventOf(c, 'bottom')
+        return prep.bar && b ? maxIn(prep.bar.v, b.index, c.endIndex) : null
+      },
     },
     { key: 'ratio_bottom_lo', label: '負担の比の幅（下限）', short: '比の下限', unit: '倍', digits: 2, doc: RATIO.doc, floor: 0.05, hidden: true, value: (c, prep) => at(prep, 'ratio_lo', eventOf(c, 'bottom')?.index) },
     { key: 'ratio_bottom_hi', label: '負担の比の幅（上限）', short: '比の上限', unit: '倍', digits: 2, doc: RATIO.doc, floor: 0.05, hidden: true, value: (c, prep) => at(prep, 'ratio_hi', eventOf(c, 'bottom')?.index) },
@@ -645,6 +710,22 @@ const ERG: SportProfile = {
         return fin === undefined ? null : halfway(prep, 'elbow', c.startIndex, fin)
       },
     },
+    ...(['leg', 'trunk', 'arm'] as SequencePart[]).map(
+      (part): MetricDef => ({
+        key: `${part}_peak`,
+        label: `${{ leg: '脚', trunk: '上体', arm: '腕' }[part]}の速さがいちばん大きい時刻（ドライブの %）`,
+        short: `${{ leg: '脚', trunk: '上体', arm: '腕' }[part]}最速`,
+        unit: '%',
+        digits: 0,
+        doc: {
+          leg: 'キャッチからフィニッシュまでのうち、腰の位置（シート）が後ろへ動く速さがいちばん大きくなった時刻です（ドライブの始めが 0%、終わりが 100%）。脚・上体・腕が動く順番の目安で、早い・遅いは判定しません。',
+          trunk: 'キャッチからフィニッシュまでのうち、上体が後ろへ開く速さ（上体の傾きの変わる速さ）がいちばん大きくなった時刻です。',
+          arm: 'キャッチからフィニッシュまでのうち、ひじが曲がる速さがいちばん大きくなった時刻です。',
+        }[part],
+        floor: 3,
+        value: (c, prep) => drivePeaks(prep, c)[part],
+      }),
+    ),
   ],
   valid: (p, s) => p[s.shoulder].y < p[s.hip].y,
   // キャッチで動きが折り返すので、スクワットより弱くする
@@ -810,6 +891,7 @@ const BIKE: SportProfile = {
   orientation: 'landscape',
   muscles: ['quads', 'glutes', 'hamstrings', 'calves'],
   chartRefs: { knee: { lo: 25, hi: 35, label: '目安 25〜35°（下死点。止まって角度計で測る方法）' } },
+  crank: true,
 }
 
 export const PROFILES: Record<MotionKind, SportProfile> = { squat: SQUAT, erg: ERG, bike: BIKE }
