@@ -96,35 +96,60 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
   const half = prep.kind === 'bike' && periods.length ? periods[Math.floor(periods.length / 2)] / 2 : 0
   const ts = fr.map((f) => f.t)
   const far = new Set(FAR_LEG(prep.nearSide))
-  /** 時刻 t のカメラ側の点（股関節からの相対位置） */
-  const nearRel = (t: number, i: number): Point => {
-    const k = nearestIndex(ts, t)
+  /** コマ k のカメラ側の点（股関節からの相対位置） */
+  const nearRel = (k: number, i: number): Point => {
     const p = fr[k].px[i]
     const h = fr[k].px[s.hip]
     return { x: p.x - h.x, y: p.y - h.y }
   }
   const last = ts[ts.length - 1]
+  // 自転車の奥側の脚: クランクの角度が半回転（180°）ずれたコマのカメラ側の脚の形を使う。
+  // 回転の速さが変わっても、左右のペダルが常に反対の位置になるように（時間でずらすと、速さが変わるとずれる）
+  const crank = prep.kind === 'bike' ? prep.crank : undefined
+  const span = half ? Math.max(3, Math.round((half * 2.4) / Math.max(1, (last - ts[0]) / Math.max(1, ts.length - 1)))) : 0
+  const opposite = (k: number): number => {
+    if (!crank) return nearestIndex(ts, ts[k] + half <= last ? ts[k] + half : ts[k] - half)
+    const want = (crank.angle[k] + 180) % 360
+    let best = k
+    let bestScore = Infinity
+    for (let j = Math.max(0, k - span); j <= Math.min(fr.length - 1, k + span); j++) {
+      let d = Math.abs(crank.angle[j] - want) % 360
+      if (d > 180) d = 360 - d
+      const score = d + Math.abs(j - k) * 0.5
+      if (score < bestScore) {
+        bestScore = score
+        best = j
+      }
+    }
+    return best
+  }
+  // 左右の位置: 横からの映像では推定モデルの奥行きがコマごとに大きく揺れ、体がくねくね動いて見えるため、
+  // 点ごとに全コマの中央値を使って動かさない（横から見た前後・上下の動きだけを反映する）
+  const lateral = new Map<number, number>()
+  if (useWorld) {
+    for (const i of USED) {
+      const vals = fr.map((f) => {
+        const w = f.world!
+        const hx = (w[23].x + w[24].x) / 2
+        const hz = (w[23].z + w[24].z) / 2
+        return ((w[i].x - hx) * axis!.x + (w[i].z - hz) * axis!.z) / Hw
+      })
+      lateral.set(i, quantile(vals, 0.5))
+    }
+  }
 
   return fr.map((f, k) => {
     const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
-    const w = f.world
-    const hipMid = w ? { x: (w[23].x + w[24].x) / 2, z: (w[23].z + w[24].z) / 2 } : null
+    const j = half && far.size ? opposite(k) : k
     for (const i of USED) {
       let p = at(k, nearOf(i, prep.nearSide))
       if (half && far.has(i)) {
-        // 半回転先（終わりを過ぎるなら半回転前）のカメラ側の脚の形を、今の股関節の位置に置く
-        const tt = f.t + half <= last ? f.t + half : f.t - half
-        const r = nearRel(tt, nearOf(i, prep.nearSide))
+        const r = nearRel(j, nearOf(i, prep.nearSide))
         const h = at(k, s.hip)
         p = { x: h.x + r.x, y: h.y + r.y }
       }
-      let x: number
-      if (useWorld && w && hipMid) {
-        x = ((w[i].x - hipMid.x) * axis!.x + (w[i].z - hipMid.z) * axis!.z) / Hw
-      } else {
-        const base = i === 0 ? 0 : i % 2 === 1 ? i : i - 1
-        x = i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06)
-      }
+      const base = i === 0 ? 0 : i % 2 === 1 ? i : i - 1
+      const x = lateral.get(i) ?? (i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06))
       points[i] = { x, y: (floorY - p.y) / H, z: (prep.f * (p.x - ankleX)) / H }
     }
     return { t: f.t, pose: { points, depthSource: 'side_photo' as const } }

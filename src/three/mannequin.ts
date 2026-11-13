@@ -80,9 +80,11 @@ function frameRotation(curA: THREE.Vector3, curB: THREE.Vector3, tgtA: THREE.Vec
 
 /**
  * root（GLB の scene の複製）を pose に合わせる。何度呼んでもよい（毎回、最初の姿勢に戻してから曲げる）。
- * 位置は、両足首の中点が pose の両足首の中点に重なるように置く
+ * anchor = 'ankles'（既定）: 腕と脚は関節の向きだけを合わせ、両足首の中点が pose の両足首の中点に重なるように置く。
+ * anchor = 'hips'（座って行う種目）: 両股関節の中点を pose に重ね、脚と腕は骨の長さを保ったまま、
+ * 足首・手首が pose の位置に届くように曲げる（膝・ひじは pose の膝・ひじの側へ曲げる）。腰が浮き沈みしないように
  */
-export function poseMannequin(root: THREE.Object3D, pose: Pose3D): PoseFit {
+export function poseMannequin(root: THREE.Object3D, pose: Pose3D, opts: { anchor?: 'ankles' | 'hips' } = {}): PoseFit {
   const bones = new Map<string, THREE.Object3D>()
   root.traverse((o) => {
     if ((o as THREE.Bone).isBone || o.name.startsWith('lm_')) bones.set(o.name, o)
@@ -155,6 +157,35 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D): PoseFit {
     fitted.push(has(0) ? 'neck_head' : 'neck')
   }
 
+  // 座って行う種目: 先に大きさと位置（両股関節の中点）を決め、脚と腕を届かせる
+  if (opts.anchor === 'hips' && has(23, 24)) {
+    const scale = 1 / Hm
+    root.scale.setScalar(scale)
+    root.updateMatrixWorld(true)
+    root.position.add(mid(T(23)!, T(24)!).sub(mid(P(23), P(24))))
+    root.updateMatrixWorld(true)
+    for (const [upper, lower, a, b, c] of [
+      ['thigh_l', 'calf_l', 23, 25, 27],
+      ['thigh_r', 'calf_r', 24, 26, 28],
+      ['upperarm_l', 'lowerarm_l', 11, 13, 15],
+      ['upperarm_r', 'lowerarm_r', 12, 14, 16],
+    ] as const) {
+      if (!has(b, c)) continue
+      reach(B(upper), B(lower), P(a), P(b), P(c), T(b)!, T(c)!, true)
+      // 曲げた後の位置で次の骨を合わせるので、上の P は曲げる前の値。下で付け根から測り直す
+      fitted.push(upper, lower)
+    }
+    for (const [bone, heel, toe] of [
+      ['foot_l', 29, 31],
+      ['foot_r', 30, 32],
+    ] as const) {
+      if (!has(heel, toe)) continue
+      rotateWorld(B(bone), swing(P(toe).sub(P(heel)), T(toe)!.sub(T(heel)!)))
+      fitted.push(bone)
+    }
+    return { scale, fitted }
+  }
+
   // 腕と脚: 関節から次の関節への向き
   const limb = (bone: string, a: number, b: number, fallback: THREE.Vector3) => {
     const dir = has(a, b) ? T(b)!.sub(T(a)!) : fallback
@@ -188,6 +219,36 @@ export function poseMannequin(root: THREE.Object3D, pose: Pose3D): PoseFit {
   root.position.copy(target.sub(ankle.multiplyScalar(scale)))
   root.updateMatrixWorld(true)
   return { scale, fitted }
+}
+
+/**
+ * 2 本の骨（上と下）を、長さを保ったまま、先端が target に届くように曲げる（届かなければ target の向きにまっすぐ伸ばす）。
+ * 曲げる向きは、真ん中の関節の目標 mid の側。a・b・c は今の関節の位置（ワールド）
+ */
+function reach(upper: THREE.Object3D, lower: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, midTarget: THREE.Vector3, target: THREE.Vector3, planar = false) {
+  const l1 = b.distanceTo(a)
+  const l2 = c.distanceTo(b)
+  const d = target.clone().sub(a)
+  const u = d.lengthSq() > 1e-12 ? d.clone().normalize() : new THREE.Vector3(0, -1, 0)
+  const dist = Math.min(Math.max(d.length(), Math.abs(l1 - l2) + 1e-4), l1 + l2 - 1e-4)
+  const x = (dist * dist + l1 * l1 - l2 * l2) / (2 * dist)
+  const h = Math.sqrt(Math.max(0, l1 * l1 - x * x))
+  const pole = midTarget.clone().sub(a)
+  pole.sub(u.clone().multiplyScalar(pole.dot(u)))
+  // 横から撮った種目は、膝・ひじを前後・上下の面の中で曲げる（左右の推定の揺れで、膝が横に揺れないように）
+  if (planar) {
+    const side = new THREE.Vector3(1, 0, 0)
+    const inPlane = pole.clone().sub(side.multiplyScalar(pole.x))
+    if (inPlane.lengthSq() > 1e-10) pole.copy(inPlane.sub(u.clone().multiplyScalar(inPlane.dot(u))))
+  }
+  if (pole.lengthSq() < 1e-12) pole.copy(new THREE.Vector3(0, 0, 1).sub(u.clone().multiplyScalar(u.z)))
+  pole.normalize()
+  const knee = a.clone().add(u.clone().multiplyScalar(x)).add(pole.multiplyScalar(h))
+  rotateWorld(upper, swing(b.clone().sub(a), knee.clone().sub(a)))
+  const b1 = lower.getWorldPosition(new THREE.Vector3())
+  const tip = lower.children.find((o) => (o as THREE.Bone).isBone)
+  const c1 = tip ? tip.getWorldPosition(new THREE.Vector3()) : c
+  rotateWorld(lower, swing(c1.clone().sub(b1), a.clone().add(u.multiplyScalar(dist)).sub(b1)))
 }
 
 /** 部位ごとの色の重み（各頂点の骨の重みから求める。関節は隣り合う 2 本の骨の重みの重なり） */

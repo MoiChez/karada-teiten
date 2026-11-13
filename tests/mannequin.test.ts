@@ -118,6 +118,38 @@ describe('マネキンを測った姿勢に合わせる', () => {
     expect(red).toBeGreaterThan(50)
   })
 
+  it('座って行う種目は、腰を固定し、骨の長さを保ったまま足首・手首を測った位置に届かせる', async () => {
+    const root = await load('male')
+    // エルゴのキャッチに近い形: 腰を後ろに、膝を高く、足首を前に、手を前へ
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, y: number, z: number, w: number) => {
+      points[l] = p(w, y, z)
+      points[r] = p(-w, y, z)
+    }
+    set(7, 8, 0.78, 0.18, 0.06)
+    set(11, 12, 0.64, 0.12, 0.11)
+    set(13, 14, 0.5, 0.26, 0.13)
+    set(15, 16, 0.42, 0.42, 0.13)
+    set(23, 24, 0.3, 0, 0.06)
+    set(25, 26, 0.52, 0.2, 0.07)
+    set(27, 28, 0.28, 0.36, 0.06)
+    set(29, 30, 0.26, 0.33, 0.06)
+    set(31, 32, 0.24, 0.46, 0.06)
+    points[0] = p(0, 0.76, 0.24)
+    const pose: Pose3D = { points, depthSource: 'side_photo' }
+    for (let k = 0; k < 2; k++) {
+      poseMannequin(root, pose, { anchor: 'hips' })
+      root.updateMatrixWorld(true)
+      // 腰は測った位置に重なる
+      expect(mid(pointOf(root, 23), pointOf(root, 24)).distanceTo(mid(vec(pose, 23), vec(pose, 24)))).toBeLessThan(1e-3)
+      // 足首は測った位置に届く（届く距離なので）
+      for (const i of [27, 28]) expect(pointOf(root, i).distanceTo(vec(pose, i))).toBeLessThan(0.01)
+      // 膝は上（測った膝の側）へ曲がる
+      expect(pointOf(root, 25).y).toBeGreaterThan(pointOf(root, 23).y + 0.1)
+    }
+  })
+
   it('プロフィールの性別から体のモデルを選ぶ', () => {
     expect(mannequinKindOf('male')).toBe('male')
     expect(mannequinKindOf('female')).toBe('female')

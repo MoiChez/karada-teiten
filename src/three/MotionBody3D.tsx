@@ -95,7 +95,8 @@ function MovingBody({
     last.current = t
     const pose = poseAtTime(poses, t)
     if (!pose) return
-    poseMannequin(root, pose)
+    // 座って行う種目は腰を固定して手足を届かせ、立って行う種目は足を床に置く
+    poseMannequin(root, pose, { anchor: sport === 'erg' || sport === 'bike' ? 'hips' : 'ankles' })
     // 立って行う種目は、いちばん低い足を床（y = 0）に置く。座って行う種目は、足が器具の上で動くのでそのまま
     if (sport === 'squat' || sport === 'squat_front') {
       let minY = Infinity
@@ -117,20 +118,29 @@ function MovingBody({
 }
 
 /** 器具の形（体の点の動きから決めた目安。器具そのものを検出したものではない） */
-function Gear({ eq, poses, clock, hip, ankle }: { eq: MotionEquipment; poses: { t: number; pose: Pose3D }[]; clock: Clock; hip: number; ankle: number }) {
+function Gear({ eq, poses, clock, hip, ankle, side }: { eq: MotionEquipment; poses: { t: number; pose: Pose3D }[]; clock: Clock; hip: number; ankle: number; side: 1 | -1 }) {
   const seat = useRef<THREE.Mesh>(null)
   const arm = useRef<THREE.Mesh>(null)
+  const armFar = useRef<THREE.Mesh>(null)
+  // クランクと歯車はカメラ側（side。体の左が +1）に、反対のクランクは奥側に置く
+  const X = 0.11 * side
   useFrame(() => {
     const pose = poseAtTime(poses, clock.get())
     if (!pose) return
     const h = pose.points[hip]
     if (seat.current && h) seat.current.position.z = h.z
     const a = pose.points[ankle]
-    if (arm.current && a && eq.bike) {
+    if (a && eq.bike) {
       const { y, z, r } = eq.bike.crank
       const ang = Math.atan2(a.y - y, a.z - z)
-      arm.current.position.set(0.09, y + (Math.sin(ang) * r) / 2, z + (Math.cos(ang) * r) / 2)
-      arm.current.rotation.x = -ang
+      for (const [m, an, x] of [
+        [arm.current, ang, X],
+        [armFar.current, ang + Math.PI, -X],
+      ] as const) {
+        if (!m) continue
+        m.position.set(x, y + (Math.sin(an) * r) / 2, z + (Math.cos(an) * r) / 2)
+        m.rotation.x = -an
+      }
     }
   })
   if (eq.erg) {
@@ -162,11 +172,19 @@ function Gear({ eq, poses, clock, hip, ankle }: { eq: MotionEquipment; poses: { 
     const { crank, saddle, bar } = eq.bike
     return (
       <group>
-        <mesh position={[0.09, crank.y, crank.z]} rotation={[0, Math.PI / 2, 0]}>
+        <mesh position={[X, crank.y, crank.z]} rotation={[0, Math.PI / 2, 0]}>
           <torusGeometry args={[crank.r, 0.006, 8, 48]} />
           <meshStandardMaterial color={GEAR} roughness={0.7} />
         </mesh>
+        <mesh position={[0, crank.y, crank.z]} rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.012, 0.012, 2 * Math.abs(X), 12]} />
+          <meshStandardMaterial color={GEAR} roughness={0.7} />
+        </mesh>
         <mesh ref={arm}>
+          <boxGeometry args={[0.015, 0.02, crank.r]} />
+          <meshStandardMaterial color={GEAR} roughness={0.7} />
+        </mesh>
+        <mesh ref={armFar}>
           <boxGeometry args={[0.015, 0.02, crank.r]} />
           <meshStandardMaterial color={GEAR} roughness={0.7} />
         </mesh>
@@ -264,7 +282,7 @@ export default function MotionBody3D({
               <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} />
             </Suspense>
           </LoadBoundary>
-          <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} />
+          <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} side={nearSide === 'left' ? 1 : -1} />
           <OrbitControls ref={controls} makeDefault target={[0, 0.45, 0]} enableDamping={!reduced} minDistance={0.8} maxDistance={8} />
           <ViewSetter view={view} pos={pos} controls={controls} />
         </Canvas>
