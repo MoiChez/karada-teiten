@@ -89,8 +89,18 @@ function frameRotation(curA: THREE.Vector3, curB: THREE.Vector3, tgtA: THREE.Vec
 export function poseMannequin(
   root: THREE.Object3D,
   pose: Pose3D,
-  opts: { anchor?: 'ankles' | 'hips'; planarLegs?: boolean; seated?: boolean; grip?: boolean } = {},
+  opts: {
+    anchor?: 'ankles' | 'hips'
+    planarLegs?: boolean
+    /** 座った姿勢。'round' は腰から背中を丸める（エルゴ） */
+    seated?: boolean | 'round'
+    grip?: boolean
+    /** false で胴の厚みを合わせない（胴の厚みを決めるために 3D の胴を測るとき） */
+    torso?: boolean
+  } = {},
 ): PoseFit {
+  // 胴の厚みは、記録の中の何コマかの 3D の胴を測って 1 回だけ決める（その間はこの関数でコマごとに曲げ直す）
+  if (opts.anchor === 'hips' && opts.torso !== false && pose.bones?.torsoDepth && pose.bones.torsoPoses?.length) ensureTorsoFit(root, pose.bones, opts)
   const bones = new Map<string, THREE.Object3D>()
   root.traverse((o) => {
     if ((o as THREE.Bone).isBone || o.name.startsWith('lm_')) bones.set(o.name, o)
@@ -165,10 +175,18 @@ export function poseMannequin(
     d = Math.atan2(Math.sin(d), Math.cos(d))
     const bend = Math.min(SPINE_FLEX_MAX, Math.max(-SPINE_EXT_MAX, SPINE_SHARE * d))
     rotateWorld(B('pelvis'), new THREE.Quaternion().setFromAxisAngle(left, d - bend))
-    // 座った姿勢: 骨盤を後ろへ起こし、同じだけ腰の骨（背骨のいちばん下）を前へ曲げて、胸から上の向きはそのままにする。
-    // 標準の体は立った姿勢の腰の反りを持っていて、エルゴで背中をまっすぐにして座る人に重ねると、腰のところだけ
-    // 3D の背中が内側に入って曲がって見えたため（座ると骨盤が後ろへ傾き、腰の反りが減る）
-    if (opts.seated) {
+    // 座った姿勢: 骨盤を後ろへ起こし、同じだけ腰の骨 2 本（背骨の下の 2 本）で半分ずつ前へ曲げて、胸から上の向きは
+    // そのままにする（腰から背中を丸める）。標準の体は立った姿勢の腰の反りを持っていて、エルゴのドライブの中ほどや
+    // リカバリーで、腰が反って胸が前へ突き出て見えたため（座ると骨盤が後ろへ傾き、腰の反りがなくなって背中が丸まる）。
+    // 起こす角度は前へ倒すほど大きく、後ろへ倒すほど小さくする（キャッチで腰がいちばん丸まり、フィニッシュでは
+    // 骨盤ごと後ろへ倒れるので、同じ角度だと腰の下が後ろへ出すぎたため）
+    // 自転車は胴を 70° ほど前へ倒し、骨盤ごと前へ倒れるので、丸めない（丸めると肩が推定の点から体の高さの 2% ほど
+    // 離れた）。骨盤を 30° 起こし、腰の骨 1 本で戻すだけにする
+    if (opts.seated === 'round') {
+      const seat = Math.max(0, ROUND_PELVIS + ROUND_PELVIS_PER_LEAN * d)
+      rotateWorld(B('pelvis'), new THREE.Quaternion().setFromAxisAngle(left, -seat))
+      for (const name of ['spine_01', 'spine_02']) rotateWorld(B(name), new THREE.Quaternion().setFromAxisAngle(left, seat / 2))
+    } else if (opts.seated) {
       rotateWorld(B('pelvis'), new THREE.Quaternion().setFromAxisAngle(left, -SEATED_PELVIS))
       rotateWorld(B('spine_01'), new THREE.Quaternion().setFromAxisAngle(left, SEATED_PELVIS))
     }
@@ -284,7 +302,7 @@ export function poseMannequin(
       }
     }
     // 胴の前後の厚みを、動画の人の輪郭から測った厚みに合わせる（腰・背中の中ほど・胸の高さごと。0.75〜1.75 倍）
-    setTorsoDepth(root, len && L?.torsoDepth && has(11, 12) ? torsoScales(root, L, mid(T(23)!, T(24)!), mid(T(11)!, T(12)!)) : null)
+    setTorsoDepth(root, opts.torso !== false && len && L?.torsoDepth && has(11, 12) ? torsoScales(root, L, mid(T(23)!, T(24)!), mid(T(11)!, T(12)!)) : null)
     // 曲げる向きの好み（体の左が +X、前が +Z）: 膝は前と上、ひじは後ろと下と少し外。
     // 脚が伸び切る・腕が伸び切るときは、目標の膝・ひじが一直線の上に来て、曲げる向きがコマごとに反転しやすいため
     const KNEE = new THREE.Vector3(0, 0.4, 1)
@@ -357,9 +375,14 @@ const SPINE_SHARE = 0.35
 const SPINE_EXT_MAX = (5 * Math.PI) / 180
 const SPINE_FLEX_MAX = (30 * Math.PI) / 180
 /**
- * 座った姿勢で、立った姿勢より骨盤を後ろへ起こす角度（同じだけ腰の骨を前へ曲げる）。利用者のエルゴの動画で、人の背中の輪郭と
- * 3D の背中（腕を除く）の差が、股関節から肩までの高さのどこでもほぼ同じ（まっすぐ）になる角度（0・10・20・30° で比べた）
+ * 腰から背中を丸める座った姿勢（エルゴ）で、立った姿勢より骨盤を後ろへ起こす角度（胴が立った姿勢と同じ向きのとき。同じだけ腰の骨 2 本で前へ曲げる）と、
+ * 胴を前へ倒した角度 1 あたりに足す角度（後ろへ倒すと引く）。利用者のエルゴの動画（1 回の漕ぎの 26 コマ）で、人の背中の
+ * 輪郭と 3D の背中（腕を除く）の差の、高さによる違い（形のずれ）が小さくなる値（骨盤だけ・腰の骨だけ・胸の骨まで分ける、
+ * 30〜75°、前傾に応じて変える・変えない、を比べた）。docs/08
  */
+const ROUND_PELVIS = (50 * Math.PI) / 180
+const ROUND_PELVIS_PER_LEAN = 0.4
+/** 座った姿勢で背中を丸めないとき（自転車）に、骨盤を後ろへ起こす角度（同じだけ腰の骨 1 本を前へ曲げる） */
 const SEATED_PELVIS = (30 * Math.PI) / 180
 /** 動きの再生で、肩の関節を肩の点へ寄せるときに鎖骨を回す最大の角度 */
 const CLAVICLE_MAX = (30 * Math.PI) / 180
@@ -537,19 +560,73 @@ const TORSO_SCALES = new WeakMap<BoneLengths, WeakMap<THREE.BufferGeometry, Tors
  * はみ出したため）。立った姿勢の 3D と比べると、座って骨盤を起こした胴では 1 割ほど食い違ったため、曲げた後で測る
  */
 function torsoScales(root: THREE.Object3D, L: BoneLengths, hip: THREE.Vector3, sh: THREE.Vector3): TorsoFit | null {
-  const depth = L.torsoDepth
-  let mesh: THREE.SkinnedMesh | undefined
-  root.traverse((o) => {
-    if (!mesh && (o as THREE.SkinnedMesh).isSkinnedMesh) mesh = o as THREE.SkinnedMesh
-  })
-  const m = mesh && torsoMorphOf(mesh)
-  if (!depth || !mesh || !m) return null
+  const found = torsoMeshOf(root)
+  if (!L.torsoDepth || !found) return null
+  const { mesh, morph } = found
   let byGeom = TORSO_SCALES.get(L)
   if (!byGeom) TORSO_SCALES.set(L, (byGeom = new WeakMap()))
   const hit = byGeom.get(mesh.geometry)
   if (hit !== undefined) return hit
   setTorsoDepth(root, null)
   root.updateMatrixWorld(true)
+  const out = measureTorsoFit(root, mesh, morph, L, hip, sh)
+  byGeom.set(mesh.geometry, out)
+  return out
+}
+
+/** 体のメッシュと、胴の形 */
+function torsoMeshOf(root: THREE.Object3D): { mesh: THREE.SkinnedMesh; morph: TorsoMorph } | null {
+  let mesh: THREE.SkinnedMesh | undefined
+  root.traverse((o) => {
+    if (!mesh && (o as THREE.SkinnedMesh).isSkinnedMesh) mesh = o as THREE.SkinnedMesh
+  })
+  const morph = mesh && torsoMorphOf(mesh)
+  return mesh && morph ? { mesh, morph } : null
+}
+
+/**
+ * 記録の胴の厚みを、L.torsoPoses の各コマの 3D の胴（形を足す前）を測って決める（帯ごとに、コマごとの値の中央値）。
+ * 1 コマだけで決めると、そのコマの姿勢（キャッチ・フィニッシュなど）に合わせた厚みになり、ほかの姿勢でずれたため
+ * （人の輪郭も動画の全体の 16 コマの中央値）。どのコマでも測れなければ、最初に合わせたコマで測る
+ */
+function ensureTorsoFit(root: THREE.Object3D, L: BoneLengths, opts: Parameters<typeof poseMannequin>[2]) {
+  const found = torsoMeshOf(root)
+  if (!found) return
+  const { mesh, morph } = found
+  let byGeom = TORSO_SCALES.get(L)
+  if (!byGeom) TORSO_SCALES.set(L, (byGeom = new WeakMap()))
+  if (byGeom.has(mesh.geometry)) return
+  const fits: TorsoFit[] = []
+  for (const p of L.torsoPoses ?? []) {
+    const P = p.points
+    if (!P[11] || !P[12] || !P[23] || !P[24]) continue
+    poseMannequin(root, p, { ...opts, torso: false })
+    root.updateMatrixWorld(true)
+    const fit = measureTorsoFit(root, mesh, morph, L, mid(v(P[23]), v(P[24])), mid(v(P[11]), v(P[12])))
+    if (fit) fits.push(fit)
+  }
+  if (!fits.length) return
+  const median = (a: number[]) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)]
+  byGeom.set(mesh.geometry, {
+    thick: TORSO_BANDS.map((_, j) => median(fits.map((f) => f.thick[j]))),
+    shift: TORSO_BANDS.map((_, j) => median(fits.map((f) => f.shift[j]))),
+  })
+}
+
+/**
+ * 今の姿勢（形を足していない）の 3D の胴を、動画と同じ測り方で測り、帯ごとの厚みと前後の位置を決める。
+ * hip・sh は股関節の中点・両肩の点の中点の目標（体の高さを 1 とした座標）
+ */
+function measureTorsoFit(
+  root: THREE.Object3D,
+  mesh: THREE.SkinnedMesh,
+  m: TorsoMorph,
+  L: BoneLengths,
+  hip: THREE.Vector3,
+  sh: THREE.Vector3,
+): TorsoFit | null {
+  const depth = L.torsoDepth
+  if (!depth) return null
   const axis = new THREE.Vector3(0, sh.y - hip.y, sh.z - hip.z)
   const len = axis.length()
   if (!(len > 1e-6)) return null
@@ -559,12 +636,12 @@ function torsoScales(root: THREE.Object3D, L: BoneLengths, hip: THREE.Vector3, s
   if (normal.z < 0) normal.negate()
   const lo = TORSO_ROWS.map(() => Infinity)
   const hi = TORSO_ROWS.map(() => -Infinity)
-  const v = new THREE.Vector3()
+  const vv = new THREE.Vector3()
   for (const i of m.verts) {
-    mesh.getVertexPosition(i, v)
-    v.applyMatrix4(mesh.matrixWorld)
-    const dy = v.y - hip.y
-    const dz = v.z - hip.z
+    mesh.getVertexPosition(i, vv)
+    vv.applyMatrix4(mesh.matrixWorld)
+    const dy = vv.y - hip.y
+    const dz = vv.z - hip.z
     const f = (dy * axis.y + dz * axis.z) / len
     const nrm = dy * normal.y + dz * normal.z
     TORSO_ROWS.forEach((row, j) => {
@@ -604,9 +681,7 @@ function torsoScales(root: THREE.Object3D, L: BoneLengths, hip: THREE.Vector3, s
     ),
     0,
   )
-  const out = shift ? { thick, shift: shift.map((x) => x / toPose) } : null
-  byGeom.set(mesh.geometry, out)
-  return out
+  return shift ? { thick, shift: shift.map((x) => x / toPose) } : null
 }
 
 /** 順手でハンドルを握るときの、指の付け根・中・先の関節の曲げ（度）と、親指を人さし指の中ほどへ寄せる割合（付け根から先へ） */

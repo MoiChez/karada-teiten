@@ -249,6 +249,9 @@ describe('動きの 3D', () => {
     expect(poses[0].pose.bones!.torsoDepth).toEqual(torsoDepth)
     // 脚の長さ（体の高さの単位）も一緒に渡す
     expect(poses[0].pose.bones!.leg).toBeGreaterThan(0.3)
+    // 3D の胴を測るコマ（全体から等間隔）も渡す
+    expect(poses[0].pose.bones!.torsoPoses!.length).toBeGreaterThan(0)
+    expect(poses[0].pose.bones!.torsoPoses!.length).toBeLessThanOrEqual(16)
   })
 
   it('コマの間の時刻は、前後のコマから直線で補う', () => {

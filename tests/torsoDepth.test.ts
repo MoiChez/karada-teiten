@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Landmark } from '../src/domain/types'
 import type { MaskData } from '../src/domain/backContour'
-import { TORSO_ROWS, torsoDepthRows, torsoProfileOf } from '../src/domain/torsoDepth'
+import { TORSO_FRAMES, TORSO_ROWS, evenPicks, torsoDepthRows, torsoProfileOf } from '../src/domain/torsoDepth'
 
 const W = 400
 const H = 600
@@ -86,5 +86,26 @@ describe('胴の前と後ろの輪郭（人の領域から）', () => {
     expect(p.back[1]).toBeNull()
     expect(p.front.every((v) => v === null)).toBe(true)
     expect(torsoProfileOf([row(0.3, 0.3), row(0.4, 0.3)])).toBeNull()
+  })
+
+  it('カメラ側を渡すと、その側の股関節と肩の点で引いた線から測る（奥の肩の点がずれても変わらない）', () => {
+    const { lm, mask } = seated(100)
+    const base = torsoDepthRows(lm, mask, W, H, undefined, 'left')!
+    // 奥（右）の肩の点が 30 ピクセル前へずれる（フィニッシュで起こる）
+    const moved = lm.map((l, i) => (i === 12 ? { ...l, x: l.x + 30 / W } : l))
+    const side = torsoDepthRows(moved, mask, W, H, undefined, 'left')!
+    expect(side.back).toEqual(base.back)
+    // 渡さないと、左右の真ん中の線になり、背中までの距離が変わる
+    const midLine = torsoDepthRows(moved, mask, W, H)!
+    expect(midLine.back[9]! - base.back[9]!).toBeGreaterThan(0.02)
+  })
+
+  it('測るコマは、全体から等間隔に選ぶ（人の輪郭と 3D で同じコマ）', () => {
+    const picks = evenPicks(600)
+    expect(picks.length).toBe(TORSO_FRAMES)
+    expect(picks[0]).toBe(19)
+    expect(picks[15]).toBe(581)
+    expect(evenPicks(5)).toEqual([0, 1, 2, 3, 4])
+    expect(evenPicks(0)).toEqual([])
   })
 })

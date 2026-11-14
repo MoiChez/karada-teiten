@@ -7,6 +7,7 @@ import type { Point } from './types'
 import type { MotionCycle, PreparedMotion } from './motionSports'
 import { sidePoints } from './landmarks'
 import { PAIRS, bodySideIndex } from './motionFrontal'
+import { evenPicks } from './torsoDepth'
 
 /**
  * 座って行う種目で、体の大きさをそろえる比（標準の体の「股関節〜膝〜足首の長さ / 耳〜かかとの高さ」）。
@@ -177,6 +178,7 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
   if (bones && prep.torsoDepth) {
     bones.torsoDepth = prep.torsoDepth
     bones.leg = prep.leg / H
+    bones.torsoPoses = evenPicks(out.length).map((i) => out[i].pose)
   }
   for (const o of out) o.pose.bones = bones
   return out

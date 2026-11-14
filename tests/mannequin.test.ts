@@ -243,6 +243,65 @@ describe('マネキンを測った姿勢に合わせる', () => {
     a.pts.forEach((v, i) => expect(v.distanceTo(b.pts[i]), `point ${i}`).toBeLessThan(0.01))
   })
 
+  it('エルゴは腰から背中を丸める（腰の反りがなくなり、関節の位置は変えない）', async () => {
+    const root = await load('male')
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, y: number, z: number, w: number) => {
+      points[l] = p(w, y, z)
+      points[r] = p(-w, y, z)
+    }
+    // まっすぐ座った姿勢（ドライブの中ほど）
+    set(23, 24, 0.3, 0, 0.06)
+    set(11, 12, 0.57, 0, 0.11)
+    set(7, 8, 0.69, 0.03, 0.06)
+    set(13, 14, 0.45, 0.1, 0.125)
+    set(15, 16, 0.47, 0.25, 0.13)
+    set(25, 26, 0.33, 0.25, 0.06)
+    set(27, 28, 0.2, 0.48, 0.06)
+    set(29, 30, 0.18, 0.46, 0.06)
+    set(31, 32, 0.22, 0.58, 0.065)
+    const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.17, foreArm: 0.16, thigh: 0.26, shank: 0.26, trunk: 0.25 } }
+    let mesh: THREE.SkinnedMesh | undefined
+    root.traverse((o) => {
+      if (!mesh && (o as THREE.SkinnedMesh).isSkinnedMesh) mesh = o as THREE.SkinnedMesh
+    })
+    const rows = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    // 高さごとの、胴の線（ここでは真上）から背中の端までの距離
+    const shot = (seated: boolean | 'round') => {
+      poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, seated })
+      root.updateMatrixWorld(true)
+      const g = mesh!.geometry
+      const si = g.getAttribute('skinIndex')
+      const sw = g.getAttribute('skinWeight')
+      const names = mesh!.skeleton.bones.map((b) => b.name)
+      const torso = new Set(['pelvis', 'spine_01', 'spine_02', 'spine_03'])
+      const back = rows.map(() => -Infinity)
+      const v = new THREE.Vector3()
+      for (let i = 0; i < g.getAttribute('position').count; i++) {
+        let w = 0
+        for (let k = 0; k < 4; k++) if (torso.has(names[si.getComponent(i, k)])) w += sw.getComponent(i, k)
+        if (w < 0.5) continue
+        mesh!.getVertexPosition(i, v)
+        v.applyMatrix4(mesh!.matrixWorld)
+        const f = (v.y - 0.3) / 0.27
+        rows.forEach((r, j) => {
+          if (Math.abs(f - r) <= 0.025) back[j] = Math.max(back[j], -v.z)
+        })
+      }
+      return { back, pts: [7, 11, 13, 15, 25, 27].map((i) => pointOf(root, i)) }
+    }
+    // 腰のへこみ: 股関節の近く（0.1）と胸（0.8）を結ぶ線より、腰（0.3・0.4）が内側に入っている深さ
+    const dip = (b: number[]) => Math.max(...[2, 3].map((j) => b[0] + ((b[7] - b[0]) * (rows[j] - 0.1)) / 0.7 - b[j]))
+    const flat = shot(false)
+    const round = shot('round')
+    // 標準の体のままだと、腰が体の高さの 1% より深くへこむ（反っている）。丸めるとへこまない
+    expect(dip(flat.back)).toBeGreaterThan(0.01)
+    expect(dip(round.back)).toBeLessThan(0.002)
+    // 関節はほぼ同じ位置（肩は鎖骨で寄せるので、体の高さの 1.5% まで）
+    flat.pts.forEach((v, i) => expect(v.distanceTo(round.pts[i]), `point ${i}`).toBeLessThan(0.015))
+  })
+
   it('エルゴ・自転車の手は順手で握る（手首はまっすぐ、手のひらが下、指と親指が手のひらの側へ曲がる）', async () => {
     const root = await load('male')
     const p = (x: number, y: number, z: number) => ({ x, y, z })

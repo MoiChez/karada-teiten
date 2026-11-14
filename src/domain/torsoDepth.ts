@@ -3,6 +3,17 @@
 import type { Landmark } from './types'
 import type { MaskData } from './backContour'
 
+/** 厚みを測るコマの数（動画の全体から等間隔に選ぶ。腕・脚が胴に重ならないコマが混ざるように） */
+export const TORSO_FRAMES = 16
+
+/** n コマの中から、等間隔に count コマを選ぶ（番号の小さい順。人の輪郭を測るコマと、3D の胴を測るコマで同じ選び方にする） */
+export function evenPicks(n: number, count = TORSO_FRAMES): number[] {
+  const picks = new Set<number>()
+  if (n <= 0) return []
+  for (let k = 0; k < count; k++) picks.add(Math.min(n - 1, Math.round(((k + 0.5) * n) / count)))
+  return [...picks].sort((a, b) => a - b)
+}
+
 /** 胴の線（股関節の中点→両肩の点の中点）の上で輪郭を測る高さ（股関節からの割合） */
 export const TORSO_ROWS = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]
 
@@ -13,7 +24,16 @@ export const TORSO_ROWS = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8
 export interface TorsoProfile {
   front: (number | null)[]
   back: (number | null)[]
+  /** 測り方の版（TORSO_PROFILE_VERSION）。違う版の値は、動画の画像があれば測り直す */
+  version?: number
 }
+
+/**
+ * 測り方の版。2: 胴の線と脚の長さを、記録の推定の点（なめらかにした動画の推定の点のカメラ側。3D を置くのと同じ点）で
+ * 決める。1 コマずつ推定し直した点の左右の真ん中で決めると、利用者のエルゴで胴の線が体の前寄りになり、背中までの距離が
+ * 脚の長さの 1〜4% 長く、3D の背中が人の背中の輪郭より外に出たため
+ */
+export const TORSO_PROFILE_VERSION = 2
 
 interface P {
   x: number
@@ -51,7 +71,9 @@ function segDist(p: P, a: P, b: P) {
 /**
  * 1 枚の画像の、高さごとの胴の前と後ろの輪郭の位置。lm は画像に対する比の体の点、width・height は画像の大きさ。
  * 胴の線に垂直に、前と後ろへ人の領域の端まで測る。端が腕・脚の線に近い側（腕や脚が胴に重なっている）は null。
- * 体の点が足りないときは null
+ * side（カメラ側）があれば、胴の線と脚の長さはその側の股関節・肩の点で決める（動きの記録の 3D と同じ線。
+ * 左右の点の真ん中で決めると、フィニッシュで奥の肩の点が手前とずれ、胴の線が体の高さの数 % 動いたため）。
+ * ないときは、左右の点の真ん中の線と、よく見えている側の脚。体の点が足りないときは null
  */
 export function torsoDepthRows(
   lm: Landmark[],
@@ -60,13 +82,15 @@ export function torsoDepthRows(
   height: number,
   /** 確かめ用: 測った高さごとの前と後ろの端（ピクセル）と、使ったかどうか */
   rowsOut?: { front: P; back: P; frontUsed: boolean; backUsed: boolean }[],
+  side?: 'left' | 'right',
 ): TorsoProfile | null {
   const need = [0, 11, 12, 23, 24, 25, 26, 27, 28]
   if (need.some((i) => !lm[i])) return null
   const px = (i: number): P => ({ x: lm[i].x * width, y: lm[i].y * height })
   const mid = (a: P, b: P): P => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
-  const H = mid(px(23), px(24))
-  const S = mid(px(11), px(12))
+  // MediaPipe の番号は、奇数が左
+  const H = side ? px(side === 'left' ? 23 : 24) : mid(px(23), px(24))
+  const S = side ? px(side === 'left' ? 11 : 12) : mid(px(11), px(12))
   const len = Math.hypot(S.x - H.x, S.y - H.y)
   if (!(len > 1)) return null
   const u = { x: (S.x - H.x) / len, y: (S.y - H.y) / len }
@@ -77,7 +101,8 @@ export function torsoDepthRows(
   // カメラ側（よく見えている側）の脚の長さで割る（動きの記録の体の大きさの物差しと同じ）
   const leg = (h: number, k: number, a: number) => Math.hypot(px(k).x - px(h).x, px(k).y - px(h).y) + Math.hypot(px(a).x - px(k).x, px(a).y - px(k).y)
   const seen = (ids: number[]) => ids.reduce((sum, i) => sum + Math.min(lm[i].visibility ?? 1, lm[i].presence ?? 1), 0)
-  const legLen = seen([23, 25, 27]) >= seen([24, 26, 28]) ? leg(23, 25, 27) : leg(24, 26, 28)
+  const leftLeg = side ? side === 'left' : seen([23, 25, 27]) >= seen([24, 26, 28])
+  const legLen = leftLeg ? leg(23, 25, 27) : leg(24, 26, 28)
   if (!(legLen > 1)) return null
   const sx = mask.width / width
   const sy = mask.height / height

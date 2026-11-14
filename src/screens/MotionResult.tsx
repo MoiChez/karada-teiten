@@ -1,5 +1,5 @@
 // 動きの一覧と結果。撮った動画と 3D の体を並べ、同じ時刻で再生する。下に角度のグラフ、1 回ごとの値、平均、書き出し
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { ChevronRight, Columns2, Download, PencilRuler, Redo2, Trash2, Undo2, Video } from 'lucide-react'
 import {
@@ -18,6 +18,7 @@ import {
   type MotionRecord,
 } from '../domain/motion'
 import { motionPoses } from '../domain/motionPose'
+import { TORSO_PROFILE_VERSION } from '../domain/torsoDepth'
 import { motionCyclesCsv, motionFramesCsv, motionJson } from '../domain/motionExport'
 import type { UserProfile } from '../domain/types'
 import { fmtDate, fmtNum } from '../domain/format'
@@ -182,14 +183,23 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const [spread, setSpread] = useState<0 | 5>(5)
   const edits = work.edits
   const profile = PROFILES[saved.kind]
-  // 3D の胴の前後の厚みと位置を、動画の人の輪郭に合わせる（横から撮った記録で、まだ測っておらず、動画の画像があるとき）。
-  // 測った値は記録に保存し、3D の表示だけに使う（画面に数値は出さない）
   const [torso, setTorso] = useState(saved.torsoDepth)
+  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis, torsoDepth: torso }), [saved, work, torso])
+  // 条件がそろったときだけ出す値（バーの値など）は、値があるときだけ
+  const shown = profile.metrics.filter((d) => !d.hidden && !(d.optional && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
+  const built = useMemo(() => prepareRecord(rec), [rec])
+  const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
+  // 3D の胴の前後の厚みと位置を、動画の人の輪郭に合わせる（横から撮った記録で、まだ測っていないか測り方の版が古く、
+  // 動画の画像があるとき）。胴の線は 3D を置くのと同じ推定の点で決める。測った値は記録に保存し、3D の表示だけに使う
+  // （画面に数値は出さない）
+  const framesRef = useRef(built?.prep)
+  framesRef.current = built?.prep
+  const torsoStale = torso === undefined || (torso !== null && torso.version !== TORSO_PROFILE_VERSION)
   useEffect(() => {
-    if (torso !== undefined || !video?.images.length || saved.kind === 'squat_front' || saved.analysis.sideView === false) return
+    if (!torsoStale || !video?.images.length || saved.kind === 'squat_front' || saved.analysis.sideView === false) return
     let alive = true
     void import('../pose/torsoMeasure')
-      .then((m) => m.measureTorso(video.images))
+      .then((m) => m.measureTorso(video.images, framesRef.current?.frames, framesRef.current?.nearSide))
       .then((t) => {
         if (!alive) return
         setTorso(t)
@@ -199,12 +209,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
     return () => {
       alive = false
     }
-  }, [torso, video, saved.id, saved.kind, saved.analysis.sideView])
-  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis, torsoDepth: torso }), [saved, work, torso])
-  // 条件がそろったときだけ出す値（バーの値など）は、値があるときだけ
-  const shown = profile.metrics.filter((d) => !d.hidden && !(d.optional && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
-  const built = useMemo(() => prepareRecord(rec), [rec])
-  const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
+  }, [torsoStale, video, saved.id, saved.kind, saved.analysis.sideView])
   const changes = useMemo(() => (prev ? compareMotion(prev.analysis, rec.analysis) : []), [prev, rec])
   const a = rec.analysis
   // 真横から撮っていない記録で、横から見た値（角度・位置など）か
