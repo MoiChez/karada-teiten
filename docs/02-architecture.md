@@ -36,7 +36,7 @@
 | 保存 | Dexie（IndexedDB） | スキーマ版管理とインデックス検索が簡単 |
 | 姿勢推定 | @mediapipe/tasks-vision（PoseLandmarker） | 指定どおり。WASM とモデルを自サイトから配信 |
 | 3D | three + @react-three/fiber + drei（OrbitControls・環境光・接地影） | 3D 画面だけ遅延読み込みして初回表示を軽くする |
-| 人体モデル | Blender 5.2 + MPFB 2 で作った GLB（CC0） | 作るときだけ使う道具。アプリは GLB を読むだけで、Blender とはつながない |
+| 人体モデル | Blender 5.2 + MPFB 2 で作った GLB（CC0）。筋肉の体の絵は Z-Anatomy から焼いた画像（CC BY-SA 4.0） | 作るときだけ使う道具。アプリは GLB を読むだけで、Blender とはつながない |
 | グラフ | Recharts | 推移グラフ（折れ線）のみ |
 | PWA | vite-plugin-pwa（Workbox） | アプリ本体は事前キャッシュ、モデルと WASM は初回利用時にキャッシュ |
 | ルーティング | react-router（HashRouter） | GitHub Pages でリロードしても 404 にならない |

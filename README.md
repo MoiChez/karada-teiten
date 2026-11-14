@@ -98,5 +98,6 @@ tests         単体テスト（Vitest）
 ## ライセンスと出典
 
 - 骨格推定モデル: MediaPipe Pose Landmarker（Google、Apache License 2.0）。`public/models/` に同梱
-- 3D の人体モデル: Blender と MPFB 2（MakeHuman）で作成。出力は CC0。`public/models/mannequin-v1-*.glb`、作り方は `tools/blender/make_mannequins.py`
+- 3D の人体モデル: Blender と MPFB 2（MakeHuman）で作成。出力は CC0。`public/models/mannequin-v2-*.glb`、作り方は `tools/blender/make_mannequins.py`
+- 筋肉の見える体の絵（`public/models/muscle-skin-v1-*.webp`）: 解剖モデル「Z-Anatomy - The libre 3D atlas of anatomy」（CC BY-SA 4.0、元は「BodyParts3D - The Database Center for Life Science」）の筋肉・腱・骨の形を、上の人体の表面へ焼いたもの。**この 2 枚の画像だけ CC BY-SA 4.0**（`public/models/muscle-skin-LICENSE.txt`）。作り方は `tools/blender/muscle_skin/`
 - フォント: IBM Plex Sans JP（SIL Open Font License）

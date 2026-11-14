@@ -1,5 +1,5 @@
-# 3D ビュー用のマネキン（男性・女性・中間）を作って GLB に書き出す（public/models/mannequin-v1-*.glb）。
-# 作り直して中身が変わるときは v1 の番号を上げる（端末のキャッシュが古いまま残らないように）。
+# 3D ビュー用のマネキン（男性・女性・中間）を作って GLB に書き出す（public/models/mannequin-v2-*.glb）。
+# 作り直して中身が変わるときは v2 の番号を上げる（端末のキャッシュが古いまま残らないように）。
 #
 # 使い方（Blender 5.2 + MPFB 2.0.18 を入れた環境で）:
 #   blender -b --python tools/blender/make_mannequins.py -- public/models
@@ -8,7 +8,8 @@
 # - 骨は game_engine リグ（Unreal 形式の 53 本）。アプリ側で測った関節の向きに合わせて回す
 # - 顔の細部の目印として、鼻・耳・かかと・つま先の位置に空のオブジェクト（lm_番号）を骨の子として置く。
 #   番号は MediaPipe の点の番号（0 鼻、7/8 左右の耳、29/30 左右のかかと、31/32 左右のつま先）
-# - 色や質感はアプリ側で付けるので、材質と UV は書き出さない
+# - 色や質感はアプリ側で付けるので、材質は書き出さない。UV（MakeHuman の標準の割り付け）は、
+#   筋肉の見える体の絵（public/models/muscle-skin-v1-*.webp、tools/blender/muscle_skin/）を貼るために書き出す
 import os
 import sys
 import importlib
@@ -130,8 +131,8 @@ def build(name, gender):
             mesh.vertex_groups.remove(g)
     for p in mesh.data.polygons:
         p.use_smooth = True
-    while mesh.data.uv_layers:
-        mesh.data.uv_layers.remove(mesh.data.uv_layers[0])
+    while len(mesh.data.uv_layers) > 1:
+        mesh.data.uv_layers.remove(mesh.data.uv_layers[-1])
     mesh.data.materials.clear()
 
     # 目印（骨の子の空オブジェクト）
@@ -152,12 +153,12 @@ def build(name, gender):
     for o in [mesh, rig, *empties]:
         o.select_set(True)
     bpy.context.view_layer.objects.active = rig
-    out = os.path.abspath(os.path.join(OUT_DIR, f'mannequin-v1-{name}.glb'))
+    out = os.path.abspath(os.path.join(OUT_DIR, f'mannequin-v2-{name}.glb'))
     bpy.ops.export_scene.gltf(
         filepath=out,
         export_format='GLB',
         use_selection=True,
-        export_texcoords=False,
+        export_texcoords=True,
         export_normals=True,
         export_materials='NONE',
         export_animations=False,

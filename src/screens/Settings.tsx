@@ -150,6 +150,9 @@ export function Settings() {
       <Details summary="通信について">
         アプリ本体・骨格推定のモデル・フォントはこのサイトから読み込み、写真や測定値を外部へ送ることはありません。
       </Details>
+      <Details summary="3D の筋肉の体の出典">
+        動きの 3D の「筋肉の体」は、解剖モデル Z-Anatomy（The libre 3D atlas of anatomy、CC BY-SA 4.0。元のモデルは BodyParts3D、The Database Center for Life Science）の筋肉の形を、標準の人体の表面に写した絵です。筋肉の場所を見るためのもので、あなたの筋肉の量や使われ方を表すものではありません。
+      </Details>
       <p className="mt-4 text-sm text-ink-3 num">
         アプリ {APP_VERSION} ・ 計算ロジック v{ALGORITHM_VERSION} ・ {modelVersion(POSE_MODEL)}
       </p>

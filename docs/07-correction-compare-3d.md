@@ -99,7 +99,8 @@
 ### 人体の表示（マネキン）
 [src/three/mannequin.ts](../src/three/mannequin.ts)。合成した関節の位置の「向き」を、標準の人体モデルにのせて表示する。
 
-- **モデル**: Blender と MPFB 2（MakeHuman の Blender 版）で作った標準の人体（男性・女性・中間の 3 種、各約 0.8MB、13,524 頂点）。骨は game_engine リグ（Unreal 形式の 53 本）。作り方は [tools/blender/make_mannequins.py](../tools/blender/make_mannequins.py) にまとめ、同じ手順で作り直せる。MPFB の出力は CC0（自由に使える）
+- **モデル**: Blender と MPFB 2（MakeHuman の Blender 版）で作った標準の人体（男性・女性・中間の 3 種、各約 0.9MB、13,524 頂点。絵を貼るための UV つき）。骨は game_engine リグ（Unreal 形式の 53 本）。作り方は [tools/blender/make_mannequins.py](../tools/blender/make_mannequins.py) にまとめ、同じ手順で作り直せる。MPFB の出力は CC0（自由に使える）
+- **筋肉の体**（動きの 3D）: 体の表面に、筋肉・腱・骨の見える絵（色 2048 px・凹凸 1024 px、合わせて約 0.6MB）を貼る。絵は、解剖モデル Z-Anatomy（CC BY-SA 4.0）を、同じ姿勢・寸法に重ねたこの人体の表面へ焼いたもの（[tools/blender/muscle_skin/](../tools/blender/muscle_skin/README.md)）。体の形・骨・曲げ方は変えていないので、胴の厚み合わせや背中の丸みはそのまま働く。3 種の体は同じ UV なので絵は 1 組。筋肉の形は標準の解剖モデルのもので、本人の筋肉ではない。筋活動の強さは色にしない（方針どおり）
 - **モデルの選び方**: プロフィールの性別が男性なら男性、女性なら女性、その他・未回答は中間
 - **体の形**: 全員に共通の標準の形。体型・筋肉・脂肪のつき方は推定しない（方針どおり）。骨の長さも標準のまま
 - **曲げ方**（最初の姿勢から毎回やり直す）:

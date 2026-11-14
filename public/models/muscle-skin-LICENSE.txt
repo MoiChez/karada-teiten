@@ -1,0 +1,21 @@
+muscle-skin-v1-color.webp / muscle-skin-v1-normal.webp
+
+筋肉の見える体の絵（色と凹凸）。解剖モデル「Z-Anatomy」の筋肉・腱・骨・靱帯の形を、
+このアプリの標準の人体（MPFB 2 / MakeHuman、CC0）の表面へ焼き付けて作った二次的著作物です。
+
+この 2 つの画像のライセンス:
+  Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+  https://creativecommons.org/licenses/by-sa/4.0/
+
+出典（元のデータの指定どおりの表記）:
+  "Z-Anatomy - The libre 3D atlas of anatomy - CC-BY-SA 4.0"
+    https://github.com/Z-Anatomy/The-blend
+    Gauthier Kervyn (design, 3D, anatomy), Marcin Zielinski (Blender add-on) ほか
+  "BodyParts3D - The Database Center for Life Science - CC-BY-SA 2.1 Japan"
+    https://dbarchive.biosciencedbc.jp/en/bodyparts3d/download.html
+    （Z-Anatomy の元になったモデル。現在の配布ページでは CC BY 4.0）
+
+変更点: 元の形そのものは含みません。筋肉・腱・骨・靱帯だけを選び、色を付け直し、
+このアプリの人体の UV へ色・陰・法線を焼きました（作り方は tools/blender/muscle_skin/）。
+
+このライセンスが及ぶのは上の 2 つの画像だけです。アプリのコードとほかのファイルには及びません。

@@ -8,7 +8,7 @@ import { mannequinKindOf, paintMannequin, poseMannequin, type MannequinKind } fr
 import { frontPose, record, sidePose } from './helpers'
 
 async function load(kind: MannequinKind): Promise<THREE.Object3D> {
-  const buf = readFileSync(`public/models/mannequin-v1-${kind}.glb`)
+  const buf = readFileSync(`public/models/mannequin-v2-${kind}.glb`)
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
   return new Promise((resolve, reject) => new GLTFLoader().parse(ab, '', (g) => resolve(g.scene), reject))
 }

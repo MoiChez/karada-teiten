@@ -13,7 +13,7 @@ import { PROFILES, type MotionKind, type MuscleKey } from '../domain/motion'
 import { poseAtTime, type MotionEquipment } from '../domain/motionPose'
 import { indexAt, type Clock } from '../components/motionClock'
 import { mannequinKindOf, muscleShader, paintMuscles, poseMannequin, type MannequinKind } from './mannequin'
-import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, hasWebGL, mannequinUrl } from './common'
+import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, MUSCLE_SKIN, hasWebGL, loadBodySkin, mannequinUrl, saveBodySkin, type BodySkin } from './common'
 import { HIGHLIGHT_COLOR } from './StandingBody'
 import { Notice, cx } from '../components/ui'
 
@@ -33,6 +33,43 @@ const VIEW_LABELS: Record<ViewKey, string> = { side: '横', oblique: '斜め', f
 const STAGE = '#10282f'
 const GEAR = '#7f979d'
 
+/** 筋肉の見える体に重ねる色（絵に掛け算する）。色づけなしは白、色づける場所があるときは、ほかを少し暗くして場所を明るく残す */
+const SKIN_BASE = '#ffffff'
+const SKIN_DIM = '#7d8588'
+const SKIN_ACCENT = '#fff4e0'
+
+/** 筋肉の見える体の絵を読み込む（読み込めなければ null のまま。無地の人形で表示を続ける） */
+function useMuscleSkin(on: boolean) {
+  const [maps, setMaps] = useState<{ color: THREE.Texture; normal: THREE.Texture } | null>(null)
+  useEffect(() => {
+    if (!on || maps) return
+    let live = true
+    const loader = new THREE.TextureLoader()
+    const load = (url: string, srgb: boolean) =>
+      new Promise<THREE.Texture>((res, rej) =>
+        loader.load(
+          url,
+          (t) => {
+            // GLB の UV は上下が逆（glTF の決まり）
+            t.flipY = false
+            if (srgb) t.colorSpace = THREE.SRGBColorSpace
+            t.anisotropy = 4
+            res(t)
+          },
+          undefined,
+          rej,
+        ),
+      )
+    Promise.all([load(MUSCLE_SKIN.color, true), load(MUSCLE_SKIN.normal, false)])
+      .then(([color, normal]) => live && setMaps({ color, normal }))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [on, maps])
+  return on ? maps : null
+}
+
 /** 筋肉ごとの、コマごとの濃さ（0〜1。推定の要求度） */
 export interface MuscleLevels {
   ts: number[]
@@ -48,6 +85,7 @@ export function MovingBody({
   levels,
   floorY,
   bare,
+  skin = 'plain',
 }: {
   kind: MannequinKind
   sport: MotionKind
@@ -58,6 +96,8 @@ export function MovingBody({
   floorY: number
   /** 床と影を描かない（動画に重ねるとき） */
   bare?: boolean
+  /** 体の見た目（筋肉の見える体か、無地の人形か） */
+  skin?: BodySkin
 }) {
   const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
   const root = useMemo(() => {
@@ -71,12 +111,30 @@ export function MovingBody({
     })
     return r
   }, [gltf])
-  const shade = useMemo(() => (levels ? muscleShader(root, BODY_COLOR, HIGHLIGHT_COLOR) : null), [root, levels])
+  const maps = useMuscleSkin(skin === 'muscle')
+  useEffect(() => {
+    root.traverse((o) => {
+      const m = o as THREE.SkinnedMesh
+      if (!m.isSkinnedMesh) return
+      const mat = m.material as THREE.MeshStandardMaterial
+      mat.map = maps?.color ?? null
+      mat.normalMap = maps?.normal ?? null
+      // 接線を持たない体なので、凹凸の絵の上下を glTF の決まりに合わせる
+      mat.normalScale.set(1, -1)
+      mat.roughness = maps ? 0.5 : 0.62
+      mat.needsUpdate = true
+    })
+  }, [root, maps])
+  // 筋肉の見える体では、色は絵に掛け算する。場所を色づけるときは、ほかを暗くして場所を明るく残す
+  const marking = !!levels || muscles
+  const base = maps ? (marking ? SKIN_DIM : SKIN_BASE) : BODY_COLOR
+  const accent = maps ? SKIN_ACCENT : HIGHLIGHT_COLOR
+  const shade = useMemo(() => (levels ? muscleShader(root, base, accent) : null), [root, levels, base, accent])
   const shown = useRef('')
   useEffect(() => {
     shown.current = ''
-    if (!levels) paintMuscles(root, BODY_COLOR, HIGHLIGHT_COLOR, muscles ? PROFILES[sport].muscles : [])
-  }, [root, muscles, sport, levels])
+    if (!levels) paintMuscles(root, base, accent, muscles ? PROFILES[sport].muscles : [])
+  }, [root, muscles, sport, levels, base, accent])
   const last = useRef(NaN)
 
   useFrame(() => {
@@ -269,6 +327,7 @@ export default function MotionBody3D({
   // 同じ視点のボタンをもう一度押したときも、指で回した視点を元へ戻す
   const [resets, setResets] = useState(0)
   const [failed, setFailed] = useState(false)
+  const [skin, setSkin] = useState<BodySkin>(loadBodySkin)
   const controls = useRef<OrbitControlsImpl | null>(null)
   const webgl = useMemo(hasWebGL, [])
   const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -295,7 +354,7 @@ export default function MotionBody3D({
           <BodyLights />
           <LoadBoundary onError={() => setFailed(true)}>
             <Suspense fallback={null}>
-              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} />
+              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} skin={skin} />
             </Suspense>
           </LoadBoundary>
           <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} side={nearSide === 'left' ? 1 : -1} />
@@ -307,6 +366,18 @@ export default function MotionBody3D({
           </GizmoHelper>
         </Canvas>
         <LoadingNote />
+        <button
+          type="button"
+          aria-pressed={skin === 'muscle'}
+          onClick={() => {
+            const next = skin === 'muscle' ? 'plain' : 'muscle'
+            setSkin(next)
+            saveBodySkin(next)
+          }}
+          className={cx('absolute bottom-2 left-2 min-h-10 rounded-[var(--radius-control)] border px-3 text-sm', skin === 'muscle' ? 'border-paper bg-paper text-ink' : 'border-white/25 bg-black/30 text-paper hover:bg-white/10')}
+        >
+          筋肉の体
+        </button>
       </div>
       <div className="grid grid-cols-5 gap-1 p-1.5" role="group" aria-label="3D の視点">
         {(camera ? ([facingView, 'oblique', 'side', facingView === 'front' ? 'back' : 'front', 'top'] as const) : (['side', 'oblique', 'front', 'back', 'top'] as const)).map((k) => (

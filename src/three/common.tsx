@@ -3,7 +3,31 @@ import { Component, type ReactNode } from 'react'
 import { Environment, Lightformer, useProgress } from '@react-three/drei'
 import type { MannequinKind } from './mannequin'
 
-export const mannequinUrl = (k: MannequinKind) => `${import.meta.env.BASE_URL}models/mannequin-v1-${k}.glb`
+export const mannequinUrl = (k: MannequinKind) => `${import.meta.env.BASE_URL}models/mannequin-v2-${k}.glb`
+
+/** 筋肉の見える体の絵（色と凹凸）。解剖モデルから体の表面へ焼いたもの（出典は README） */
+export const MUSCLE_SKIN = {
+  color: `${import.meta.env.BASE_URL}models/muscle-skin-v1-color.webp`,
+  normal: `${import.meta.env.BASE_URL}models/muscle-skin-v1-normal.webp`,
+}
+
+/** 体の見た目（筋肉の見える体か、無地の人形か）。端末に覚える */
+export type BodySkin = 'muscle' | 'plain'
+const SKIN_KEY = 'kt.bodySkin'
+export function loadBodySkin(): BodySkin {
+  try {
+    return localStorage.getItem(SKIN_KEY) === 'plain' ? 'plain' : 'muscle'
+  } catch {
+    return 'muscle'
+  }
+}
+export function saveBodySkin(s: BodySkin) {
+  try {
+    localStorage.setItem(SKIN_KEY, s)
+  } catch {
+    // 覚えられなくても表示は続ける
+  }
+}
 
 /** マネキンの色（明るいグレー） */
 export const BODY_COLOR = '#c9d2d4'
