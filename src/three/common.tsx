@@ -13,12 +13,13 @@ export const MUSCLE_SKIN = {
 
 /** 体の見た目（筋肉の見える体か、無地の人形か）。端末に覚える */
 export type BodySkin = 'muscle' | 'plain'
-const SKIN_KEY = 'kt.bodySkin'
+// 初めは無地の人形（筋肉の体は見た目が生々しいため、選んだ人だけに出す）。v0.20.0 で覚えた値は引き継がない
+const SKIN_KEY = 'kt.bodySkin2'
 export function loadBodySkin(): BodySkin {
   try {
-    return localStorage.getItem(SKIN_KEY) === 'plain' ? 'plain' : 'muscle'
+    return localStorage.getItem(SKIN_KEY) === 'muscle' ? 'muscle' : 'plain'
   } catch {
-    return 'muscle'
+    return 'plain'
   }
 }
 export function saveBodySkin(s: BodySkin) {
