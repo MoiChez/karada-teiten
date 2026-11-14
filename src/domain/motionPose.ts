@@ -174,6 +174,10 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
     return { t: f.t, pose }
   })
   const bones = sideBoneLengths(out.map((o) => o.pose))
+  if (bones && prep.torsoDepth) {
+    bones.torsoDepth = prep.torsoDepth
+    bones.leg = prep.leg / H
+  }
   for (const o of out) o.pose.bones = bones
   return out
 }

@@ -22,6 +22,7 @@ import { resolveBody, squatLoad, type BodyParams, type ResolvedBody } from './mo
 import { barSeries } from './motionBar'
 import { crankAngles } from './motionCrank'
 import { frontalValues, viewOf, type ViewInfo } from './motionFrontal'
+import type { TorsoProfile } from './torsoDepth'
 
 export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
@@ -53,6 +54,11 @@ export interface MotionRecord {
   edits?: MotionEdit[]
   /** 身長・体重・持つ重さ（入力されたものだけ。撮ったときのプロフィールの値か、結果の画面で入れた値） */
   body?: BodyParams
+  /**
+   * 動画の人の輪郭から測った胴の厚み（横から撮った記録。3D の表示だけに使う）。null は測れなかった、
+   * ないときはまだ測っていない（動画を残していれば、結果の画面を開いたときに測る）
+   */
+  torsoDepth?: TorsoProfile | null
   analysis: MotionAnalysis
 }
 
@@ -289,6 +295,7 @@ export function upgradeMotion(r: MotionRecord): MotionRecord {
 export function prepareRecord(r: MotionRecord): { prep: PreparedMotion; cycles: MotionCycle[] } | null {
   const prep = prepareMotion(motionInputOf(r), r.kind ?? 'squat')
   if (!prep) return null
+  if (r.torsoDepth) prep.torsoDepth = r.torsoDepth
   return { prep, cycles: findCycles(prep).cycles }
 }
 

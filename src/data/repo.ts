@@ -161,6 +161,8 @@ export function repo(db: AppDB = defaultDb) {
     saveMotionEdits: (id: string, edits: MotionRecord['edits'], analysis: MotionRecord['analysis']) => db.motions.update(id, { edits, analysis }),
     /** 結果の画面で入れた身長・体重・持つ重さと、それで計算し直した結果を保存する */
     saveMotionBody: (id: string, body: MotionRecord['body'], analysis: MotionRecord['analysis']) => db.motions.update(id, { body, analysis }),
+    /** 動画の人の輪郭から測った胴の厚み（3D の表示に使う。測れなかったときは null）を保存する */
+    saveMotionTorso: (id: string, torsoDepth: MotionRecord['torsoDepth']) => db.motions.update(id, { torsoDepth }),
 
     // ---- 記録 ----
     addLog: (l: RoutineLog) => db.routineLogs.put(l),

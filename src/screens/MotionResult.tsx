@@ -182,7 +182,25 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const [spread, setSpread] = useState<0 | 5>(5)
   const edits = work.edits
   const profile = PROFILES[saved.kind]
-  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis }), [saved, work])
+  // 3D の胴の前後の厚みと位置を、動画の人の輪郭に合わせる（横から撮った記録で、まだ測っておらず、動画の画像があるとき）。
+  // 測った値は記録に保存し、3D の表示だけに使う（画面に数値は出さない）
+  const [torso, setTorso] = useState(saved.torsoDepth)
+  useEffect(() => {
+    if (torso !== undefined || !video?.images.length || saved.kind === 'squat_front' || saved.analysis.sideView === false) return
+    let alive = true
+    void import('../pose/torsoMeasure')
+      .then((m) => m.measureTorso(video.images))
+      .then((t) => {
+        if (!alive) return
+        setTorso(t)
+        void data.saveMotionTorso(saved.id, t)
+      })
+      .catch(() => undefined)
+    return () => {
+      alive = false
+    }
+  }, [torso, video, saved.id, saved.kind, saved.analysis.sideView])
+  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis, torsoDepth: torso }), [saved, work, torso])
   // 条件がそろったときだけ出す値（バーの値など）は、値があるときだけ
   const shown = profile.metrics.filter((d) => !d.hidden && !(d.optional && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
   const built = useMemo(() => prepareRecord(rec), [rec])
@@ -329,7 +347,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
       <p className="mt-2 text-sm text-ink-3">
         {profile.frontal
           ? `3D の体は全員に共通の標準の体で、${a.view?.view === 'front' ? '正面' : '後ろ'}から撮った関節の左右・上下の動きを反映しています。前後の位置は推定モデルの奥行きの推定で、正面・後ろからの映像では外れやすいため参考です。体の左右は、${a.view?.view === 'front' ? '画面の右を体の左' : '画面の左を体の左'}としています。`
-          : '3D の体は全員に共通の標準の体で、横から撮った関節の前後・上下の動きを反映しています。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。'}
+          : '3D の体は標準の体をもとに、横から撮った関節の前後・上下の動きを反映しています（手足と胴の長さと、測れたときは胴の前後の厚みと位置を、動画の人に合わせています）。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。'}
         {a.sideView === false && '真横から撮っていないため、3D の体の形も正しくありません。'}
         {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。膝・足首・腰は、器具の前提で置き直した位置です（「撮影の情報」に説明があります）。'}
         {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。膝は、太もも・すねの長さから置き直した位置です。'}

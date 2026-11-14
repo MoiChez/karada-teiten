@@ -2,9 +2,10 @@
 // 正面と横向きの写真から合成した関節の位置（fusion3d）の「向き」に合わせて曲げる。
 // 骨の長さと体の形は標準のまま（体型は推定しない）。docs/07 の 3 章
 import * as THREE from 'three'
-import type { Pose3D, Vec3 } from '../domain/fusion3d'
+import type { BoneLengths, Pose3D, Vec3 } from '../domain/fusion3d'
 import type { BodyArea, UserProfile } from '../domain/types'
 import type { MuscleKey } from '../domain/motionSports'
+import { TORSO_ROWS } from '../domain/torsoDepth'
 
 export type MannequinKind = 'male' | 'female' | 'neutral'
 
@@ -282,6 +283,8 @@ export function poseMannequin(
         fit(end, b, c, ll)
       }
     }
+    // 胴の前後の厚みを、動画の人の輪郭から測った厚みに合わせる（腰・背中の中ほど・胸の高さごと。0.75〜1.75 倍）
+    setTorsoDepth(root, len && L?.torsoDepth && has(11, 12) ? torsoScales(root, L, mid(T(23)!, T(24)!), mid(T(11)!, T(12)!)) : null)
     // 曲げる向きの好み（体の左が +X、前が +Z）: 膝は前と上、ひじは後ろと下と少し外。
     // 脚が伸び切る・腕が伸び切るときは、目標の膝・ひじが一直線の上に来て、曲げる向きがコマごとに反転しやすいため
     const KNEE = new THREE.Vector3(0, 0.4, 1)
@@ -338,6 +341,7 @@ export function poseMannequin(
     fitted.push(bone)
   }
 
+  setTorsoDepth(root, null)
   // 大きさと位置: 体の高さを 1 にし、両足首の中点を合わせる
   const scale = 1 / Hm
   const ankle = mid(P(27), P(28))
@@ -364,6 +368,247 @@ const CLAVICLE_MAX = (30 * Math.PI) / 180
  * 頭を起こすと、首の付け根から耳までが標準の体の 1.6 倍ほどになったため
  */
 const NECK_MAX = 1.7
+/** 胴を前後に厚くする形の、影響 1 のときの増え方（1 + TORSO_GAIN 倍）と、影響の範囲 */
+const TORSO_GAIN = 0.5
+const TORSO_INFLUENCE: [number, number] = [-0.5, 1.5]
+/** 胴の前後の位置の形の、影響 1 のときのずれ（メッシュの元の単位。影響は -1〜1） */
+const TORSO_SHIFT = 0.08
+/**
+ * 厚みを合わせる高さの帯（股関節の中点〜両肩の関節の中点の割合）。帯の形はこの高さで一番強く、隣の帯の高さで 0 になる
+ * （腰の帯は股関節の高さ 0.1 で 0、胸の帯は 0.8 より上でも同じ強さ）。高さで分けるのは、標準の体は胸が厚く、
+ * 腰と同じ倍率で厚くすると胸だけ外にはみ出したため（利用者のエルゴで、肩に近い高さで 2% 外）。股関節の高さは厚くしない
+ * （座面に乗ったお尻が外にはみ出したため）
+ */
+const TORSO_BANDS = [0.4, 0.6, 0.8]
+/** 帯ごとの、厚みを測る高さ（TORSO_ROWS の値） */
+const TORSO_BAND_ROWS = [
+  [0.35, 0.4, 0.45],
+  [0.5, 0.55, 0.6],
+  [0.65, 0.7, 0.75, 0.8],
+]
+/** 胴の頂点とみなす骨（重みの合計が胴の頂点の度合い） */
+const TORSO_BONES = new Set(['pelvis', 'spine_01', 'spine_02', 'spine_03', 'clavicle_l', 'clavicle_r'])
+
+/** 胴の形の、帯（腰・背中の中ほど・胸）ごとの値。thick は厚みの倍率、shift は前後の位置のずれ（体の単位、前が +） */
+interface TorsoFit {
+  thick: number[]
+  shift: number[]
+}
+
+interface TorsoMorph {
+  /** 形の番号（厚み・前後の位置、帯ごと） */
+  index: { thick: number[]; shift: number[] }
+  /** 胴の頂点（胴の骨の重みが半分以上）の番号。曲げた後の胴の厚みを測るのに使う */
+  verts: number[]
+}
+
+/**
+ * 胴を前後に厚くする形を、メッシュの形に足す（同じ形を使う複製どうしで 1 回だけ作る）。胴の骨の重みの頂点を、
+ * その高さの胴の前後の中心から、前後へ離す（重みが小さい首・腕・脚の付け根ほど少なく）。最初の姿勢の胴の厚みも測っておく
+ */
+function torsoMorphOf(mesh: THREE.SkinnedMesh): TorsoMorph | null {
+  const g = mesh.geometry
+  if (g.userData.torsoMorph !== undefined) return g.userData.torsoMorph
+  const pos = g.getAttribute('position')
+  const si = g.getAttribute('skinIndex')
+  const sw = g.getAttribute('skinWeight')
+  const names = mesh.skeleton.bones.map((b) => b.name)
+  const jointAt = (name: string) => {
+    const i = names.indexOf(name)
+    return i < 0 ? null : new THREE.Vector3().setFromMatrixPosition(mesh.skeleton.boneInverses[i].clone().invert())
+  }
+  const parts = ['thigh_l', 'thigh_r', 'upperarm_l', 'upperarm_r'].map(jointAt)
+  if (!pos || !si || !sw || parts.some((p) => !p)) return (g.userData.torsoMorph = null)
+  const hipY = (parts[0]!.y + parts[1]!.y) / 2
+  const shY = (parts[2]!.y + parts[3]!.y) / 2
+  const n = pos.count
+  const w = new Float32Array(n)
+  const p = new Float32Array(n * 3)
+  const v = new THREE.Vector3()
+  for (let i = 0; i < n; i++) {
+    let t = 0
+    for (let k = 0; k < 4; k++) if (TORSO_BONES.has(names[si.getComponent(i, k)])) t += sw.getComponent(i, k)
+    w[i] = Math.min(1, t)
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.bindMatrix)
+    p[i * 3] = v.x
+    p[i * 3 + 1] = v.y
+    p[i * 3 + 2] = v.z
+  }
+  // 高さ 1 cm ごとの、胴の前後の中心（体の真ん中付近の胴の頂点の、上下 2.5 cm の中の前後の端の中点）。
+  // メッシュの頂点の段は粗く、1 cm の幅だと前側の頂点しかない段があり、中心がずれて背中の頂点が大きく飛び出したため。
+  // 前後の幅が 10 cm に満たない段は、近い段の中心を使う
+  const BAND = 0.01
+  const WIN = 2.5
+  const lo = Math.floor((hipY - 0.4) / BAND)
+  const hi = Math.ceil((shY + 0.4) / BAND)
+  const minZ = new Array(hi - lo + 1).fill(Infinity)
+  const maxZ = new Array(hi - lo + 1).fill(-Infinity)
+  for (let i = 0; i < n; i++) {
+    if (w[i] < 0.9 || Math.abs(p[i * 3]) > 0.08) continue
+    const c = p[i * 3 + 1] / BAND - lo
+    for (let b = Math.max(0, Math.ceil(c - WIN)); b <= Math.min(minZ.length - 1, Math.floor(c + WIN)); b++) {
+      minZ[b] = Math.min(minZ[b], p[i * 3 + 2])
+      maxZ[b] = Math.max(maxZ[b], p[i * 3 + 2])
+    }
+  }
+  const center: number[] = minZ.map((m, b) => (Number.isFinite(m) && maxZ[b] - m > 0.1 ? (m + maxZ[b]) / 2 : NaN))
+  const known = center.map((c, b) => (Number.isFinite(c) ? b : -1)).filter((b) => b >= 0)
+  if (!known.length) return (g.userData.torsoMorph = null)
+  for (let b = 0; b < center.length; b++) {
+    if (Number.isFinite(center[b])) continue
+    const nearest = known.reduce((a, c) => (Math.abs(c - b) < Math.abs(a - b) ? c : a))
+    center[b] = center[nearest]
+  }
+  // 形の向きは、メッシュの元の座標で表す（bindMatrixInverse は、体の大きさを変えると three.js が今の位置から作り直すので使わない）
+  const toLocal = new THREE.Matrix3().setFromMatrix4(mesh.bindMatrix.clone().invert())
+  // 帯の強さ（高さ t の折れ線）
+  const bandWeight = (j: number, t: number) => {
+    const c = TORSO_BANDS[j]
+    const below = j === 0 ? 0.1 : TORSO_BANDS[j - 1]
+    const above = TORSO_BANDS[j + 1]
+    if (t <= below || (above !== undefined && t >= above)) return 0
+    if (t <= c) return (t - below) / (c - below)
+    return above === undefined ? 1 : (above - t) / (above - c)
+  }
+  // 厚み（中心から前後へ広げる）と、前後の位置（胴をそのまま前へずらす）の形。人の胴は、推定の股関節と肩の点を結ぶ線に対して、
+  // 3D より後ろ寄りにあったため（利用者のエルゴで、線から背中までは前までの 2〜3 倍）
+  const thick = TORSO_BANDS.map(() => new Float32Array(n * 3))
+  const shift = TORSO_BANDS.map(() => new Float32Array(n * 3))
+  const d = new THREE.Vector3()
+  const e = new THREE.Vector3()
+  for (let i = 0; i < n; i++) {
+    if (w[i] <= 0) continue
+    const b = Math.min(center.length - 1, Math.max(0, Math.round(p[i * 3 + 1] / BAND) - lo))
+    const t = (p[i * 3 + 1] - hipY) / (shY - hipY)
+    d.set(0, 0, (p[i * 3 + 2] - center[b]) * TORSO_GAIN * w[i]).applyMatrix3(toLocal)
+    e.set(0, 0, TORSO_SHIFT * w[i]).applyMatrix3(toLocal)
+    TORSO_BANDS.forEach((_, j) => {
+      const k = bandWeight(j, t)
+      if (k <= 0) return
+      thick[j].set([d.x * k, d.y * k, d.z * k], i * 3)
+      shift[j].set([e.x * k, e.y * k, e.z * k], i * 3)
+    })
+  }
+  const morphs = g.morphAttributes.position ?? []
+  g.morphAttributes.position = [...morphs, ...[...thick, ...shift].map((a) => new THREE.BufferAttribute(a, 3))]
+  g.morphTargetsRelative = true
+  const verts: number[] = []
+  for (let i = 0; i < n; i++) if (w[i] >= 0.5) verts.push(i)
+  const nb = TORSO_BANDS.length
+  return (g.userData.torsoMorph = {
+    index: { thick: TORSO_BANDS.map((_, j) => morphs.length + j), shift: TORSO_BANDS.map((_, j) => morphs.length + nb + j) },
+    verts,
+  })
+}
+
+/**
+ * 胴の形を、帯（腰・背中の中ほど・胸）ごとに、厚みを fit.thick 倍にし、前後の位置を fit.shift（メッシュの元の単位）だけずらす
+ * （null で元の形）
+ */
+function setTorsoDepth(root: THREE.Object3D, fit: TorsoFit | null) {
+  root.traverse((o) => {
+    const mesh = o as THREE.SkinnedMesh
+    if (!mesh.isSkinnedMesh) return
+    const m = torsoMorphOf(mesh)
+    if (!m) return
+    const last = Math.max(...m.index.thick, ...m.index.shift)
+    if (!mesh.morphTargetInfluences || mesh.morphTargetInfluences.length <= last) mesh.updateMorphTargets()
+    m.index.thick.forEach((idx, j) => {
+      const f = fit?.thick[j] ?? 1
+      mesh.morphTargetInfluences![idx] = Math.min(TORSO_INFLUENCE[1], Math.max(TORSO_INFLUENCE[0], (f - 1) / TORSO_GAIN))
+    })
+    m.index.shift.forEach((idx, j) => {
+      const v = (fit?.shift[j] ?? 0) / TORSO_SHIFT
+      mesh.morphTargetInfluences![idx] = Math.min(1, Math.max(-1, v))
+    })
+  })
+}
+
+/** 記録（骨の長さ）ごと・体のモデルごとの胴の形（最初に合わせたコマで 1 回だけ決める） */
+const TORSO_SCALES = new WeakMap<BoneLengths, WeakMap<THREE.BufferGeometry, TorsoFit | null>>()
+
+/**
+ * 帯ごとの胴の厚みと前後の位置。今の姿勢（形を足す前）の 3D の胴を、動画と同じ測り方で測る: 股関節の中点→両肩の点の中点の線
+ * （hip→sh、体の高さを 1 とした座標）の上の高さごとに、線に垂直な前後・上下の面の上で、胴の頂点の前と後ろの端の位置。
+ * 動画の人の前と後ろの輪郭（脚の長さに対する比 × 体の高さの単位の脚の長さ）と比べて、
+ * 厚み = 人の前後の幅 / 3D の前後の幅（前も後ろも測れた高さだけ。なければ標準の厚み）、
+ * 前後の位置 = 厚みを合わせた後の 3D の背中から人の背中まで（背中を測れた高さ。背中が見えないときは前で）。
+ * 帯の高さで 1 つも測れなかったときは、いちばん近い測れた帯の値の半分だけ変える（ゆったりした服の人で、胸の高さが外に
+ * はみ出したため）。立った姿勢の 3D と比べると、座って骨盤を起こした胴では 1 割ほど食い違ったため、曲げた後で測る
+ */
+function torsoScales(root: THREE.Object3D, L: BoneLengths, hip: THREE.Vector3, sh: THREE.Vector3): TorsoFit | null {
+  const depth = L.torsoDepth
+  let mesh: THREE.SkinnedMesh | undefined
+  root.traverse((o) => {
+    if (!mesh && (o as THREE.SkinnedMesh).isSkinnedMesh) mesh = o as THREE.SkinnedMesh
+  })
+  const m = mesh && torsoMorphOf(mesh)
+  if (!depth || !mesh || !m) return null
+  let byGeom = TORSO_SCALES.get(L)
+  if (!byGeom) TORSO_SCALES.set(L, (byGeom = new WeakMap()))
+  const hit = byGeom.get(mesh.geometry)
+  if (hit !== undefined) return hit
+  setTorsoDepth(root, null)
+  root.updateMatrixWorld(true)
+  const axis = new THREE.Vector3(0, sh.y - hip.y, sh.z - hip.z)
+  const len = axis.length()
+  if (!(len > 1e-6)) return null
+  axis.divideScalar(len)
+  // 体の前（+Z）の側を + にする、線に垂直な向き
+  const normal = new THREE.Vector3(0, -axis.z, axis.y)
+  if (normal.z < 0) normal.negate()
+  const lo = TORSO_ROWS.map(() => Infinity)
+  const hi = TORSO_ROWS.map(() => -Infinity)
+  const v = new THREE.Vector3()
+  for (const i of m.verts) {
+    mesh.getVertexPosition(i, v)
+    v.applyMatrix4(mesh.matrixWorld)
+    const dy = v.y - hip.y
+    const dz = v.z - hip.z
+    const f = (dy * axis.y + dz * axis.z) / len
+    const nrm = dy * normal.y + dz * normal.z
+    TORSO_ROWS.forEach((row, j) => {
+      if (Math.abs(f - row) > 0.025) return
+      lo[j] = Math.min(lo[j], nrm)
+      hi[j] = Math.max(hi[j], nrm)
+    })
+  }
+  // 3D の胴の単位（メッシュの元の長さ）と、体の高さの単位の比（背骨の付け根から上の大きさ × 全体の大きさ）
+  const toPose = root.scale.x * (root.getObjectByName('spine_01')?.scale.x ?? 1)
+  const legLen = L.leg ?? L.thigh + L.shank
+  const ok = (x: number | null | undefined): x is number => x !== null && x !== undefined && Number.isFinite(x)
+  const rowsOf = (band: number[]) => band.map((f) => TORSO_ROWS.indexOf(f)).filter((j) => j >= 0 && hi[j] - lo[j] > 1e-4)
+  const median = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : null)
+  const fill = (vals: (number | null)[], neutral: number) => {
+    const known = vals.map((k, j) => (k === null ? -1 : j)).filter((j) => j >= 0)
+    if (!known.length) return null
+    return vals.map((k, j) => k ?? neutral + (vals[known.reduce((a, c) => (Math.abs(c - j) < Math.abs(a - j) ? c : a))]! - neutral) / 2)
+  }
+  const thick = fill(
+    TORSO_BAND_ROWS.map((band) =>
+      median(rowsOf(band).filter((j) => ok(depth.front[j]) && ok(depth.back[j])).map((j) => ((depth.front[j]! + depth.back[j]!) * legLen) / (hi[j] - lo[j]))),
+    ),
+    1,
+  ) ?? TORSO_BANDS.map(() => 1)
+  const shift = fill(
+    TORSO_BAND_ROWS.map((band, b) =>
+      median(
+        rowsOf(band).flatMap((j) => {
+          const c = (hi[j] + lo[j]) / 2
+          const k = thick[b]
+          if (ok(depth.back[j])) return [-depth.back[j]! * legLen - (c + (lo[j] - c) * k)]
+          if (ok(depth.front[j])) return [depth.front[j]! * legLen - (c + (hi[j] - c) * k)]
+          return []
+        }),
+      ),
+    ),
+    0,
+  )
+  const out = shift ? { thick, shift: shift.map((x) => x / toPose) } : null
+  byGeom.set(mesh.geometry, out)
+  return out
+}
+
 /** 順手でハンドルを握るときの、指の付け根・中・先の関節の曲げ（度）と、親指を人さし指の中ほどへ寄せる割合（付け根から先へ） */
 const GRIP_FINGER = [50, 95, 65]
 const GRIP_THUMB = [0.4, 0.6, 0.7]

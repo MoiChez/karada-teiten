@@ -241,6 +241,16 @@ describe('動きの 3D', () => {
     expect(poses[50].pose.bones).toBe(b)
   })
 
+  it('記録に動画から測った胴の厚みがあれば、本人の骨の長さと一緒に 3D へ渡す', () => {
+    const prep = prepareMotion(squatInput(100))!
+    const torsoDepth = { front: [0.1, 0.1, null, null, null, null, null, null, null, null], back: [0.2, 0.2, 0.21, null, null, null, null, null, null, null] }
+    prep.torsoDepth = torsoDepth
+    const poses = motionPoses(prep)
+    expect(poses[0].pose.bones!.torsoDepth).toEqual(torsoDepth)
+    // 脚の長さ（体の高さの単位）も一緒に渡す
+    expect(poses[0].pose.bones!.leg).toBeGreaterThan(0.3)
+  })
+
   it('コマの間の時刻は、前後のコマから直線で補う', () => {
     const poses = motionPoses(prepareMotion(squatInput(100))!)
     const a = poses[30]

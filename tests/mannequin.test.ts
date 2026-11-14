@@ -287,6 +287,79 @@ describe('マネキンを測った姿勢に合わせる', () => {
     }
   })
 
+  it('動画から測った胴の前と後ろの輪郭があると、3D の胴の厚みと前後の位置をそれに合わせる（ないときは標準の体のまま）', async () => {
+    const root = await load('male')
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, y: number, z: number, w: number) => {
+      points[l] = p(w, y, z)
+      points[r] = p(-w, y, z)
+    }
+    // まっすぐ座った姿勢（胴は真上）、腕は前へ
+    set(23, 24, 0.3, 0, 0.06)
+    set(11, 12, 0.58, 0, 0.11)
+    set(7, 8, 0.71, 0.01, 0.06)
+    set(13, 14, 0.5, 0.15, 0.125)
+    set(15, 16, 0.5, 0.31, 0.13)
+    set(25, 26, 0.33, 0.25, 0.06)
+    set(27, 28, 0.08, 0.3, 0.06)
+    set(29, 30, 0.06, 0.28, 0.06)
+    set(31, 32, 0.08, 0.4, 0.065)
+    const bones = { upperArm: 0.17, foreArm: 0.16, thigh: 0.26, shank: 0.27, trunk: 0.25, leg: 0.53 }
+    let mesh: THREE.SkinnedMesh | undefined
+    root.traverse((o) => {
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh) mesh = o as THREE.SkinnedMesh
+    })
+    // 高さごとの、胴の線（股関節の中点→両肩の点の中点。ここでは真上）から前と後ろの端までの位置（骨と形を当てた後の位置。
+    // 横から見た輪郭と同じく、左右のどこでも。動画の人の輪郭と同じ測り方）
+    const rowsAll = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8]
+    const edges = () => {
+      root.updateMatrixWorld(true)
+      const g = mesh!.geometry
+      const si = g.getAttribute('skinIndex')
+      const sw = g.getAttribute('skinWeight')
+      const names = mesh!.skeleton.bones.map((b) => b.name)
+      const torso = new Set(['pelvis', 'spine_01', 'spine_02', 'spine_03', 'clavicle_l', 'clavicle_r'])
+      const v = new THREE.Vector3()
+      const lo = rowsAll.map(() => Infinity)
+      const hi = rowsAll.map(() => -Infinity)
+      for (let i = 0; i < g.getAttribute('position').count; i++) {
+        let w = 0
+        for (let k = 0; k < 4; k++) if (torso.has(names[si.getComponent(i, k)])) w += sw.getComponent(i, k)
+        if (w < 0.5) continue
+        mesh!.getVertexPosition(i, v)
+        v.applyMatrix4(mesh!.matrixWorld)
+        const f = (v.y - 0.3) / 0.28
+        rowsAll.forEach((r, j) => {
+          if (Math.abs(f - r) > 0.025) return
+          lo[j] = Math.min(lo[j], v.z)
+          hi[j] = Math.max(hi[j], v.z)
+        })
+      }
+      return { lo, hi }
+    }
+    const influences = () => Array.from(mesh!.morphTargetInfluences ?? []).filter((x) => x !== 0)
+    poseMannequin(root, { points, depthSource: 'side_photo', bones }, { anchor: 'hips', planarLegs: true, seated: true })
+    expect(influences()).toEqual([])
+    const e0 = edges()
+    // 人の胴は、3D より 1.3 倍厚く、体の高さの 2% 後ろ寄り
+    const want = rowsAll.map((_, j) => {
+      const c = (e0.hi[j] + e0.lo[j]) / 2
+      return { front: c + 1.3 * (e0.hi[j] - c) - 0.02, back: c + 1.3 * (e0.lo[j] - c) - 0.02 }
+    })
+    const torsoDepth = { front: want.map((w) => w.front / bones.leg), back: want.map((w) => -w.back / bones.leg) }
+    poseMannequin(root, { points, depthSource: 'side_photo', bones: { ...bones, torsoDepth } }, { anchor: 'hips', planarLegs: true, seated: true })
+    const e1 = edges()
+    for (const j of [2, 3, 4, 5]) {
+      expect(Math.abs(e1.hi[j] - want[j].front), `front ${rowsAll[j]}`).toBeLessThan(0.008)
+      expect(Math.abs(e1.lo[j] - want[j].back), `back ${rowsAll[j]}`).toBeLessThan(0.008)
+    }
+    // 輪郭がない記録は、元の形に戻る
+    poseMannequin(root, { points, depthSource: 'side_photo', bones }, { anchor: 'hips', planarLegs: true, seated: true })
+    expect(influences()).toEqual([])
+    edges().hi.forEach((h, j) => expect(h).toBeCloseTo(e0.hi[j], 6))
+  })
+
   it('動きの再生では、胴の前後の傾きの多くを骨盤で受け持ち、背骨を反らせすぎない（フィニッシュで腹が前に突き出ない）', async () => {
     const root = await load('male')
     root.updateMatrixWorld(true)

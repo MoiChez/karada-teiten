@@ -4,12 +4,15 @@ import type { Landmark, PlaneRecord } from './types'
 import { LM } from './landmarks'
 import { pointState } from './metrics'
 import { correctedSet } from './session'
+import type { TorsoProfile } from './torsoDepth'
 
 export interface Vec3 {
   x: number
   y: number
   z: number
 }
+
+export type { TorsoProfile }
 
 export interface Pose3D {
   points: (Vec3 | null)[]
@@ -25,6 +28,10 @@ export interface BoneLengths {
   shank: number
   /** 股関節の中点〜両肩の関節の中点（耳の点と股関節の点から見積もる。推定の肩の点は肩先で、関節より高いため） */
   trunk?: number
+  /** 動画の人の輪郭から測った胴の厚み（高さごと、カメラ側の脚の長さに対する比）。3D の胴の前後の厚みをこれに合わせる */
+  torsoDepth?: TorsoProfile
+  /** カメラ側の脚の長さ（股関節〜膝〜足首、記録の中央値。胴の厚みを体の高さの単位に直すのに使う） */
+  leg?: number
 }
 
 /** 左右で対になる点（側面ではカメラ側の値を両側に使う） */

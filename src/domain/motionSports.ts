@@ -10,6 +10,7 @@ import { drivePeaks, type SequencePart } from './motionSequence'
 import type { BarSeries } from './motionBar'
 import type { CrankAngles } from './motionCrank'
 import { frontalValues, type ViewInfo } from './motionFrontal'
+import type { TorsoProfile } from './torsoDepth'
 
 type Side = ReturnType<typeof sidePoints>
 
@@ -55,6 +56,8 @@ export interface PreparedMotion extends PreparedBase {
   view?: ViewInfo
   /** 体の左へ向かう、画面の横の向き（正面・真後ろから撮ったとき） */
   leftDir: 1 | -1
+  /** 動画の人の輪郭から測った胴の厚み（記録に保存した値。3D の表示だけに使う） */
+  torsoDepth?: TorsoProfile
 }
 
 export interface MotionEvent {
