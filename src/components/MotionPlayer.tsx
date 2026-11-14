@@ -8,7 +8,15 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Pause, Play, StepBack, StepForward } from "lucide-react";
+import {
+  GripHorizontal,
+  Maximize2,
+  Minimize2,
+  Pause,
+  Play,
+  StepBack,
+  StepForward,
+} from "lucide-react";
 import {
   MUSCLE_LABELS,
   PROFILES,
@@ -153,8 +161,25 @@ export function MotionPlayer({
     }
   }, [clock, cycles, profile.mainEvent, reduced, autoplay]);
 
-  // 縦長の動画は 3D と左右に並べ、横長の動画は上下に並べる（枠は動画の縦横比に合わせる）
-  const sideBySide = !!video && video.height >= video.width;
+  // 並べて見る: 上に動画、下に 3D。仕切りを上下に動かすと 3D の高さが変わり、3D は全画面にもできる
+  const [stageH, setStageH] = useState(340);
+  const [full, setFull] = useState(false);
+  const drag = useRef<{ y: number; h: number } | null>(null);
+  const clampH = (h: number) => Math.min(720, Math.max(180, Math.round(h)));
+  // 全画面の間は、後ろのページを動かさない。Esc で戻る
+  useEffect(() => {
+    if (!full) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFull(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [full]);
   const showOverlay =
     !!video && !!mapping && !videoOverlay && layout === "overlay";
   return (
@@ -205,66 +230,114 @@ export function MotionPlayer({
         </>
       )}
       {!showOverlay && (
-        <div
-          className={cx(
-            "grid gap-2",
-            sideBySide ? "grid-cols-2" : "grid-cols-1",
+        <div>
+          {video && (
+            <div className="flex justify-center overflow-hidden rounded-[var(--radius-panel)] bg-ink">
+              {/* 縦長の動画でも、画面の高さの半分までに収める（幅は縦横比から決まる） */}
+              <div
+                className="relative"
+                style={{
+                  aspectRatio: `${video.width} / ${video.height}`,
+                  width: `min(100%, calc(46dvh * ${video.width} / ${video.height}))`,
+                }}
+              >
+                <FrameVideo
+                  images={video.images}
+                  width={video.width}
+                  height={video.height}
+                  clock={clock}
+                  overlay={overlayOn && !videoOverlay ? overlay : undefined}
+                  nearSide={prep.nearSide}
+                  com={com}
+                  bar={bar}
+                  bothSides={!!profile.frontal}
+                />
+                {videoOverlay}
+              </div>
+            </div>
           )}
-        >
           {video && (
             <div
-              className="relative overflow-hidden rounded-[var(--radius-panel)] bg-ink"
-              style={{ aspectRatio: `${video.width} / ${video.height}` }}
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="3D の高さ。上下の矢印キーで変えられます"
+              aria-valuemin={180}
+              aria-valuemax={720}
+              aria-valuenow={stageH}
+              tabIndex={0}
+              className="flex h-6 cursor-row-resize touch-none items-center justify-center text-ink-3 hover:text-ink"
+              onPointerDown={(e) => {
+                drag.current = { y: e.clientY, h: stageH };
+                e.currentTarget.setPointerCapture(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                if (drag.current)
+                  setStageH(clampH(drag.current.h + e.clientY - drag.current.y));
+              }}
+              onPointerUp={() => (drag.current = null)}
+              onPointerCancel={() => (drag.current = null)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowUp") setStageH((h) => clampH(h - 24));
+                else if (e.key === "ArrowDown") setStageH((h) => clampH(h + 24));
+                else return;
+                e.preventDefault();
+              }}
             >
-              <FrameVideo
-                images={video.images}
-                width={video.width}
-                height={video.height}
-                clock={clock}
-                overlay={overlayOn && !videoOverlay ? overlay : undefined}
-                nearSide={prep.nearSide}
-                com={com}
-                bar={bar}
-                bothSides={!!profile.frontal}
-              />
-              {videoOverlay}
+              <GripHorizontal aria-hidden className="size-5" />
             </div>
           )}
-          {/* 並べるときは、動画の枠と同じ高さにする（3D の側は高さを持たない） */}
           <div
             className={cx(
-              "relative",
-              sideBySide ? "min-h-[240px]" : "h-[min(46dvh,380px)]",
+              full
+                ? "fixed inset-0 z-50 flex flex-col bg-ink p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))]"
+                : "relative flex flex-col",
             )}
+            style={full ? undefined : { height: stageH }}
           >
-            <div className="absolute inset-0">
-              <Suspense
-                fallback={
-                  <div className="size-full rounded-[var(--radius-panel)] bg-surface" />
-                }
-              >
-                <MotionBody3D
-                  poses={poses}
-                  clock={clock}
-                  sex={sex}
-                  facing={rec.analysis.facing}
-                  kind={rec.kind}
-                  muscles={muscles}
-                  levels={levels}
-                  equipment={equipment}
-                  nearSide={prep.nearSide}
-                  className="h-full"
-                  onCanvas={(c) => (three.current = c)}
-                  camera={
-                    profile.frontal
-                      ? prep.view?.view === "front"
-                        ? "front"
-                        : "rear"
-                      : undefined
+            <div className="relative min-h-0 flex-1">
+              <div className="absolute inset-0">
+                <Suspense
+                  fallback={
+                    <div className="size-full rounded-[var(--radius-panel)] bg-ink" />
                   }
-                />
-              </Suspense>
+                >
+                  <MotionBody3D
+                    poses={poses}
+                    clock={clock}
+                    sex={sex}
+                    facing={rec.analysis.facing}
+                    kind={rec.kind}
+                    muscles={muscles}
+                    levels={levels}
+                    equipment={equipment}
+                    nearSide={prep.nearSide}
+                    className="h-full"
+                    onCanvas={(c) => (three.current = c)}
+                    camera={
+                      profile.frontal
+                        ? prep.view?.view === "front"
+                          ? "front"
+                          : "rear"
+                        : undefined
+                    }
+                  />
+                </Suspense>
+              </div>
+              <button
+                type="button"
+                aria-label={full ? "全画面をやめる" : "3D を全画面にする"}
+                aria-pressed={full}
+                onClick={() => setFull(!full)}
+                className="absolute right-2 top-2 flex size-11 items-center justify-center rounded-full bg-white/15 text-paper backdrop-blur hover:bg-white/25"
+              >
+                {full ? (
+                  <Minimize2 aria-hidden className="size-5" />
+                ) : (
+                  <Maximize2 aria-hidden className="size-5" />
+                )}
+              </button>
             </div>
+            {full && <Transport clock={clock} ts={ts} />}
           </div>
         </div>
       )}

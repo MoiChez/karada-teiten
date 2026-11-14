@@ -397,6 +397,8 @@ describe('マネキンを測った姿勢に合わせる', () => {
       }
       return { lo, hi }
     }
+    // 胴を合わせる前に複製しておいた形
+    const early = mesh!.geometry.clone()
     const influences = () => Array.from(mesh!.morphTargetInfluences ?? []).filter((x) => x !== 0)
     poseMannequin(root, { points, depthSource: 'side_photo', bones }, { anchor: 'hips', planarLegs: true, seated: true })
     expect(influences()).toEqual([])
@@ -417,6 +419,14 @@ describe('マネキンを測った姿勢に合わせる', () => {
     poseMannequin(root, { points, depthSource: 'side_photo', bones }, { anchor: 'hips', planarLegs: true, seated: true })
     expect(influences()).toEqual([])
     edges().hi.forEach((h, j) => expect(h).toBeCloseTo(e0.hi[j], 6))
+    // 形を複製した体（画面では表示ごとに複製する。複製の前後どちらで胴を合わせていても）でも、同じように合わせられる
+    const before = mesh!.geometry
+    for (const g of [early, before.clone()]) {
+      mesh!.geometry = g
+      poseMannequin(root, { points, depthSource: 'side_photo', bones: { ...bones, torsoDepth: { ...torsoDepth } } }, { anchor: 'hips', planarLegs: true, seated: true })
+      const e2 = edges()
+      for (const j of [2, 3, 4, 5]) expect(Math.abs(e2.lo[j] - want[j].back), `clone back ${rowsAll[j]}`).toBeLessThan(0.008)
+    }
   })
 
   it('動きの再生では、胴の前後の傾きの多くを骨盤で受け持ち、背骨を反らせすぎない（フィニッシュで腹が前に突き出ない）', async () => {

@@ -426,12 +426,24 @@ interface TorsoMorph {
 }
 
 /**
+ * 形（メッシュ）ごとの胴の形。geometry.userData には置かない: three.js の geometry.clone() は userData を同じ物のまま
+ * 共有するので、複製した形で作った印が元の形や別の複製にも付き、胴の形を足していない形で「作ってある」と扱って落ちた
+ * （「重ねて比べる」から「並べて見る」へ切り替えたとき）
+ */
+const TORSO_MORPHS = new WeakMap<THREE.BufferGeometry, TorsoMorph | null>()
+function keepMorph(g: THREE.BufferGeometry, m: TorsoMorph | null) {
+  TORSO_MORPHS.set(g, m)
+  return m
+}
+
+/**
  * 胴を前後に厚くする形を、メッシュの形に足す（同じ形を使う複製どうしで 1 回だけ作る）。胴の骨の重みの頂点を、
  * その高さの胴の前後の中心から、前後へ離す（重みが小さい首・腕・脚の付け根ほど少なく）。最初の姿勢の胴の厚みも測っておく
  */
 function torsoMorphOf(mesh: THREE.SkinnedMesh): TorsoMorph | null {
   const g = mesh.geometry
-  if (g.userData.torsoMorph !== undefined) return g.userData.torsoMorph
+  const cached = TORSO_MORPHS.get(g)
+  if (cached !== undefined) return cached
   const pos = g.getAttribute('position')
   const si = g.getAttribute('skinIndex')
   const sw = g.getAttribute('skinWeight')
@@ -441,7 +453,7 @@ function torsoMorphOf(mesh: THREE.SkinnedMesh): TorsoMorph | null {
     return i < 0 ? null : new THREE.Vector3().setFromMatrixPosition(mesh.skeleton.boneInverses[i].clone().invert())
   }
   const parts = ['thigh_l', 'thigh_r', 'upperarm_l', 'upperarm_r'].map(jointAt)
-  if (!pos || !si || !sw || parts.some((p) => !p)) return (g.userData.torsoMorph = null)
+  if (!pos || !si || !sw || parts.some((p) => !p)) return keepMorph(g, null)
   const hipY = (parts[0]!.y + parts[1]!.y) / 2
   const shY = (parts[2]!.y + parts[3]!.y) / 2
   const n = pos.count
@@ -476,7 +488,7 @@ function torsoMorphOf(mesh: THREE.SkinnedMesh): TorsoMorph | null {
   }
   const center: number[] = minZ.map((m, b) => (Number.isFinite(m) && maxZ[b] - m > 0.1 ? (m + maxZ[b]) / 2 : NaN))
   const known = center.map((c, b) => (Number.isFinite(c) ? b : -1)).filter((b) => b >= 0)
-  if (!known.length) return (g.userData.torsoMorph = null)
+  if (!known.length) return keepMorph(g, null)
   for (let b = 0; b < center.length; b++) {
     if (Number.isFinite(center[b])) continue
     const nearest = known.reduce((a, c) => (Math.abs(c - b) < Math.abs(a - b) ? c : a))
@@ -518,7 +530,7 @@ function torsoMorphOf(mesh: THREE.SkinnedMesh): TorsoMorph | null {
   const verts: number[] = []
   for (let i = 0; i < n; i++) if (w[i] >= 0.5) verts.push(i)
   const nb = TORSO_BANDS.length
-  return (g.userData.torsoMorph = {
+  return keepMorph(g, {
     index: { thick: TORSO_BANDS.map((_, j) => morphs.length + j), shift: TORSO_BANDS.map((_, j) => morphs.length + nb + j) },
     verts,
   })

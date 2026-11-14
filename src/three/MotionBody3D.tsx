@@ -2,7 +2,7 @@
 // エルゴと自転車では、体の点の動きから決めた器具の形（シートとレール、クランクとサドル）を添える
 import { Suspense, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
-import { ContactShadows, OrbitControls } from '@react-three/drei'
+import { ContactShadows, GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -23,9 +23,15 @@ const VIEWS = {
   oblique: [-2.0, 1.1, 2.1],
   front: [0, 0.6, 3.0],
   back: [0, 0.6, -3.0],
+  // 真上から（カメラの上の向きが決まるように、少しだけ後ろへずらす）
+  top: [0, 3.6, -0.01],
 } as const
+type ViewKey = keyof typeof VIEWS
+const VIEW_LABELS: Record<ViewKey, string> = { side: '横', oblique: '斜め', front: '正面', back: '後ろ', top: '上' }
 
-const GEAR = '#3d555c'
+/** 3D の舞台の色（動画の枠と同じ濃い色。体と器具が明るく浮かぶように） */
+const STAGE = '#10282f'
+const GEAR = '#7f979d'
 
 /** 筋肉ごとの、コマごとの濃さ（0〜1。推定の要求度） */
 export interface MuscleLevels {
@@ -101,8 +107,21 @@ export function MovingBody({
       <primitive object={root} />
       {!bare && (
         <>
-          <gridHelper args={[2.4, 24, '#cfd9d8', '#dfe7e6']} position={[0, floorY, 0]} />
-          <ContactShadows position={[0, floorY + 0.002, 0]} opacity={0.4} scale={2.4} blur={2.2} far={1.4} resolution={256} />
+          {/* 床の格子: 細い線が体の高さの 1/10、太い線が半分。遠くは霧に消える */}
+          <Grid
+            position={[0, floorY, 0]}
+            args={[20, 20]}
+            cellSize={0.1}
+            cellThickness={0.6}
+            cellColor="#3d555c"
+            sectionSize={0.5}
+            sectionThickness={1.1}
+            sectionColor="#6f8f99"
+            fadeDistance={9}
+            fadeStrength={1.6}
+            infiniteGrid
+          />
+          <ContactShadows position={[0, floorY + 0.002, 0]} opacity={0.65} scale={3.2} blur={2.4} far={1.6} resolution={512} color="#000000" />
         </>
       )}
     </>
@@ -202,6 +221,7 @@ function ViewSetter({ view, pos, controls }: { view: string; pos: readonly [numb
   useEffect(() => {
     if (last.current === view) return
     last.current = view
+    camera.up.set(0, 1, 0)
     const [x, y, z] = pos
     camera.position.set(x, y, z)
     camera.lookAt(0, 0.45, 0)
@@ -245,7 +265,9 @@ export default function MotionBody3D({
 }) {
   const body = mannequinKindOf(sex)
   const facingView = camera === 'rear' ? 'back' : 'front'
-  const [view, setView] = useState<keyof typeof VIEWS>(camera ? facingView : 'side')
+  const [view, setView] = useState<ViewKey>(camera ? facingView : 'side')
+  // 同じ視点のボタンをもう一度押したときも、指で回した視点を元へ戻す
+  const [resets, setResets] = useState(0)
   const [failed, setFailed] = useState(false)
   const controls = useRef<OrbitControlsImpl | null>(null)
   const webgl = useMemo(hasWebGL, [])
@@ -259,7 +281,7 @@ export default function MotionBody3D({
   if (failed) return <Notice tone="info">体のモデルを読み込めませんでした。通信できる状態で開き直すと表示されます。</Notice>
 
   return (
-    <div className={cx('relative flex h-full flex-col overflow-hidden rounded-[var(--radius-panel)] bg-surface', className)}>
+    <div className={cx('relative flex h-full flex-col overflow-hidden rounded-[var(--radius-panel)]', className)} style={{ background: STAGE }}>
       <div className="relative min-h-0 flex-1" style={{ touchAction: 'none' }}>
         <Canvas
           camera={{ position: [...pos], fov: 35, near: 0.05, far: 50 }}
@@ -268,6 +290,8 @@ export default function MotionBody3D({
           onCreated={({ gl }) => onCanvas?.(gl.domElement)}
           aria-label="動きの 3D 再生。ドラッグで回転できます"
         >
+          <color attach="background" args={[STAGE]} />
+          <fog attach="fog" args={[STAGE, 7, 16]} />
           <BodyLights />
           <LoadBoundary onError={() => setFailed(true)}>
             <Suspense fallback={null}>
@@ -276,31 +300,27 @@ export default function MotionBody3D({
           </LoadBoundary>
           <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} side={nearSide === 'left' ? 1 : -1} />
           <OrbitControls ref={controls} makeDefault target={[0, 0.45, 0]} enableDamping={!reduced} minDistance={0.8} maxDistance={8} />
-          <ViewSetter view={view} pos={pos} controls={controls} />
+          <ViewSetter view={`${view}:${resets}`} pos={pos} controls={controls} />
+          {/* 軸の向き（X: 体の左、Y: 上、Z: 体の前）。軸の先を押すと、その向きから見る */}
+          <GizmoHelper alignment="top-left" margin={[44, 44]}>
+            <GizmoViewport axisColors={['#e0707a', '#9fc54a', '#5aa9d6']} labelColor="#10282f" axisHeadScale={0.9} />
+          </GizmoHelper>
         </Canvas>
         <LoadingNote />
       </div>
-      <div className="grid grid-cols-3 gap-1 p-1.5" role="group" aria-label="3D の視点">
-        {(camera
-          ? ([
-              [facingView, camera === 'rear' ? '後ろ' : '正面'],
-              ['oblique', '斜め'],
-              ['side', '横'],
-            ] as const)
-          : ([
-              ['side', '横'],
-              ['oblique', '斜め'],
-              ['front', '正面'],
-            ] as const)
-        ).map(([k, label]) => (
+      <div className="grid grid-cols-5 gap-1 p-1.5" role="group" aria-label="3D の視点">
+        {(camera ? ([facingView, 'oblique', 'side', facingView === 'front' ? 'back' : 'front', 'top'] as const) : (['side', 'oblique', 'front', 'back', 'top'] as const)).map((k) => (
           <button
             key={k}
             type="button"
             aria-pressed={view === k}
-            onClick={() => setView(k)}
-            className={cx('min-h-10 rounded-[var(--radius-control)] border text-sm', view === k ? 'border-ink bg-ink text-paper' : 'border-line bg-surface hover:bg-sunken')}
+            onClick={() => {
+              setView(k)
+              setResets((n) => n + 1)
+            }}
+            className={cx('min-h-10 rounded-[var(--radius-control)] border text-sm', view === k ? 'border-paper bg-paper text-ink' : 'border-white/25 text-paper hover:bg-white/10')}
           >
-            {label}
+            {VIEW_LABELS[k]}
           </button>
         ))}
       </div>
