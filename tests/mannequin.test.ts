@@ -150,29 +150,32 @@ describe('マネキンを測った姿勢に合わせる', () => {
     }
   })
 
-  it('動きの再生で本人の骨の長さがあると、耳・ひじ・手首・膝・足首が測った点に重なる（肩の点は肩先で、引くと後ろへずれる）', async () => {
+  it('動きの再生で本人の骨の長さがあると、胴は肩の点の向きのまま倒し、耳・肩・ひじ・手首・膝・足首が測った点に重なる', async () => {
     const root = await load('male')
+    root.updateMatrixWorld(true)
     const p = (x: number, y: number, z: number) => ({ x, y, z })
     const V = (y: number, z: number) => new THREE.Vector3(0, y, z)
     const dir = (deg: number) => V(Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180))
-    // エルゴのフィニッシュ: 胴が 20° 後ろに傾き、首は胴に対して 20° 前へ。肩の関節は肩甲骨と一緒に 0.03 後ろへ引かれ、
-    // 推定の肩の点はそこから胴に沿って 0.03 上（肩先）。ひじは後ろ下、手首は前
+    const lean = (v: THREE.Vector3) => (Math.atan2(v.z, v.y) * 180) / Math.PI
+    // 胴の中ほど（背骨の真ん中の骨の付け根）の、股関節の中点→両肩の中点の線からの角度（最初の姿勢で）
+    const thorax = () => root.getObjectByName('spine_03')!.getWorldPosition(new THREE.Vector3()).sub(mid(pointOf(root, 23), pointOf(root, 24)))
+    const restOff = lean(thorax()) - lean(mid(pointOf(root, 11), pointOf(root, 12)).sub(mid(pointOf(root, 23), pointOf(root, 24))))
+    // エルゴのフィニッシュ: 股関節→肩の点が 35° 後ろに倒れ、頭は起きている（首は胴に対して大きく前へ曲がる）。
+    // ひじは後ろ下、手首は胸の前
     const hip = V(0.3, 0)
-    const top = hip.clone().add(dir(-20).multiplyScalar(0.25))
-    const ear = top.clone().add(dir(0).multiplyScalar(0.13))
-    const joint = top.clone().add(dir(-110).multiplyScalar(0.03))
-    const mark = joint.clone().add(dir(-20).multiplyScalar(0.03))
-    const elbow = joint.clone().add(dir(-160).multiplyScalar(0.18))
-    const wrist = elbow.clone().add(dir(70).multiplyScalar(0.16))
+    const sh = hip.clone().add(dir(-35).multiplyScalar(0.27))
+    const ear = sh.clone().add(dir(10).multiplyScalar(0.12))
+    const elbow = sh.clone().add(dir(-165).multiplyScalar(0.18))
+    const wrist = elbow.clone().add(dir(60).multiplyScalar(0.16))
     const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
     const set = (l: number, r: number, q: THREE.Vector3, w: number) => {
       points[l] = p(w, q.y, q.z)
       points[r] = p(-w, q.y, q.z)
     }
     set(23, 24, hip, 0.06)
-    set(11, 12, mark, 0.11)
+    set(11, 12, sh, 0.11)
     set(7, 8, ear, 0.06)
-    points[0] = p(0, ear.y - 0.01, ear.z + 0.09)
+    points[0] = p(0, ear.y - 0.01, ear.z + 0.07)
     set(13, 14, elbow, 0.125)
     set(15, 16, wrist, 0.13)
     const knee = hip.clone().add(dir(80).multiplyScalar(0.26))
@@ -181,12 +184,7 @@ describe('マネキンを測った姿勢に合わせる', () => {
     set(27, 28, ankle, 0.06)
     set(29, 30, ankle.clone().add(V(-0.04, -0.02)), 0.06)
     set(31, 32, ankle.clone().add(V(0.02, 0.1)), 0.065)
-    const pose: Pose3D = {
-      points,
-      depthSource: 'side_photo',
-      trunkTop: p(0, top.y, top.z),
-      bones: { upperArm: 0.18, foreArm: 0.16, thigh: 0.26, shank: 0.26, trunk: 0.25 },
-    }
+    const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.18, foreArm: 0.16, thigh: 0.26, shank: 0.26, trunk: 0.25 } }
     for (let k = 0; k < 2; k++) {
       poseMannequin(root, pose, { anchor: 'hips', planarLegs: true })
       root.updateMatrixWorld(true)
@@ -194,14 +192,98 @@ describe('マネキンを測った姿勢に合わせる', () => {
         const got = pointOf(root, i)
         return Math.hypot(got.y - want.y, got.z - want.z)
       }
-      expect(near(7, ear), 'ear').toBeLessThan(0.015)
-      // 肩の関節は鎖骨を回して動かす（鎖骨の付け根を中心に回るので、少しずれる）。ひじはその分ずれる
-      expect(near(13, elbow), 'elbow').toBeLessThan(0.035)
+      // 首の長さを変えて耳に届かせる
+      expect(near(7, ear), 'ear').toBeLessThan(0.01)
+      // 肩の関節は鎖骨を回して肩の点へ寄せる（鎖骨の付け根を中心に回るので、少しずれる）
+      expect(near(11, sh), 'shoulder').toBeLessThan(0.02)
+      expect(near(13, elbow), 'elbow').toBeLessThan(0.03)
       expect(near(15, wrist), 'wrist').toBeLessThan(0.01)
       expect(near(25, knee), 'knee').toBeLessThan(0.01)
       expect(near(27, ankle), 'ankle').toBeLessThan(0.01)
-      // 3D の肩の関節は、推定の肩の点（肩先）より胴に沿って下
-      expect(near(11, joint), 'shoulder joint').toBeLessThan(0.03)
+      // 胴は股関節→肩の点の向きに倒れている（耳の側へ起こさない）
+      expect(Math.abs(lean(thorax()) - restOff - -35), 'thorax').toBeLessThan(6)
+    }
+  })
+
+  it('座った姿勢（エルゴ・自転車）は、骨盤を後ろへ起こし（腰の反りを減らす）、関節の位置は変えない', async () => {
+    const root = await load('male')
+    root.updateMatrixWorld(true)
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, y: number, z: number, w: number) => {
+      points[l] = p(w, y, z)
+      points[r] = p(-w, y, z)
+    }
+    set(23, 24, 0.3, 0, 0.06)
+    set(11, 12, 0.57, -0.05, 0.11)
+    set(7, 8, 0.69, -0.02, 0.06)
+    set(13, 14, 0.42, -0.1, 0.125)
+    set(15, 16, 0.5, 0.15, 0.13)
+    set(25, 26, 0.33, 0.25, 0.06)
+    set(27, 28, 0.2, 0.48, 0.06)
+    set(29, 30, 0.18, 0.46, 0.06)
+    set(31, 32, 0.22, 0.58, 0.065)
+    const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.17, foreArm: 0.16, thigh: 0.26, shank: 0.26, trunk: 0.25 } }
+    const shot = (seated: boolean) => {
+      poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, seated })
+      root.updateMatrixWorld(true)
+      const q = (n: string) => root.getObjectByName(n)!.getWorldQuaternion(new THREE.Quaternion())
+      return { pelvis: q('pelvis'), chest: q('spine_03'), pts: [7, 11, 13, 15, 25, 27].map((i) => pointOf(root, i)) }
+    }
+    const a = shot(false)
+    const b = shot(true)
+    const deg = (q1: THREE.Quaternion, q2: THREE.Quaternion) => (q1.angleTo(q2) * 180) / Math.PI
+    // 骨盤は後ろへ（体の前 +Z が上へ回る向き）30° 起こす
+    expect(deg(a.pelvis, b.pelvis)).toBeCloseTo(30, 0)
+    const fwd = (q: THREE.Quaternion) => new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+    expect(fwd(b.pelvis).y).toBeGreaterThan(fwd(a.pelvis).y)
+    // 腰の骨の付け根が後ろへずれる分だけ、胸から上は少し前へ回って肩を測った線に戻す（骨盤の 30° よりずっと小さい）
+    expect(deg(a.chest, b.chest)).toBeLessThan(12)
+    // 関節は同じ位置
+    a.pts.forEach((v, i) => expect(v.distanceTo(b.pts[i]), `point ${i}`).toBeLessThan(0.01))
+  })
+
+  it('エルゴ・自転車の手は順手で握る（手首はまっすぐ、手のひらが下、指と親指が手のひらの側へ曲がる）', async () => {
+    const root = await load('male')
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, y: number, z: number, w: number) => {
+      points[l] = p(w, y, z)
+      points[r] = p(-w, y, z)
+    }
+    // ドライブの途中: 腕はまっすぐ前へ、手首は肩より少し下
+    set(23, 24, 0.3, 0, 0.06)
+    set(11, 12, 0.57, 0.03, 0.11)
+    set(7, 8, 0.69, 0.06, 0.06)
+    set(13, 14, 0.52, 0.2, 0.125)
+    set(15, 16, 0.48, 0.36, 0.13)
+    set(25, 26, 0.38, 0.22, 0.06)
+    set(27, 28, 0.2, 0.42, 0.06)
+    set(29, 30, 0.18, 0.4, 0.06)
+    set(31, 32, 0.22, 0.52, 0.065)
+    const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.17, foreArm: 0.16, thigh: 0.26, shank: 0.26, trunk: 0.25 } }
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, seated: true, grip: true })
+    root.updateMatrixWorld(true)
+    const W = (n: string) => root.getObjectByName(n)!.getWorldPosition(new THREE.Vector3())
+    for (const [s, mirror] of [
+      ['l', 1],
+      ['r', -1],
+    ] as const) {
+      const fore = W(`hand_${s}`).sub(W(`lowerarm_${s}`)).normalize()
+      const knuckles = W(`middle_01_${s}`)
+      const a = knuckles.clone().sub(W(`hand_${s}`)).normalize()
+      const k = W(`index_01_${s}`).sub(W(`pinky_01_${s}`))
+      k.sub(a.clone().multiplyScalar(k.dot(a))).normalize()
+      const palm = new THREE.Vector3().crossVectors(a, k).multiplyScalar(mirror).normalize()
+      // 手首はまっすぐ（手の向き＝前腕の向き）
+      expect(angleDeg(a, fore), `${s} wrist`).toBeLessThan(3)
+      // 手のひらは下（前腕に垂直な面の中で、真下に近い向き）
+      const down = new THREE.Vector3(0, -1, 0)
+      const want = down.clone().sub(fore.clone().multiplyScalar(down.dot(fore))).normalize()
+      expect(palm.dot(want), `${s} palm`).toBeGreaterThan(0.95)
+      // 中指の先の骨と親指の先の骨は、指の付け根より手のひらの側（下）にある
+      expect(W(`middle_03_${s}`).sub(knuckles).dot(palm), `${s} fingers`).toBeGreaterThan(0)
+      expect(W(`thumb_03_${s}`).sub(knuckles).dot(palm), `${s} thumb`).toBeGreaterThan(0)
     }
   })
 

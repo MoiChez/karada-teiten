@@ -171,8 +171,6 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
       points[i] = { x, y: (floorY - p.y) / H, z: (prep.f * (p.x - ankleX)) / H }
     }
     const pose: Pose3D = { points, depthSource: 'side_photo' }
-    const top = trunkTopOf(points)
-    if (top) pose.trunkTop = top
     return { t: f.t, pose }
   })
   const bones = sideBoneLengths(out.map((o) => o.pose))
@@ -180,54 +178,12 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
   return out
 }
 
-/** 首（肩の中点→耳の中点）を、胴（股関節の中点→肩の中点）に対して前へ曲げる最大の角度 */
-const NECK_FLEX_MAX = (30 * Math.PI) / 180
-
 /** 前後（z）と上下（y）の面の上の点 */
 interface UV {
   u: number
   v: number
 }
 const uvMid = (a: Vec3, b: Vec3): UV => ({ u: (a.z + b.z) / 2, v: (a.y + b.y) / 2 })
-
-/**
- * 横から撮った記録の、胴の上の端（胴の向きに使う点）。首が胴に対して前へ 30° より大きく折れて見えるときは、
- * 肩の点が背中側にずれているとみなし、両肩の中点を「股関節の中点と耳の中点を結ぶ線」に向かって、首の角度が 30° に
- * なるところまで寄せた点を返す（耳と股関節は動かさない。肩の点そのものは書き換えない）。直さないときは両肩の中点。
- * エルゴのフィニッシュでハンドルを引き切ると、肩甲骨が寄って推定の肩の点が後ろへずれ、胴が実際より後ろに倒れて見え、
- * 首が胴に対して 60° ほど前に折れていたため。前を見上げる向き（首が胴より後ろへ反る）は直さない
- */
-export function trunkTopOf(points: (Vec3 | null)[]): Vec3 | undefined {
-  const [l, r, el, er, hl, hr] = [points[11], points[12], points[7], points[8], points[23], points[24]]
-  if (!l || !r || !el || !er || !hl || !hr) return undefined
-  // 前後（z）と上下（y）の面で考える（横から撮った記録は、左右の点の前後・上下が同じ）
-  const S = uvMid(l, r)
-  const E = uvMid(el, er)
-  const Hp = uvMid(hl, hr)
-  /** 胴に対する首の角度（前へ曲げると +） */
-  const flex = (s: { u: number; v: number }) => {
-    const a = { u: s.u - Hp.u, v: s.v - Hp.v }
-    const b = { u: E.u - s.u, v: E.v - s.v }
-    return Math.atan2(a.v * b.u - a.u * b.v, a.u * b.u + a.v * b.v)
-  }
-  const asIs = { x: 0, y: S.v, z: S.u }
-  if (flex(S) <= NECK_FLEX_MAX) return asIs
-  const d = { u: E.u - Hp.u, v: E.v - Hp.v }
-  const dd = d.u * d.u + d.v * d.v
-  if (dd < 1e-9) return asIs
-  const k = ((S.u - Hp.u) * d.u + (S.v - Hp.v) * d.v) / dd
-  const foot = { u: Hp.u + d.u * k, v: Hp.v + d.v * k }
-  const at = (t: number) => ({ u: S.u + (foot.u - S.u) * t, v: S.v + (foot.v - S.v) * t })
-  let lo = 0
-  let hi = 1
-  for (let n = 0; n < 30; n++) {
-    const m = (lo + hi) / 2
-    if (flex(at(m)) > NECK_FLEX_MAX) lo = m
-    else hi = m
-  }
-  const s = at(hi)
-  return { x: 0, y: s.v, z: s.u }
-}
 
 /** 標準の体の「両肩の関節の中点〜耳の中点」の長さの、「股関節の中点〜両肩の関節の中点」に対する比（3D の人形 3 体で 0.50〜0.54） */
 const NECK_TO_TRUNK = 0.52
@@ -237,7 +193,7 @@ const NECK_TO_TRUNK = 0.52
  * 3D の手足を標準の体の長さのままにすると、ひじや膝が動画の点からずれる（利用者のエルゴで、標準の腕は 2 割近く短かった）ため。
  * 長い方の値を使うのは、斜めから撮ると手足が短く写るコマがあるため（いちばん長い値は推定の揺れを拾うので使わない）
  */
-function sideBoneLengths(poses: Pose3D[]): BoneLengths | undefined {
+export function sideBoneLengths(poses: Pose3D[]): BoneLengths | undefined {
   const len = (a: number, b: number) =>
     poses
       .map((p) => {
@@ -260,7 +216,7 @@ function sideBoneLengths(poses: Pose3D[]): BoneLengths | undefined {
     const [hl, hr, el, er, sl, sr] = [p.points[23], p.points[24], p.points[7], p.points[8], p.points[11], p.points[12]]
     if (!hl || !hr || !el || !er || !sl || !sr) continue
     const Hp = uvMid(hl, hr)
-    const top = p.trunkTop ? { u: p.trunkTop.z, v: p.trunkTop.y } : uvMid(sl, sr)
+    const top = uvMid(sl, sr)
     const D = { u: uvMid(el, er).u - Hp.u, v: uvMid(el, er).v - Hp.v }
     const ul = Math.hypot(top.u - Hp.u, top.v - Hp.v)
     if (!(ul > 1e-6)) continue
@@ -391,7 +347,6 @@ export function poseAtTime(list: { t: number; pose: Pose3D }[], t: number): Pose
   return {
     depthSource: a.pose.depthSource,
     bones: a.pose.bones,
-    trunkTop: a.pose.trunkTop && b.pose.trunkTop ? lerp3(a.pose.trunkTop, b.pose.trunkTop, k) : (a.pose.trunkTop ?? b.pose.trunkTop),
     points: a.pose.points.map((p, i) => {
       const q = b.pose.points[i]
       if (!p || !q) return p

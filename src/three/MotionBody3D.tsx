@@ -91,8 +91,9 @@ export function MovingBody({
     const pose = poseAtTime(poses, t)
     if (!pose) return
     // 腰を測った位置に置き、骨の長さを保ったまま足首・手首を測った位置に届かせる（動画に重ねたときに関節が重なるように）。
-    // 横から撮った種目は、膝を前後・上下の面の中で曲げる
-    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front' })
+    // 横から撮った種目は、膝を前後・上下の面の中で曲げる。エルゴ・自転車は座った姿勢の腰にし、手を順手で握る形にする
+    const seated = sport === 'erg' || sport === 'bike'
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front', seated, grip: seated })
   })
 
   return (

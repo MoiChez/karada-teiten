@@ -16,11 +16,6 @@ export interface Pose3D {
   depthSource: 'side_photo' | 'model_estimate'
   /** 本人の骨の長さ（体の高さを 1 として。動きの記録から 1 つに決めた値）。あれば 3D の手足と胴をこの長さにする */
   bones?: BoneLengths
-  /**
-   * 胴の向きに使う、胴の上の端の位置（両肩の中点の代わり）。肩の点が肩甲骨と一緒に背中側へずれたと見て、
-   * 寄せ直したもの。ないときは両肩の中点を使う
-   */
-  trunkTop?: Vec3
 }
 
 export interface BoneLengths {
