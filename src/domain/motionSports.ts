@@ -144,6 +144,8 @@ export interface SportProfile {
   muscles: MuscleKey[]
   /** 重心と負担を推定するか（立って行い、外から加わる力が床だけの種目） */
   load?: boolean
+  /** 力の型と筋電図の型から、筋肉の要求度を推定するか（エルゴ・自転車） */
+  demand?: 'erg' | 'bike'
   /** クランクの角度を求めるか（自転車） */
   crank?: boolean
   /** 正面・真後ろから撮る種目（左右の差を測る。真横の確認はしない） */
@@ -768,6 +770,7 @@ const ERG: SportProfile = {
   ],
   orientation: 'landscape',
   muscles: ['quads', 'glutes', 'hamstrings', 'erectors', 'lats', 'biceps'],
+  demand: 'erg',
 }
 
 // ---------- 固定式の自転車 ----------
@@ -911,6 +914,7 @@ const BIKE: SportProfile = {
   ],
   orientation: 'landscape',
   muscles: ['quads', 'glutes', 'hamstrings', 'calves'],
+  demand: 'bike',
   chartRefs: { knee: { lo: 25, hi: 35, label: '目安 25〜35°（下死点。止まって角度計で測る方法）' } },
   crank: true,
 }

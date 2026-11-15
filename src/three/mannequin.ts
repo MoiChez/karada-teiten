@@ -882,12 +882,13 @@ export const MUSCLE_WEIGHT: Record<MuscleKey, (w: (bone: string) => number, fron
  * 筋肉ごとの濃さ（0〜1）で色づける関数を返す。頂点ごとの筋肉の重みは最初に一度だけ求め、
  * 呼ぶたびに色だけを塗り直す（再生中に、推定の要求度に合わせて濃さを変えるため）
  */
-export function muscleShader(root: THREE.Object3D, base: string, accent: string) {
+export function muscleShader(root: THREE.Object3D, base: string, accent: string, nearSide: 'left' | 'right' = 'left') {
   const c0 = new THREE.Color(base)
   const c1 = new THREE.Color(accent)
   const keys = Object.keys(MUSCLE_WEIGHT) as MuscleKey[]
   const ramp = (v: number) => Math.min(1, Math.max(0, (v - 0.05) / 0.35))
-  const meshes: { color: THREE.BufferAttribute; w: Float32Array[]; n: number }[] = []
+  // side: その頂点がカメラ側の半身にある度合い（1 = カメラ側、0 = 反対側。体の中心の近くはなめらかに混ぜる。体の左は +X）
+  const meshes: { color: THREE.BufferAttribute; w: Float32Array[]; side: Float32Array; n: number }[] = []
   root.traverse((o) => {
     const mesh = o as THREE.SkinnedMesh
     if (!mesh.isSkinnedMesh) return
@@ -903,6 +904,10 @@ export function muscleShader(root: THREE.Object3D, base: string, accent: string)
       g.setAttribute('color', color)
     }
     const w = keys.map(() => new Float32Array(n))
+    const side = new Float32Array(n)
+    const pos = g.getAttribute('position')
+    const sgn = nearSide === 'left' ? 1 : -1
+    for (let i = 0; i < n; i++) side[i] = Math.min(1, Math.max(0, 0.5 + (sgn * pos.getX(i)) / 0.04))
     const bw = new Map<string, number>()
     const get = (bone: string) => bw.get(bone) ?? 0
     for (let i = 0; i < n; i++) {
@@ -914,15 +919,21 @@ export function muscleShader(root: THREE.Object3D, base: string, accent: string)
       const nz = nrm ? nrm.getZ(i) : 0
       keys.forEach((key, j) => (w[j][i] = Math.min(1, MUSCLE_WEIGHT[key](get, ramp(nz), ramp(-nz)))))
     }
-    meshes.push({ color, w, n })
+    meshes.push({ color, w, side, n })
   })
   const c = new THREE.Color()
-  return (levels: Partial<Record<MuscleKey, number>>) => {
+  /** far を渡すと、反対側の半身はその濃さで塗る（自転車の左右の脚） */
+  return (levels: Partial<Record<MuscleKey, number>>, far?: Partial<Record<MuscleKey, number>>) => {
     const lv = keys.map((k) => levels[k] ?? 0)
+    const lf = far ? keys.map((k) => far[k] ?? 0) : lv
     for (const m of meshes) {
       for (let i = 0; i < m.n; i++) {
         let h = 0
-        for (let j = 0; j < lv.length; j++) if (lv[j] > 0) h = Math.max(h, m.w[j][i] * lv[j])
+        const sd = m.side[i]
+        for (let j = 0; j < lv.length; j++) {
+          const v = far ? sd * lv[j] + (1 - sd) * lf[j] : lv[j]
+          if (v > 0) h = Math.max(h, m.w[j][i] * v)
+        }
         c.copy(c0).lerp(c1, ACCENT_MAX * Math.min(1, h))
         m.color.setXYZ(i, c.r, c.g, c.b)
       }

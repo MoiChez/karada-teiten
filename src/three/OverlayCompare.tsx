@@ -186,6 +186,7 @@ export default function OverlayCompare({
                     clock={clock}
                     muscles={muscles}
                     levels={levels}
+                    nearSide={nearSide}
                     floorY={0}
                     bare
                   />

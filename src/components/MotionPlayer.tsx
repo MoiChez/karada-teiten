@@ -27,6 +27,11 @@ import {
   type PreparedMotion,
 } from "../domain/motion";
 import { MUSCLE_JOINT, PHASE_LABELS } from "../domain/motionLoad";
+import {
+  bikeDemand,
+  ergDemand,
+  type DemandSeries,
+} from "../domain/motionDemand";
 import { pxToNorm } from "../domain/motionConstraints";
 import { sidePoints } from "../domain/landmarks";
 import type { Pose3D } from "../domain/fusion3d";
@@ -136,7 +141,17 @@ export function MotionPlayer({
         }
       : null;
   // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
+  // エルゴと自転車の要求度（力の型と筋電図の型から。真横から撮った記録だけ）
+  const demand = useMemo<DemandSeries | null>(() => {
+    if (!muscles || rec.analysis.sideView === false) return null;
+    if (prep.kind === "erg")
+      return ergDemand(prep.frames, prep.nearSide, prep.f, cycles);
+    if (prep.kind === "bike")
+      return bikeDemand(prep.frames, prep.nearSide, prep.crank);
+    return null;
+  }, [muscles, prep, cycles, rec.analysis.sideView]);
   const levels = useMemo(() => {
+    if (demand) return { ts, values: demand.values, far: demand.far };
     if (!muscles || !prep.load || rec.analysis.sideView === false)
       return undefined;
     const values: Partial<Record<MuscleKey, number[]>> = {};
@@ -146,7 +161,7 @@ export function MotionPlayer({
     ][])
       values[m] = prep.load.demand[j];
     return { ts, values };
-  }, [muscles, prep, ts, rec.analysis.sideView]);
+  }, [muscles, prep, ts, rec.analysis.sideView, demand]);
 
   // 最初だけ、1 回目の出来事（底・キャッチなど）から、ゆっくり再生する
   const started = useRef(false);
@@ -346,9 +361,10 @@ export function MotionPlayer({
           動画は保存していないため、3D の体だけを再生します。
         </p>
       )}
-      {levels && prep.load && (
+      {levels && prep.load && !demand && (
         <DemandNow clock={clock} ts={ts} load={prep.load} />
       )}
+      {demand && <DemandBars clock={clock} ts={ts} demand={demand} />}
 
       <Transport clock={clock} ts={ts} />
 
@@ -574,6 +590,59 @@ function DemandNow({
       </ul>
       <p className="mt-2 text-xs text-ink-3">
         運動の動きと、条件付きのモデル（体の部分の重さ・床からの力の仮定）から求めた、筋肉にかかる力の要求の目安（0〜1）です。筋電図などで測った値ではありません。太ももの裏とお尻は、どちらも股関節を伸ばす筋肉として同じ値にしています。
+      </p>
+    </div>
+  );
+}
+
+/** エルゴ・自転車の、今の時刻の推定の要求度 */
+function DemandBars({
+  clock,
+  ts,
+  demand,
+}: {
+  clock: Clock;
+  ts: number[];
+  demand: DemandSeries;
+}) {
+  const t = useClockValue(clock, (c) => c.get());
+  const k = indexAt(ts, t);
+  const rows = (Object.keys(demand.values) as MuscleKey[]).filter((m) =>
+    demand.values[m]?.some((v) => v > 0),
+  );
+  return (
+    <div className="mt-2 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+      <p className="text-sm font-medium text-ink-2">
+        推定の要求度（今の時刻{demand.far ? "。カメラ側の脚" : ""}）
+      </p>
+      <ul className="mt-1.5 space-y-1.5">
+        {rows.map((m) => {
+          const v = demand.values[m]?.[k] ?? 0;
+          return (
+            <li key={m} className="text-sm">
+              <span className="flex items-baseline justify-between gap-2">
+                <span>{MUSCLE_LABELS[m]}</span>
+                <span className="shrink-0 font-bold num">{fmtNum(v, 2)}</span>
+              </span>
+              <span
+                className="mt-0.5 block h-2 overflow-hidden rounded-full bg-sunken"
+                aria-hidden
+              >
+                <span
+                  className="block h-full rounded-full"
+                  style={{
+                    width: `${Math.round(v * 100)}%`,
+                    background: "#E9B85E",
+                  }}
+                />
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-2 text-xs text-ink-3">
+        それぞれの筋肉について、この記録の中でいちばん大きいところを 1
+        とした割合です。筋肉どうしの強さは比べられません。力を測っていないので、論文の標準的な力の出方を仮定した推定です。
       </p>
     </div>
   );

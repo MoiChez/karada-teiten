@@ -1,4 +1,5 @@
 // 動きの一覧と結果。撮った動画と 3D の体を並べ、同じ時刻で再生する。下に角度のグラフ、1 回ごとの値、平均、書き出し
+import { DEMAND_SOURCES } from '../domain/motionDemand'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { ChevronRight, Columns2, Download, PencilRuler, Redo2, Trash2, Undo2, Video } from 'lucide-react'
@@ -337,16 +338,32 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
       </div>
       <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
         <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={muscles} onChange={(e) => setMuscles(e.target.checked)} />
-        {profile.load && a.sideView !== false ? '3D の体に、推定した筋肉の要求度を色の濃さで示す' : `3D の体に、${profile.label}で一般に主に使われる筋肉の場所を色で示す`}
+        {(profile.load || profile.demand) && a.sideView !== false ? '3D の体に、推定した筋肉の要求度を色の濃さで示す' : `3D の体に、${profile.label}で一般に主に使われる筋肉の場所を色で示す`}
       </label>
       {muscles && profile.load && a.sideView !== false && (
         <p className="text-sm text-ink-3">
           色が濃いほど、その時刻にその筋肉に求められる力が大きいという推定です。体の部分の重さ（Winter 2009）と床からの力の仮定から求めた関節の負担と、関節の曲がりから出した目安で、筋電図などで測った値ではありません。
         </p>
       )}
-      {muscles && !(profile.load && a.sideView !== false) && (
+      {muscles && profile.demand && a.sideView !== false && (
+        <div className="text-sm text-ink-3">
+          <p>
+            色が濃いほど、その時刻にその筋肉に求められる力が大きいという推定です。{profile.demand === 'erg' ? 'ハンドルを引く力' : 'ペダルを踏む力'}は測れないので、論文にある標準的な力の出方を仮定し、あなたの関節の位置から関節ごとの負担を求めました。色を出す時期は、論文の筋電図（どの局面でその筋肉が働くか）に合わせています。
+          </p>
+          <p className="mt-1">
+            あなたの筋電図や力を測った値ではありません。濃さは筋肉ごとに、この記録の中でいちばん大きいところを基準にした割合で、力の大きさや、筋肉どうしの強さの違いは表しません。{profile.demand === 'bike' ? 'クランクの角度が求められなかった記録では、場所だけを色づけます。' : ''}
+          </p>
+          <p className="mt-1">もとにした論文:</p>
+          <ul className="list-disc space-y-0.5 pl-5">
+            {DEMAND_SOURCES[profile.demand].map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {muscles && !((profile.load || profile.demand) && a.sideView !== false) && (
         <p className="text-sm text-ink-3">
-          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません。{profile.load ? '真横から撮っていないため、' : 'この種目はハンドルやペダルにかかる力が分からないため、'}濃さ（要求度）は付けていません。
+          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません。真横から撮っていないため、濃さ（要求度）は付けていません。
         </p>
       )}
       <p className="mt-2 text-sm text-ink-3">

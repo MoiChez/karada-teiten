@@ -74,6 +74,8 @@ function useMuscleSkin(on: boolean) {
 export interface MuscleLevels {
   ts: number[]
   values: Partial<Record<MuscleKey, number[]>>
+  /** 反対側の脚の濃さ（自転車。なければ左右同じ） */
+  far?: Partial<Record<MuscleKey, number[]>>
 }
 
 export function MovingBody({
@@ -86,6 +88,7 @@ export function MovingBody({
   floorY,
   bare,
   skin = 'plain',
+  nearSide = 'left',
 }: {
   kind: MannequinKind
   sport: MotionKind
@@ -98,6 +101,8 @@ export function MovingBody({
   bare?: boolean
   /** 体の見た目（筋肉の見える体か、無地の人形か） */
   skin?: BodySkin
+  /** カメラ側の半身（左右で濃さが違うときに使う） */
+  nearSide?: 'left' | 'right'
 }) {
   const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
   const root = useMemo(() => {
@@ -129,7 +134,7 @@ export function MovingBody({
   const marking = !!levels || muscles
   const base = maps ? (marking ? SKIN_DIM : SKIN_BASE) : BODY_COLOR
   const accent = maps ? SKIN_ACCENT : HIGHLIGHT_COLOR
-  const shade = useMemo(() => (levels ? muscleShader(root, base, accent) : null), [root, levels, base, accent])
+  const shade = useMemo(() => (levels ? muscleShader(root, base, accent, nearSide) : null), [root, levels, base, accent, nearSide])
   const shown = useRef('')
   useEffect(() => {
     shown.current = ''
@@ -144,10 +149,15 @@ export function MovingBody({
       const k = indexAt(levels.ts, t)
       const now: Partial<Record<MuscleKey, number>> = {}
       for (const [m, v] of Object.entries(levels.values) as [MuscleKey, number[]][]) now[m] = Math.round((v[k] ?? 0) * 20) / 20
-      const key = JSON.stringify(now)
+      let far: Partial<Record<MuscleKey, number>> | undefined
+      if (levels.far) {
+        far = {}
+        for (const [m, v] of Object.entries(levels.far) as [MuscleKey, number[]][]) far[m] = Math.round((v[k] ?? 0) * 20) / 20
+      }
+      const key = JSON.stringify([now, far])
       if (key !== shown.current) {
         shown.current = key
-        shade(now)
+        shade(now, far)
       }
     }
     if (t === last.current) return
@@ -354,7 +364,7 @@ export default function MotionBody3D({
           <BodyLights />
           <LoadBoundary onError={() => setFailed(true)}>
             <Suspense fallback={null}>
-              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} skin={skin} />
+              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} skin={skin} nearSide={nearSide} />
             </Suspense>
           </LoadBoundary>
           <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} side={nearSide === 'left' ? 1 : -1} />

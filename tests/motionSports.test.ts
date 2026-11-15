@@ -1,3 +1,4 @@
+import { bikeDemand, ergDemand, ergPhases } from '../src/domain/motionDemand'
 import { describe, expect, it } from 'vitest'
 import type { Landmark } from '../src/domain/types'
 import { analyzeMotion, compareMotion, findCycles, motionMetric, prepareMotion, type MotionInput } from '../src/domain/motion'
@@ -267,5 +268,51 @@ describe('手で直した点と書き出し', () => {
     expect(json.type).toBe('motion')
     // 動画は書き出さない
     expect(json.record.videoSaved).toBe(false)
+  })
+})
+
+describe('筋肉の要求度（エルゴ・自転車。解析の全工程を通す）', () => {
+  it('エルゴ: 太ももの前 → 背中 → 腕の順にいちばん濃くなり、リカバリーの中ほどは色が付かない', () => {
+    const prep = prepareMotion(ergInput(), 'erg')!
+    const { cycles } = findCycles(prep)
+    const d = ergDemand(prep.frames, prep.nearSide, prep.f, cycles)!
+    expect(d).not.toBeNull()
+    const ph = ergPhases(prep.frames.length, cycles)
+    // 局面ごとの平均（ドライブを 5 つ、リカバリーを 2 つに分ける）
+    const mean = (m: keyof typeof d.values, lo: number, hi: number) => {
+      const v = d.values[m]!.filter((_, k) => ph[k] >= lo && ph[k] < hi)
+      return v.reduce((a, b) => a + b, 0) / Math.max(1, v.length)
+    }
+    const peakPhase = (m: keyof typeof d.values) => {
+      const bins = [0, 0.2, 0.4, 0.6, 0.8].map((lo) => mean(m, lo, lo + 0.2))
+      return bins.indexOf(Math.max(...bins))
+    }
+    if (process.env.SHOW_DEMAND) {
+      for (const m of Object.keys(d.values) as (keyof typeof d.values)[])
+        console.log(m.padEnd(11), [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.5].map((lo, i) => mean(m, lo, i < 5 ? lo + 0.2 : lo + 0.5).toFixed(2)).join(' '))
+    }
+    expect(peakPhase('quads')).toBeLessThanOrEqual(peakPhase('erectors'))
+    expect(peakPhase('erectors')).toBeLessThanOrEqual(peakPhase('biceps'))
+    expect(peakPhase('quads')).toBeLessThan(peakPhase('biceps'))
+    for (const m of ['quads', 'glutes', 'erectors', 'lats', 'biceps'] as const) expect(mean(m, 1.3, 1.7)).toBe(0)
+  })
+  it('自転車: 太ももの前とお尻は踏み下ろしで濃く、反対側の脚は半回転ずれる', () => {
+    const prep = prepareMotion(bikeInput(), 'bike')!
+    expect(prep.crank).toBeDefined()
+    const d = bikeDemand(prep.frames, prep.nearSide, prep.crank)!
+    expect(d).not.toBeNull()
+    const ang = prep.crank!.angle
+    const mean = (v: number[], lo: number, hi: number) => {
+      const x = v.filter((_, k) => ang[k] >= lo && ang[k] < hi)
+      return x.reduce((a, b) => a + b, 0) / Math.max(1, x.length)
+    }
+    if (process.env.SHOW_DEMAND) {
+      for (const m of Object.keys(d.values) as (keyof typeof d.values)[])
+        console.log(m.padEnd(11), [0, 45, 90, 135, 180, 225, 270, 315].map((lo) => mean(d.values[m]!, lo, lo + 45).toFixed(2)).join(' '), '| far', [0, 90, 180, 270].map((lo) => mean(d.far![m]!, lo, lo + 90).toFixed(2)).join(' '))
+    }
+    expect(mean(d.values.quads!, 0, 180)).toBeGreaterThan(mean(d.values.quads!, 180, 360))
+    expect(mean(d.values.glutes!, 0, 180)).toBeGreaterThan(0.2)
+    expect(mean(d.values.glutes!, 200, 340)).toBe(0)
+    expect(mean(d.far!.glutes!, 180, 360)).toBeGreaterThan(mean(d.far!.glutes!, 0, 180))
   })
 })
