@@ -312,7 +312,7 @@ describe('筋肉の要求度（エルゴ・自転車。解析の全工程を通�
     }
     expect(mean(d.values.quads!, 0, 180)).toBeGreaterThan(mean(d.values.quads!, 180, 360))
     expect(mean(d.values.glutes!, 0, 180)).toBeGreaterThan(0.2)
-    expect(mean(d.values.glutes!, 200, 340)).toBe(0)
+    expect(mean(d.values.glutes!, 220, 340)).toBe(0)
     expect(mean(d.far!.glutes!, 180, 360)).toBeGreaterThan(mean(d.far!.glutes!, 0, 180))
   })
 })

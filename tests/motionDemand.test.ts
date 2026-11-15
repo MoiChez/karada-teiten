@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { LM, sidePoints } from '../src/domain/landmarks'
-import { ERG_PEAK_AT, bikeDemand, bikePedalForce, ergDemand, ergHandleForce, ergPhases, jointDemand, windowWeight } from '../src/domain/motionDemand'
+import { ERG_PEAK_AT, bendGate, smoothSeries, bikeDemand, bikePedalForce, ergDemand, ergHandleForce, ergPhases, jointDemand, windowWeight } from '../src/domain/motionDemand'
 import type { PreparedFrame } from '../src/domain/motionCore'
 import type { MotionCycle } from '../src/domain/motionSports'
 import type { Point } from '../src/domain/types'
@@ -190,5 +190,40 @@ describe('自転車の要求度', () => {
       expect(far[angle.indexOf(deg + 180)]).toBeCloseTo(near[angle.indexOf(deg)], 6)
       expect(far[angle.indexOf(deg)]).toBeCloseTo(near[angle.indexOf(deg + 180)], 6)
     }
+  })
+})
+
+describe('伸びた腕と脚で乱れないこと', () => {
+  it('ほぼまっすぐの関節は負担を出さず、よく曲がった関節はそのまま出す', () => {
+    const a = { x: 0, y: 0 }
+    const j = { x: 10, y: 0 }
+    expect(bendGate(a, j, { x: 20, y: 0 })).toBe(0)
+    expect(bendGate(a, j, { x: 20, y: 1.5 })).toBe(0) // 約 9°
+    expect(bendGate(a, j, { x: 10, y: 10 })).toBe(1) // 90°
+    const mid = bendGate(a, j, { x: 20, y: 4.5 }) // 約 24°
+    expect(mid).toBeGreaterThan(0)
+    expect(mid).toBeLessThan(1)
+  })
+  it('時間方向にならすと、1 コマだけの跳ねが小さくなる', () => {
+    const ts = Array.from({ length: 21 }, (_, k) => k * 33)
+    const v = ts.map((_, k) => (k === 10 ? 1 : 0))
+    const sm = smoothSeries(v, ts)
+    expect(Math.max(...sm)).toBeLessThan(0.2)
+    expect(sm.reduce((x, y) => x + y, 0)).toBeCloseTo(1, 6)
+  })
+  it('腕を伸ばしたまま、ひじの点が上下に揺れても、腕の前に色が付かない', () => {
+    const { frames, cycles, fin } = ergStroke()
+    // ドライブの前半（腕は伸びている）で、ひじの点を 1 コマおきに上下へずらす
+    const noisy = frames.map((fr, k) => {
+      if (k > fin * 0.5) return fr
+      const px = fr.px.map((q) => ({ ...q }))
+      const sh = px[S.shoulder]
+      const wr = px[S.wrist]
+      px[LM.leftElbow] = { x: (sh.x + wr.x) / 2, y: (sh.y + wr.y) / 2 + (k % 2 ? 2.5 : -2.5) }
+      return { ...fr, px }
+    })
+    const d = ergDemand(noisy, 'left', 1, cycles)!
+    for (let k = 0; k <= fin * 0.5 - 4; k++) expect(d.values.biceps![k]).toBe(0)
+    expect(Math.max(...d.values.biceps!)).toBeGreaterThan(0.5)
   })
 })

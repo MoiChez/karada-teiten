@@ -26,6 +26,7 @@
 //     外側広筋: 始まり 328〜348°、終わり 100〜109°。内側広筋: 始まり 332〜342°。大腿直筋: 始まり 259〜319°、終わり 31〜85°。
 //     いちばん働く角度: 大腿二頭筋長頭 105〜111°、半膜様筋 104〜139°、半腱様筋 132〜164°。半腱様筋の終わり 114〜117°
 //   - Hug F, Boumier F, Dorel S (2013) Front Physiol 4:232. 区分: 上死点 330〜30°、踏み下ろし 30〜150°、下死点 150〜210°、引き上げ 210〜330°
+import { interiorAngleDeg } from './geometry'
 import { LM, sidePoints } from './landmarks'
 import type { Point } from './types'
 import { quantile, type PreparedFrame } from './motionCore'
@@ -100,6 +101,36 @@ function normalize(v: number[]): number[] {
   return top > 1e-9 ? v.map((x) => Math.min(1, Math.max(0, x / top))) : v.map(() => 0)
 }
 
+/**
+ * 関節がほぼまっすぐのときは、負担を出さない（0〜1 の重み）。
+ * 腕や脚が伸びているときは、力は骨の並びで伝わり、曲げ伸ばしの筋肉の負担は小さい。そのうえ、点のわずかな揺れで
+ * 力の線が関節のどちら側を通るかが入れ替わり、値が出たり消えたりする（利用者の動画で、伸びた腕と脚の色が乱れた）。
+ * 曲がりが STRAIGHT_FROM° 以下は 0、STRAIGHT_TO° 以上は 1
+ */
+export const STRAIGHT_FROM = 12
+export const STRAIGHT_TO = 35
+export function bendGate(prox: Point, j: Point, dist: Point): number {
+  const bend = 180 - interiorAngleDeg(prox, j, dist)
+  const x = Math.min(1, Math.max(0, (bend - STRAIGHT_FROM) / (STRAIGHT_TO - STRAIGHT_FROM)))
+  return x * x * (3 - 2 * x)
+}
+
+/** 時間方向にならす幅（前後、ミリ秒）。1 コマだけの跳ねを消す */
+export const SMOOTH_MS = 120
+export function smoothSeries(v: number[], ts: number[], halfMs = SMOOTH_MS): number[] {
+  const out = new Array<number>(v.length)
+  let lo = 0
+  let hi = 0
+  let sum = 0
+  for (let k = 0; k < v.length; k++) {
+    while (hi < v.length && ts[hi] <= ts[k] + halfMs) sum += v[hi++]
+    while (ts[lo] < ts[k] - halfMs) sum -= v[lo++]
+    // 足し引きの丸めの残りは 0 にする
+    out[k] = sum > 1e-9 ? sum / Math.max(1, hi - lo) : 0
+  }
+  return out
+}
+
 const KEYS: MuscleKey[] = ['quads', 'hamstrings', 'glutes', 'calves', 'erectors', 'lats', 'biceps']
 
 /** コマごとの局面（ドライブ 0〜1、リカバリー 1〜2。1 本の外は NaN） */
@@ -150,18 +181,19 @@ export function ergDemand(frames: PreparedFrame[], nearSide: 'left' | 'right', f
     const hip = jointDemand(p[s.hip], p[s.knee], p[s.shoulder], p[s.wrist], pull)
     const shoulder = jointDemand(p[s.shoulder], p[s.hip], p[elbowI], p[s.wrist], pull)
     const elbow = jointDemand(p[elbowI], p[s.shoulder], p[s.wrist], p[s.wrist], pull)
-    raw.quads.push(Math.max(0, knee))
+    raw.quads.push(Math.max(0, knee) * bendGate(p[s.hip], p[s.knee], p[s.ankle]))
     raw.calves.push(Math.max(0, ankle))
     raw.glutes.push(Math.max(0, hip))
     raw.hamstrings.push(Math.max(0, hip))
     raw.erectors.push(Math.max(0, hip))
     // 腕を体へ引きつける向き（肩を伸ばす・ひじを曲げる）は、力が関節を開こうとするとき
     raw.lats.push(Math.max(0, -shoulder))
-    raw.biceps.push(Math.max(0, -elbow))
+    raw.biceps.push(Math.max(0, -elbow) * bendGate(p[s.shoulder], p[elbowI], p[s.wrist]))
   }
+  const ts = frames.map((fr) => fr.t)
   const values: DemandSeries['values'] = {}
   for (const m of KEYS) {
-    const g = normalize(raw[m])
+    const g = normalize(smoothSeries(raw[m], ts))
     const win = ERG_WINDOWS[m]
     values[m] = g.map((v, k) => {
       if (!win) return v
@@ -221,10 +253,12 @@ export function bikeDemand(frames: PreparedFrame[], nearSide: 'left' | 'right', 
     raw.glutes.push(Math.max(0, hip))
     raw.calves.push(Math.max(0, ankle))
   }
+  // 回転が速いので、ならす幅はエルゴの半分にする（90 回転/分で前後 32°）
+  const ts = frames.map((fr) => fr.t * 2)
   const values: DemandSeries['values'] = {}
   const far: DemandSeries['far'] = {}
   for (const m of BIKE_KEYS) {
-    const g = normalize(raw[m])
+    const g = normalize(smoothSeries(raw[m], ts))
     const win = BIKE_WINDOWS[m]
     const near = g.map((v, k) => {
       const deg = crank.angle[k]
