@@ -57,6 +57,22 @@ export function perpendicular(p: Point, a: Point, b: Point): Point {
   return sub(p, proj)
 }
 
+/** 0〜1 をなめらかにつなぐ（0 以下は 0、1 以上は 1） */
+export function smoothstep(x: number): number {
+  const t = Math.min(1, Math.max(0, x))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * 長さを決めた 2 本の骨で届かせる計算から、点の角度に沿わせる計算へ移る度合い（0〜1）。
+ * 距離 d が長さの合計 L の 88% までは 0（長さで決める）、98% 以上で 1（点の角度に沿う）。
+ * 長さで決める計算は、伸び切る手前で関節の角度が急に変わる（距離 1% で十数度）。画面の上の骨の長さは
+ * コマによって数 % 変わるので、伸びかけの脚や腕が実際より大きく曲がり、伸び切った瞬間にカクンと伸びる
+ */
+export function straightBlend(d: number, L: number): number {
+  return smoothstep((d / L - 0.88) / 0.1)
+}
+
 export function sign(v: number): number {
   return v > 0 ? 1 : v < 0 ? -1 : 0
 }

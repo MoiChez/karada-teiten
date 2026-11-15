@@ -6,6 +6,7 @@ import type { BoneLengths, Pose3D, Vec3 } from '../domain/fusion3d'
 import type { BodyArea, UserProfile } from '../domain/types'
 import type { MuscleKey } from '../domain/motionSports'
 import { TORSO_ROWS } from '../domain/torsoDepth'
+import { straightBlend } from '../domain/geometry'
 
 export type MannequinKind = 'male' | 'female' | 'neutral'
 
@@ -757,7 +758,10 @@ function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1
 
 /**
  * 2 本の骨（上と下）を、長さを保ったまま、先端が target に届くように曲げる（届かなければ target の向きにまっすぐ伸ばす）。
- * 曲げる向きは、真ん中の関節の目標 mid の側。a・b・c は今の関節の位置（ワールド）
+ * 曲げる向きは、真ん中の関節の目標 mid の側。a・b・c は今の関節の位置（ワールド）。
+ * 伸びかけ（target までが骨の長さの合計の 88〜98% 以上）は、届かせる代わりに、目標の 3 点（a・mid・target）の曲がりに沿わせる。
+ * 長さで決める計算は伸び切る手前で角度が急に変わり、膝やひじが実際より曲がったり、カクンと伸び切ったりするため
+ * （先端は target の向きの上で、骨の長さの違いの分だけ前後する）
  */
 function reach(
   upper: THREE.Object3D,
@@ -774,7 +778,13 @@ function reach(
   const l2 = c.distanceTo(b)
   const d = target.clone().sub(a)
   const u = d.lengthSq() > 1e-12 ? d.clone().normalize() : new THREE.Vector3(0, -1, 0)
-  const dist = Math.min(Math.max(d.length(), Math.abs(l1 - l2) + 1e-4), l1 + l2 - 1e-4)
+  // 目標の 3 点の曲がり（まっすぐが 0）から決まる、骨の長さでの先端までの距離
+  const m1 = midTarget.clone().sub(a)
+  const m2 = target.clone().sub(midTarget)
+  const cosF = m1.lengthSq() > 1e-12 && m2.lengthSq() > 1e-12 ? m1.normalize().dot(m2.normalize()) : 1
+  const byAngle = Math.sqrt(Math.max(0, l1 * l1 + l2 * l2 + 2 * l1 * l2 * cosF))
+  const w = straightBlend(d.length(), l1 + l2)
+  const dist = Math.min(Math.max((1 - w) * d.length() + w * byAngle, Math.abs(l1 - l2) + 1e-4), l1 + l2 - 1e-4)
   const x = (dist * dist + l1 * l1 - l2 * l2) / (2 * dist)
   const h = Math.sqrt(Math.max(0, l1 * l1 - x * x))
   const pole = midTarget.clone().sub(a)
