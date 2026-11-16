@@ -202,33 +202,6 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
 /** 奥の耳と手前の耳の上下のずれを使う上限（体の高さに対する割合。頭の幅より大きくずれていたら、奥の耳の推定が外れている） */
 export const EAR_GAP_MAX = 0.1
 
-/**
- * バーを担いでいるか（スクワット）。記録の半分より多いコマで、手首がひじより上にあり、肩から胴の長さの半分より近くにある。
- * 担いでいるときは、3D の手を、横向きのバーを順手で握る形にする（腕を前へ伸ばす・腰に当てるスクワットでは開いた手のまま）
- */
-export function holdsBar(poses: { pose: Pose3D }[]): boolean {
-  let n = 0
-  let hit = 0
-  for (const { pose } of poses) {
-    const sides = (
-      [
-        [11, 13, 15, 23],
-        [12, 14, 16, 24],
-      ] as const
-    )
-      .map((ids) => ids.map((i) => pose.points[i]))
-      .filter((q): q is Vec3[] => q.every((v) => !!v))
-    if (!sides.length) continue
-    n++
-    const up = sides.every(([sh, el, wr, hip]) => {
-      const trunk = Math.hypot(sh.x - hip.x, sh.y - hip.y, sh.z - hip.z)
-      return wr.y > el.y && Math.hypot(wr.y - sh.y, wr.z - sh.z) < 0.5 * trunk
-    })
-    if (up) hit++
-  }
-  return n > 0 && hit / n > 0.5
-}
-
 /** 前後（z）と上下（y）の面の上の点 */
 interface UV {
   u: number

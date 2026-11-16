@@ -179,7 +179,8 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const edits = work.edits
   const profile = PROFILES[saved.kind]
   const [torso, setTorso] = useState(saved.torsoDepth)
-  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis, torsoDepth: torso }), [saved, work, torso])
+  const [arms, setArms] = useState(saved.arms)
+  const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis, torsoDepth: torso, arms }), [saved, work, torso, arms])
   // 条件がそろったときだけ出す値（バーの値など）は、値があるときだけ
   const shown = profile.metrics.filter((d) => !d.hidden && !(d.optional && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
   const built = useMemo(() => prepareRecord(rec), [rec])
@@ -474,7 +475,20 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
 
       <div className="mt-3">
         {built && poses.length > 1 ? (
-          <PlayerWithClock rec={rec} built={built} poses={poses} video={video} sex={sex} editor={editing && video ? { spread, onEdit: (added) => apply(mergeEdits(edits, added)) } : undefined} exportExtra={exportButtons} tail={about}>
+          <PlayerWithClock
+            rec={rec}
+            built={built}
+            poses={poses}
+            video={video}
+            sex={sex}
+            editor={editing && video ? { spread, onEdit: (added) => apply(mergeEdits(edits, added)) } : undefined}
+            exportExtra={exportButtons}
+            tail={about}
+            onArms={(a) => {
+              setArms(a)
+              void data.saveMotionArms(saved.id, a)
+            }}
+          >
             {folds}
           </PlayerWithClock>
         ) : (
@@ -580,6 +594,7 @@ function PlayerWithClock({
   exportExtra,
   tail,
   children,
+  onArms,
 }: {
   rec: MotionRecord
   built: NonNullable<ReturnType<typeof prepareRecord>>
@@ -590,6 +605,7 @@ function PlayerWithClock({
   exportExtra?: ReactNode
   tail?: ReactNode
   children?: ReactNode
+  onArms?: (arms: MotionRecord['arms']) => void
 }) {
   const ts = built.prep.frames.map((f) => f.t)
   const start = video?.images.length ? Math.min(video.images[0].t, ts[0]) : ts[0]
@@ -608,6 +624,7 @@ function PlayerWithClock({
       exportName={editor ? undefined : fileStem(rec)}
       exportExtra={exportExtra}
       tail={tail}
+      onArms={onArms}
       videoOverlay={editor ? <MotionPointEditor prep={built.prep} clock={clock} spread={editor.spread} onEdit={editor.onEdit} /> : undefined}
     >
       {children}

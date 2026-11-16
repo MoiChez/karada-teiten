@@ -23,6 +23,7 @@ import { barSeries } from './motionBar'
 import { crankAngles } from './motionCrank'
 import { frontalValues, viewOf, type ViewInfo } from './motionFrontal'
 import type { TorsoProfile } from './torsoDepth'
+import type { ArmStyle } from './motionArms'
 
 export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
@@ -59,6 +60,8 @@ export interface MotionRecord {
    * ないときはまだ測っていない（動画を残していれば、結果の画面を開いたときに測る）
    */
   torsoDepth?: TorsoProfile | null
+  /** 3D の手の形に使う腕の構え（スクワット）。手で選んだときだけ。ないときは点から見分ける */
+  arms?: ArmStyle
   analysis: MotionAnalysis
 }
 

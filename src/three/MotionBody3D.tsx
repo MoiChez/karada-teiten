@@ -10,7 +10,8 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { Pose3D } from '../domain/fusion3d'
 import type { UserProfile } from '../domain/types'
 import { PROFILES, type MotionKind, type MuscleKey } from '../domain/motion'
-import { holdsBar, poseAtTime, type MotionEquipment } from '../domain/motionPose'
+import { poseAtTime, type MotionEquipment } from '../domain/motionPose'
+import { detectArms, type ArmStyle } from '../domain/motionArms'
 import { indexAt, type Clock } from '../components/motionClock'
 import { mannequinKindOf, muscleShader, paintMuscles, poseMannequin, type MannequinKind } from './mannequin'
 import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, MUSCLE_SKIN, hasWebGL, loadBodySkin, mannequinUrl, type BodySkin } from './common'
@@ -89,6 +90,7 @@ export function MovingBody({
   bare,
   skin = 'plain',
   nearSide = 'left',
+  arms,
 }: {
   kind: MannequinKind
   sport: MotionKind
@@ -103,6 +105,8 @@ export function MovingBody({
   skin?: BodySkin
   /** カメラ側の半身（左右で濃さが違うときに使う） */
   nearSide?: 'left' | 'right'
+  /** スクワットの腕の構え（手の形）。ないときは点から見分ける */
+  arms?: ArmStyle
 }) {
   const gltf = useLoader(GLTFLoader, mannequinUrl(kind))
   const root = useMemo(() => {
@@ -136,13 +140,19 @@ export function MovingBody({
   const accent = maps ? SKIN_ACCENT : HIGHLIGHT_COLOR
   const shade = useMemo(() => (levels ? muscleShader(root, base, accent, nearSide) : null), [root, levels, base, accent, nearSide])
   const shown = useRef('')
-  // スクワットでバーを担いでいる記録は、手を、横向きのバーを順手で握る形にする
-  const rack = useMemo(() => (sport === 'squat' || sport === 'squat_front') && holdsBar(poses), [sport, poses])
+  // スクワットは、腕の構え（バーを担ぐ・頭の後ろで組む…）に合わせて手の形を変える
+  const squat = sport === 'squat' || sport === 'squat_front'
+  const autoArms = useMemo(() => (squat && !arms ? detectArms(poses, { frontal: sport === 'squat_front' }) : undefined), [squat, arms, poses, sport])
+  const hands = squat ? (arms ?? autoArms) : undefined
   useEffect(() => {
     shown.current = ''
     if (!levels) paintMuscles(root, base, accent, muscles ? PROFILES[sport].muscles : [])
   }, [root, muscles, sport, levels, base, accent])
   const last = useRef(NaN)
+  // 手の形を変えたら、止まっていても描き直す
+  useEffect(() => {
+    last.current = NaN
+  }, [hands])
 
   useFrame(() => {
     const t = clock.get()
@@ -169,7 +179,7 @@ export function MovingBody({
     // 腰を測った位置に置き、骨の長さを保ったまま足首・手首を測った位置に届かせる（動画に重ねたときに関節が重なるように）。
     // 横から撮った種目は、膝を前後・上下の面の中で曲げる。エルゴ・自転車は座った姿勢の腰にし、手を順手で握る形にする
     const seated = sport === 'erg' || sport === 'bike'
-    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front', seated: sport === 'erg' ? 'round' : seated, grip: seated ? true : rack ? 'bar' : false })
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front', seated: sport === 'erg' ? 'round' : seated, grip: seated, hands })
   })
 
   return (
@@ -316,6 +326,7 @@ export default function MotionBody3D({
   camera,
   flat,
   skin: skinProp,
+  arms,
 }: {
   poses: { t: number; pose: Pose3D }[]
   clock: Clock
@@ -334,6 +345,8 @@ export default function MotionBody3D({
   onCanvas?: (c: HTMLCanvasElement) => void
   /** 正面・後ろから撮ったときの向き（最初の視点を、撮った動画と同じ向きにする） */
   camera?: 'front' | 'rear'
+  /** スクワットの腕の構え（手の形）。ないときは点から見分ける */
+  arms?: ArmStyle
   /** 角を丸めない（動画と再生の操作にぴったり付けて置くとき） */
   flat?: boolean
   /** 体の見た目。渡さなければ、端末に覚えた見た目 */
@@ -373,7 +386,7 @@ export default function MotionBody3D({
           <BodyLights />
           <LoadBoundary onError={() => setFailed(true)}>
             <Suspense fallback={null}>
-              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} skin={skin} nearSide={nearSide} />
+              <MovingBody kind={body} sport={kind} poses={poses} clock={clock} muscles={muscles} levels={levels} floorY={floorY} skin={skin} nearSide={nearSide} arms={arms} />
             </Suspense>
           </LoadBoundary>
           <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} side={nearSide === 'left' ? 1 : -1} />

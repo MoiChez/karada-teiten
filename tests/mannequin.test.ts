@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { fuse3D, type Pose3D } from '../src/domain/fusion3d'
 import { mannequinKindOf, paintMannequin, poseMannequin, type MannequinKind } from '../src/three/mannequin'
+import type { ArmStyle } from '../src/domain/motionArms'
 import { frontPose, record, sidePose } from './helpers'
 
 async function load(kind: MannequinKind): Promise<THREE.Object3D> {
@@ -366,7 +367,7 @@ describe('マネキンを測った姿勢に合わせる', () => {
     set(15, 16, 0.87, -0.02, 0.15)
     points[0] = p(0, 0.92, 0.12)
     const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.15, foreArm: 0.14, thigh: 0.24, shank: 0.24, trunk: 0.3 } }
-    poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, grip: 'bar' })
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, hands: 'bar' })
     root.updateMatrixWorld(true)
     const W = (n: string) => root.getObjectByName(n)!.getWorldPosition(new THREE.Vector3())
     const bar = W('upperarm_l').sub(W('upperarm_r')).normalize()
@@ -388,6 +389,57 @@ describe('マネキンを測った姿勢に合わせる', () => {
       expect(palm.z, `${s} palm faces front`).toBeGreaterThan(0.5)
       // 指は手のひらの側へ曲がる
       expect(W(`middle_03_${s}`).sub(knuckles).dot(palm), `${s} fingers`).toBeGreaterThan(0)
+    }
+  })
+
+  it('スクワットの腕の構えに合わせて、手のひらを向け、指を曲げる（頭の後ろ・胸の前・前へ伸ばす・腰・下ろす）', async () => {
+    const root = await load('male')
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const base = () => {
+      const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+      const set = (l: number, r: number, y: number, z: number, w: number) => {
+        points[l] = p(w, y, z)
+        points[r] = p(-w, y, z)
+      }
+      set(23, 24, 0.52, 0, 0.06)
+      set(25, 26, 0.28, 0.02, 0.06)
+      set(27, 28, 0.04, 0, 0.06)
+      set(29, 30, 0, -0.03, 0.06)
+      set(31, 32, 0, 0.1, 0.065)
+      set(11, 12, 0.82, 0, 0.11)
+      set(7, 8, 0.93, 0.02, 0.06)
+      points[0] = p(0, 0.92, 0.12)
+      return { points, set }
+    }
+    const cases: [ArmStyle, [number, number, number], [number, number, number], (palm: THREE.Vector3, s: 'l' | 'r') => number][] = [
+      // 頭の後ろ: 手のひらは前（頭）へ
+      ['head', [0.9, 0.0, 0.2], [0.95, -0.06, 0.05], (n) => n.z],
+      // 胸の前: 手のひらは内へ（左手は -X、右手は +X）
+      ['clasp', [0.66, 0.1, 0.13], [0.74, 0.17, 0.04], (n, s) => (s === 'l' ? -n.x : n.x)],
+      // 前へ伸ばす: 手のひらは下
+      ['front', [0.81, 0.15, 0.11], [0.8, 0.3, 0.1], (n) => -n.y],
+      // 下ろす: 手のひらは体の側（内）
+      ['down', [0.66, 0.0, 0.13], [0.52, 0.01, 0.14], (n, s) => (s === 'l' ? -n.x : n.x)],
+    ]
+    for (const [style, elbow, wrist, facing] of cases) {
+      const { points, set } = base()
+      set(13, 14, ...elbow)
+      set(15, 16, ...wrist)
+      const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.15, foreArm: 0.14, thigh: 0.24, shank: 0.24, trunk: 0.3 } }
+      poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, hands: style })
+      root.updateMatrixWorld(true)
+      const W = (n: string) => root.getObjectByName(n)!.getWorldPosition(new THREE.Vector3())
+      for (const [s, mirror] of [
+        ['l', 1],
+        ['r', -1],
+      ] as const) {
+        const knuckles = W(`middle_01_${s}`)
+        const a = knuckles.clone().sub(W(`hand_${s}`)).normalize()
+        const k = W(`index_01_${s}`).sub(W(`pinky_01_${s}`))
+        k.sub(a.clone().multiplyScalar(k.dot(a))).normalize()
+        const palm = new THREE.Vector3().crossVectors(a, k).multiplyScalar(mirror).normalize()
+        expect(facing(palm, s), `${style} ${s} palm`).toBeGreaterThan(0.6)
+      }
     }
   })
 

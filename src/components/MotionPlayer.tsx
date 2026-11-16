@@ -45,6 +45,13 @@ import type { UserProfile } from "../domain/types";
 import { fmtNum } from "../domain/format";
 import type { MotionVideoData } from "../state/motionMedia";
 import { loadBodySkin, saveBodySkin, type BodySkin } from "../three/common";
+import {
+  ARM_LABELS,
+  ARM_STYLES,
+  detectArms,
+  isArmStyle,
+  type ArmStyle,
+} from "../domain/motionArms";
 import { indexAt, useClockValue, type Clock } from "./motionClock";
 import { FrameVideo } from "./FrameVideo";
 import { AngleChart } from "./AngleChart";
@@ -75,6 +82,7 @@ export function MotionPlayer({
   exportExtra,
   children,
   tail,
+  onArms,
 }: {
   rec: MotionRecord;
   prep: PreparedMotion;
@@ -95,6 +103,8 @@ export function MotionPlayer({
   children?: ReactNode;
   /** 「書き出す」のあとに並べる項目 */
   tail?: ReactNode;
+  /** 腕の構えを手で選んだとき（undefined は「自動」に戻す）。ないときは選べない */
+  onArms?: (arms: ArmStyle | undefined) => void;
 }) {
   const profile = PROFILES[rec.kind];
   const ts = useMemo(() => prep.frames.map((f) => f.t), [prep]);
@@ -118,6 +128,19 @@ export function MotionPlayer({
     [rec.kind, poses, prep.nearSide],
   );
   const sideOk = rec.analysis.sideView !== false;
+  // スクワットの腕の構え（3D の手の形）。点から見分け、手で選んだらそれを使う
+  const squat = rec.kind === "squat" || rec.kind === "squat_front";
+  const autoArms = useMemo(
+    () =>
+      squat
+        ? detectArms(poses, {
+            frontal: rec.kind === "squat_front",
+            loadKg: rec.body?.loadKg,
+          })
+        : undefined,
+    [squat, poses, rec.kind, rec.body?.loadKg],
+  );
+  const arms = squat ? (rec.arms ?? autoArms) : undefined;
   // 重心の線（スクワット。画像に対する比）
   const com = useMemo(() => {
     // 真横から撮っていなければ、重心は出さない（横から見た位置として求めているため）
@@ -284,6 +307,7 @@ export function MotionPlayer({
               className="h-full"
               flat
               skin={skin}
+              arms={arms}
               onCanvas={(c) => (three.current = c)}
               camera={
                 profile.frontal
@@ -358,6 +382,7 @@ export function MotionPlayer({
                   rollDeg={rec.video.rollDeg}
                   onCanvas={(c) => (three.current = c)}
                   flat
+                  arms={arms}
                 />
               </Suspense>
             </div>
@@ -475,6 +500,25 @@ export function MotionPlayer({
           />
           筋肉の色
         </label>
+        {squat && autoArms && onArms && (
+          <label className="flex min-h-11 items-center gap-2 text-[15px]">
+            手
+            <select
+              value={rec.arms ?? "auto"}
+              onChange={(e) =>
+                onArms(isArmStyle(e.target.value) ? e.target.value : undefined)
+              }
+              className="h-10 rounded-[8px] border border-line bg-surface px-2 text-[15px]"
+            >
+              <option value="auto">自動（{ARM_LABELS[autoArms]}）</option>
+              {ARM_STYLES.map((s) => (
+                <option key={s} value={s}>
+                  {ARM_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="border-b border-line">

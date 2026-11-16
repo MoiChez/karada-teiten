@@ -2,7 +2,8 @@ import { bikeDemand, ergDemand, ergPhases } from '../src/domain/motionDemand'
 import { describe, expect, it } from 'vitest'
 import type { Landmark } from '../src/domain/types'
 import { analyzeMotion, compareMotion, findCycles, motionMetric, prepareMotion, type MotionInput } from '../src/domain/motion'
-import { holdsBar, motionEquipment, motionPoses } from '../src/domain/motionPose'
+import { motionEquipment, motionPoses } from '../src/domain/motionPose'
+import { armStyleOf, detectArms } from '../src/domain/motionArms'
 import { motionCyclesCsv, motionFramesCsv, motionJson } from '../src/domain/motionExport'
 
 const W = 2000
@@ -346,13 +347,14 @@ describe('顔の向きと、担いだバー（3D の点）', () => {
     expect(b.y).toBeCloseTo(a.y, 3)
   })
 
-  it('手首がひじより上で肩の近くにある記録は、バーを担いでいるとみなす。腕を前へ伸ばしているときは、みなさない', () => {
+  it('腕の構えを見分ける（バー・頭の後ろ・胸の前・前へ伸ばす・腰・下ろす）', () => {
     const p = (x: number, y: number, z: number) => ({ x, y, z })
     const frame = (elbow: [number, number], wrist: [number, number]) => {
       const points: ({ x: number; y: number; z: number } | null)[] = Array.from({ length: 33 }, () => null)
       for (const [l, r, y, z] of [
         [23, 24, 0.52, 0],
         [11, 12, 0.82, 0],
+        [7, 8, 0.93, 0.02],
         [13, 14, ...elbow],
         [15, 16, ...wrist],
       ] as const) {
@@ -361,14 +363,37 @@ describe('顔の向きと、担いだバー（3D の点）', () => {
       }
       return { pose: { points, depthSource: 'side_photo' as const } }
     }
-    const rack = frame([0.78, -0.1], [0.87, -0.02])
-    const forward = frame([0.8, 0.15], [0.82, 0.3])
-    const onHips = frame([0.66, -0.08], [0.56, 0.02])
-    expect(holdsBar(Array.from({ length: 10 }, () => rack))).toBe(true)
-    expect(holdsBar(Array.from({ length: 10 }, () => forward))).toBe(false)
-    expect(holdsBar(Array.from({ length: 10 }, () => onHips))).toBe(false)
-    // 半分より多いコマで担いでいれば、担いでいる
-    expect(holdsBar([...Array.from({ length: 7 }, () => rack), ...Array.from({ length: 3 }, () => forward)])).toBe(true)
-    expect(holdsBar([])).toBe(false)
+    const cases: [string, [number, number], [number, number]][] = [
+      // バー: ひじは肩の後ろ、手首は肩の少し上
+      ['bar', [0.8, -0.1], [0.87, -0.02]],
+      // 下から見上げて撮ったバー: 手首が頭より上に写っても、ひじが肩の後ろならバー
+      ['bar', [0.84, -0.12], [0.97, -0.03]],
+      // 頭の後ろ: ひじは頭の横（前後は肩と同じくらい）で高く、手首は耳の後ろ
+      ['head', [0.92, 0.01], [0.94, -0.06]],
+      // 胸の前で組む（ゴブレット）: ひじを曲げ、手首は胸の前
+      ['clasp', [0.66, 0.1], [0.74, 0.17]],
+      // 前へ伸ばす
+      ['front', [0.81, 0.15], [0.8, 0.3]],
+      // 腰に当てる: ひじは後ろへ曲げ、手首は股関節の横
+      ['hips', [0.68, -0.1], [0.56, 0.0]],
+      // 下ろす
+      ['down', [0.66, 0.0], [0.52, 0.01]],
+    ]
+    for (const [want, elbow, wrist] of cases) {
+      const f = frame(elbow, wrist)
+      expect(armStyleOf(f.pose.points, 'l', false), `${want} ${elbow} ${wrist}`).toBe(want)
+      expect(detectArms(Array.from({ length: 10 }, () => f)), want).toBe(want)
+    }
+    // いちばん多い構えを選ぶ。どれも少なければ「そのまま」
+    const bar = frame([0.8, -0.1], [0.87, -0.02])
+    const fwd = frame([0.81, 0.15], [0.8, 0.3])
+    // 腕を頭の上へまっすぐ上げる（どの構えでもない）
+    const odd = frame([0.97, 0.04], [1.1, 0.05])
+    expect(detectArms([...Array.from({ length: 6 }, () => bar), ...Array.from({ length: 4 }, () => fwd)])).toBe('bar')
+    expect(detectArms(Array.from({ length: 10 }, () => odd))).toBe('free')
+    expect(detectArms([])).toBe('free')
+    // 持つ重さがあって頭の後ろに見えるときは、バー
+    const head = frame([0.92, 0.01], [0.94, -0.06])
+    expect(detectArms(Array.from({ length: 10 }, () => head), { loadKg: 60 })).toBe('bar')
   })
 })

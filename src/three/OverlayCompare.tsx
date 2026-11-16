@@ -15,6 +15,7 @@ import { indexAt, type Clock } from "../components/motionClock";
 import { mannequinKindOf } from "./mannequin";
 import { BodyLights, LoadBoundary, hasWebGL } from "./common";
 import { MovingBody, type MuscleLevels } from "./MotionBody3D";
+import type { ArmStyle } from "../domain/motionArms";
 import { cx } from "../components/ui";
 
 /** 3D のカメラを、動画を撮ったカメラと同じ向き・同じ写る範囲にする（コマごとに、動かない点のずらしも戻す） */
@@ -68,6 +69,7 @@ export default function OverlayCompare({
   rollDeg,
   onCanvas,
   flat,
+  arms,
 }: {
   video: MotionVideoData;
   poses: { t: number; pose: Pose3D }[];
@@ -83,6 +85,8 @@ export default function OverlayCompare({
   onCanvas?: (c: HTMLCanvasElement) => void;
   /** 角を丸めない（再生の操作にぴったり付けて置くとき） */
   flat?: boolean;
+  /** スクワットの腕の構え（手の形） */
+  arms?: ArmStyle;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const reduced =
@@ -193,6 +197,7 @@ export default function OverlayCompare({
                     muscles={muscles}
                     levels={levels}
                     nearSide={nearSide}
+                    arms={arms}
                     floorY={0}
                     bare
                   />

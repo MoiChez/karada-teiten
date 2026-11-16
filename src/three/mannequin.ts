@@ -7,6 +7,7 @@ import type { BodyArea, UserProfile } from '../domain/types'
 import type { MuscleKey } from '../domain/motionSports'
 import { TORSO_ROWS } from '../domain/torsoDepth'
 import { straightBlend } from '../domain/geometry'
+import type { ArmStyle } from '../domain/motionArms'
 
 export type MannequinKind = 'male' | 'female' | 'neutral'
 
@@ -86,7 +87,7 @@ function frameRotation(curA: THREE.Vector3, curB: THREE.Vector3, tgtA: THREE.Vec
  * anchor = 'hips'（動きの再生）: 両股関節の中点を pose に重ね、脚と腕は骨の長さを保ったまま、
  * 足首・手首が pose の位置に届くように曲げる（膝・ひじは pose の膝・ひじの側へ曲げる）。腰が浮き沈みしないように。
  * seated（エルゴ・自転車）: 座った姿勢の腰（腰の反りを戻す）。grip（エルゴ・自転車）: 手を順手でハンドルを握る形にする。
- * grip = 'bar'（スクワットでバーを担いでいるとき）: 横向きのバーを順手で握る形にする（前腕が上を向いていれば、手のひらは前）
+ * hands（スクワットの腕の構え）: 構えに合わせて、手を握る・開く・手のひらを向ける（domain/motionArms）
  */
 export function poseMannequin(
   root: THREE.Object3D,
@@ -96,7 +97,9 @@ export function poseMannequin(
     planarLegs?: boolean
     /** 座った姿勢。'round' は腰から背中を丸める（エルゴ） */
     seated?: boolean | 'round'
-    grip?: boolean | 'bar'
+    grip?: boolean
+    /** スクワットの腕の構え（'free' と、ないときは手を変えない） */
+    hands?: ArmStyle
     /** false で胴の厚みを合わせない（胴の厚みを決めるために 3D の胴を測るとき） */
     torso?: boolean
   } = {},
@@ -329,11 +332,16 @@ export function poseMannequin(
       fitted.push(bone)
     }
     if (opts.grip) {
-      // バーの向き（体の左へ向かう、両肩の関節を結ぶ線）
-      const bar = opts.grip === 'bar' ? P(11).sub(P(12)).normalize() : undefined
-      gripHand(bones, 'l', 1, bar)
-      gripHand(bones, 'r', -1, bar)
+      gripHand(bones, 'l', 1)
+      gripHand(bones, 'r', -1)
       fitted.push('grip')
+    } else if (opts.hands && opts.hands !== 'free') {
+      // 体の向き（体の左・上・前）。手のひらを向ける向きを決めるのに使う
+      const left = P(11).sub(P(12)).normalize()
+      const up = mid(P(11), P(12)).sub(mid(P(23), P(24))).normalize()
+      const fwd = new THREE.Vector3().crossVectors(left, up).normalize()
+      shapeHands(bones, opts.hands, left, up, fwd)
+      fitted.push(`hands:${opts.hands}`)
     }
     return { scale, fitted }
   }
@@ -707,11 +715,61 @@ const GRIP_THUMB = [0.4, 0.6, 0.7]
 /**
  * 手を順手（手のひらを下、手の甲を上）にして、指を曲げてハンドルを握る形にする。手首はまっすぐ（前腕の向き）。
  * mirror: 左手 1・右手 -1（手のひらの向きを、指の付け根の並びと手の向きから決めるときの符号）。
- * bar（体の左へ向かうバーの向き）を渡すと、そのバーを順手で握る向きにする: 手のひらの向き = バーの向き × 前腕の向き。
- * 前腕が前を向いていれば手のひらは下（エルゴのハンドルと同じ）、上を向いていれば手のひらは前（担いだバー）。
- * 「真下に近い向き」で決めると、前腕が上や後ろを向いたときに手のひらが後ろ（逆手）になるため
  */
-function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1 | -1, bar?: THREE.Vector3) {
+function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1 | -1) {
+  shapeHand(bones, side, mirror, (fore) => {
+    const n = new THREE.Vector3(0, -1, 0)
+    n.sub(fore.clone().multiplyScalar(n.dot(fore)))
+    return n.lengthSq() < 1e-6 ? new THREE.Vector3(0, 0, -1).sub(fore.clone().multiplyScalar(-fore.z)) : n
+  }, 1, 1)
+}
+
+/**
+ * 構えごとの手の形: 手のひらを向ける向き（左手。右手は左右を逆に）・指の曲げ（握り切るのを 1）・親指を寄せる割合。
+ * バーは、手のひらの向き = バーの向き（体の左）× 前腕の向き にする（前腕が上を向けば手のひらは前、前を向けば下。順手）。
+ * 「真下」で決めると、前腕が上や後ろを向いたときに手のひらが後ろ（逆手）になるため
+ */
+const HAND_SHAPE: Record<Exclude<ArmStyle, 'free'>, { palm: 'bar' | 'fwd' | 'in' | 'down'; curl: number; thumb: number }> = {
+  bar: { palm: 'bar', curl: 1, thumb: 1 },
+  // 頭の後ろ: 手のひらを頭（前）へ向け、指は軽く曲げる
+  head: { palm: 'fwd', curl: 0.3, thumb: 0 },
+  // 胸の前で組む: 手のひらを内へ向け合わせ、指を半分ほど曲げる
+  clasp: { palm: 'in', curl: 0.65, thumb: 0.5 },
+  // 前へ伸ばす: 手のひらを下へ、指はほぼまっすぐ
+  front: { palm: 'down', curl: 0.1, thumb: 0 },
+  // 腰に当てる・下ろす: 手のひらを体の側へ、指は軽く曲げる
+  hips: { palm: 'in', curl: 0.2, thumb: 0 },
+  down: { palm: 'in', curl: 0.3, thumb: 0 },
+}
+
+function shapeHands(bones: Map<string, THREE.Object3D>, style: Exclude<ArmStyle, 'free'>, left: THREE.Vector3, up: THREE.Vector3, fwd: THREE.Vector3) {
+  const sh = HAND_SHAPE[style]
+  for (const [side, mirror, sgn] of [
+    ['l', 1, 1],
+    ['r', -1, -1],
+  ] as const) {
+    shapeHand(
+      bones,
+      side,
+      mirror,
+      (fore) => {
+        const inward = left.clone().multiplyScalar(-sgn)
+        const want = sh.palm === 'bar' ? new THREE.Vector3().crossVectors(left, fore) : sh.palm === 'fwd' ? fwd.clone() : sh.palm === 'down' ? up.clone().negate() : inward
+        // 前腕に垂直にする。前腕とほぼ同じ向きなら、体の内側へ向ける
+        const n = want.sub(fore.clone().multiplyScalar(want.dot(fore)))
+        return n.lengthSq() > 0.05 ? n : inward.sub(fore.clone().multiplyScalar(inward.dot(fore)))
+      },
+      sh.curl,
+      sh.thumb,
+    )
+  }
+}
+
+/**
+ * 手首をまっすぐ（手の向き＝前腕の向き）にし、手のひらを palmFor(前腕の向き) の側へ向け、指を curl（0〜1）だけ曲げ、
+ * 親指を thumb（0〜1）だけ人さし指の中ほどへ寄せる
+ */
+function shapeHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1 | -1, palmFor: (fore: THREE.Vector3) => THREE.Vector3, curlBy: number, thumbBy: number) {
   const get = (n: string) => bones.get(`${n}_${side}`)
   const pos = (n: string) => get(n)?.getWorldPosition(new THREE.Vector3())
   const hand = get('hand')
@@ -726,12 +784,8 @@ function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1
     return { a, n: new THREE.Vector3().crossVectors(a, k).multiplyScalar(mirror).normalize() }
   }
   const fore = wrist.clone().sub(elbow).normalize()
-  const n = bar ? new THREE.Vector3().crossVectors(bar, fore) : new THREE.Vector3(0, 0, 0)
-  if (n.lengthSq() < 1e-6) {
-    n.set(0, -1, 0)
-    n.sub(fore.clone().multiplyScalar(n.dot(fore)))
-  }
-  if (n.lengthSq() < 1e-6) n.set(0, 0, -1).sub(fore.clone().multiplyScalar(-fore.z))
+  const n = palmFor(fore)
+  if (n.lengthSq() < 1e-9) return
   const cur = palmOf()
   rotateWorld(hand, frameRotation(cur.a, cur.n, fore, n.normalize()))
   // 指を手のひらの側へ曲げる（付け根から順に。曲げると先の骨の向きが変わるので、骨ごとに向きを測り直す）
@@ -744,13 +798,13 @@ function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1
       const dir = next ? next.getWorldPosition(new THREE.Vector3()).sub(p0) : new THREE.Vector3(0, 1, 0).applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()))
       const axis = new THREE.Vector3().crossVectors(dir, palmOf().n)
       if (axis.lengthSq() < 1e-10) return
-      rotateWorld(b, new THREE.Quaternion().setFromAxisAngle(axis.normalize(), (angles[j] * Math.PI) / 180))
+      rotateWorld(b, new THREE.Quaternion().setFromAxisAngle(axis.normalize(), (angles[j] * curlBy * Math.PI) / 180))
     })
   }
   for (const f of ['index', 'middle', 'ring', 'pinky']) curl([`${f}_01`, `${f}_02`, `${f}_03`], GRIP_FINGER)
   // 親指はハンドルの下を回して、人さし指の中ほどへ向ける（付け根から順に、向きの一部だけ寄せる）
   const meet = get('index_02')
-  if (!meet) return
+  if (!meet || !(thumbBy > 0)) return
   ;['thumb_01', 'thumb_02', 'thumb_03'].forEach((name, j, names) => {
     const b = get(name)
     if (!b) return
@@ -759,7 +813,7 @@ function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1
     const dir = next ? next.getWorldPosition(new THREE.Vector3()).sub(p0) : new THREE.Vector3(0, 1, 0).applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()))
     const to = meet.getWorldPosition(new THREE.Vector3()).sub(p0)
     if (dir.lengthSq() < 1e-12 || to.lengthSq() < 1e-12) return
-    rotateWorld(b, new THREE.Quaternion().slerp(swing(dir, to), GRIP_THUMB[j]))
+    rotateWorld(b, new THREE.Quaternion().slerp(swing(dir, to), GRIP_THUMB[j] * thumbBy))
   })
 }
 
