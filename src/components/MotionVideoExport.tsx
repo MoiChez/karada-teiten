@@ -340,16 +340,16 @@ export function MotionVideoExport({
   }
 
   return (
-    <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+    <div>
       {busy ? (
         <>
           <p className="text-sm font-medium" role="status">
             動画を作っています… {Math.round(progress * 100)}%
           </p>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-sunken" aria-hidden>
-            <div className="h-full rounded-full bg-measure" style={{ width: `${Math.round(progress * 100)}%` }} />
+          <div className="mt-2 h-1.5 bg-sunken" aria-hidden>
+            <div className="h-full bg-measure" style={{ width: `${Math.round(progress * 100)}%` }} />
           </div>
-          <p className="mt-2 text-xs text-ink-3">再生と同じ速さで録画しています。終わるまで、この画面を開いたままにしてください。</p>
+          <p className="mt-2 text-sm text-ink-3">再生と同じ速さで録画しています。終わるまで、この画面を開いたままにしてください。</p>
           <Button className="mt-2" variant="quiet" icon={<Square aria-hidden className="size-4" />} onClick={() => (stop.current = true)}>
             やめる
           </Button>
@@ -357,10 +357,10 @@ export function MotionVideoExport({
       ) : (
         <>
           <Button variant="secondary" block icon={<Film aria-hidden className="size-5" />} onClick={() => void run()}>
-            この再生を動画にする（{format.ext.toUpperCase()}）
+            動画にする（{format.ext.toUpperCase()}）
           </Button>
-          <p className="mt-2 text-xs text-ink-3">
-            撮った動画（重ね表示つき）・3D の体・今の値・「{series.short}」のグラフを縦長の 1 画面にまとめて、{speed === 1 ? '等速' : `${speed} 倍`}で録画します（約 {Math.ceil(seconds)} 秒かかります）。端末の中で作り、どこにも送りません。
+          <p className="mt-1.5 text-sm text-ink-3">
+            動画・3D・今の値・「{series.short}」のグラフを 1 画面にまとめて、{speed === 1 ? '等速' : `${speed} 倍`}で録画します。約 {Math.ceil(seconds)} 秒かかります。
           </p>
         </>
       )}

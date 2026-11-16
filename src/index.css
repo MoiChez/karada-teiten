@@ -21,6 +21,8 @@
   --color-measure: #1c6e8c;
   --color-measure-soft: #e1eff4;
   --color-past: #7c8d93;
+  /* 負荷の色（筋肉の色づけ・負荷の棒・グラフの幅） */
+  --color-load: #e3a13b;
   --color-attention: #9a5413;
   --color-attention-soft: #fbf0e3;
   --color-good: #2e7550;

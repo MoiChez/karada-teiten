@@ -1,4 +1,6 @@
-// 動きの再生: 撮った動画と 3D の体を並べ、1 つの時計で動かす。下に角度のグラフと、今の時刻の値
+// 動きの再生。上に、動画・3D・再生の操作をひとまとまりにして置く（スクロールしても画面の上に留まるので、
+// 下の数値を開いても、動画を見ながら止めたり進めたりできる）。その下に、開いたり閉じたりする項目
+// （今の値・グラフ・筋肉の負荷・書き出しなど）を並べる。全部を 1 つの時計で動かす
 import {
   Suspense,
   lazy,
@@ -14,6 +16,8 @@ import {
   Minimize2,
   Pause,
   Play,
+  SkipBack,
+  SkipForward,
   StepBack,
   StepForward,
 } from "lucide-react";
@@ -28,6 +32,7 @@ import {
 } from "../domain/motion";
 import { MUSCLE_JOINT, PHASE_LABELS } from "../domain/motionLoad";
 import {
+  DEMAND_SOURCES,
   bikeDemand,
   ergDemand,
   type DemandSeries,
@@ -39,16 +44,22 @@ import { motionEquipment, poseMapping } from "../domain/motionPose";
 import type { UserProfile } from "../domain/types";
 import { fmtNum } from "../domain/format";
 import type { MotionVideoData } from "../state/motionMedia";
+import { loadBodySkin, saveBodySkin, type BodySkin } from "../three/common";
 import { indexAt, useClockValue, type Clock } from "./motionClock";
 import { FrameVideo } from "./FrameVideo";
 import { AngleChart } from "./AngleChart";
 import { MotionVideoExport } from "./MotionVideoExport";
 import type { OverlayInput } from "./FrameVideo";
-import { Button, IconButton, Segmented, cx } from "./ui";
+import { Details, Fold, cx } from "./ui";
 
 // 3D（three.js）は重いので、開いたときに読み込む
 const MotionBody3D = lazy(() => import("../three/MotionBody3D"));
 const OverlayCompare = lazy(() => import("../three/OverlayCompare"));
+
+/** 下のタブ（中央の丸いボタンが上にはみ出す分を含む）の高さ。上に留めるまとまりが、これより下へ伸びないようにする */
+const NAV_H = 88;
+
+const CHECK = "size-5 accent-[var(--color-ink)]";
 
 export function MotionPlayer({
   rec,
@@ -58,10 +69,12 @@ export function MotionPlayer({
   video,
   sex,
   clock,
-  muscles,
   videoOverlay,
   autoplay = true,
   exportName,
+  exportExtra,
+  children,
+  tail,
 }: {
   rec: MotionRecord;
   prep: PreparedMotion;
@@ -70,21 +83,27 @@ export function MotionPlayer({
   video: MotionVideoData | null;
   sex?: UserProfile["sex"];
   clock: Clock;
-  /** 3D の体に、種目で一般に使われる筋肉の場所を色で示す */
-  muscles: boolean;
-  /** 動画の上に重ねるもの（点の補正など）。なければ骨格の線を重ねる */
+  /** 動画の上に重ねるもの（点の補正）。あるときは、動画だけを大きく出す */
   videoOverlay?: ReactNode;
   /** 開いたときに再生を始めるか（点を直している間は、計算し直すたびに動き出さないように止めておく） */
   autoplay?: boolean;
   /** あれば、この名前で動画に書き出せるようにする */
   exportName?: string;
+  /** 「書き出す」の中に並べるボタン（CSV など） */
+  exportExtra?: ReactNode;
+  /** 再生の項目（今の値・グラフ・筋肉の負荷）のあとに並べる項目 */
+  children?: ReactNode;
+  /** 「書き出す」のあとに並べる項目 */
+  tail?: ReactNode;
 }) {
   const profile = PROFILES[rec.kind];
   const ts = useMemo(() => prep.frames.map((f) => f.t), [prep]);
   const [series, setSeries] = useState<string>(profile.defaultSeries);
   const [overlayOn, setOverlayOn] = useState(true);
-  // 表示: 元の動画と 3D を重ねて境目をスライドする / 並べる（点を直している間は並べる）
+  // 動画と 3D の並べ方: 重ねて境目をスライドする / 並べる
   const [layout, setLayout] = useState<"overlay" | "split">("overlay");
+  const [muscles, setMuscles] = useState(false);
+  const [skin, setSkin] = useState<BodySkin>(loadBodySkin);
   const mapping = useMemo(() => poseMapping(prep), [prep]);
   const overlay = useMemo(
     () => prep.frames.map((f) => ({ t: f.t, lm: f.lm })),
@@ -98,10 +117,11 @@ export function MotionPlayer({
     () => motionEquipment(rec.kind, poses, prep.nearSide),
     [rec.kind, poses, prep.nearSide],
   );
+  const sideOk = rec.analysis.sideView !== false;
   // 重心の線（スクワット。画像に対する比）
   const com = useMemo(() => {
     // 真横から撮っていなければ、重心は出さない（横から見た位置として求めているため）
-    if (!prep.load || rec.analysis.sideView === false) return undefined;
+    if (!prep.load || !sideOk) return undefined;
     const size = {
       width: rec.video.width,
       height: rec.video.height,
@@ -113,7 +133,7 @@ export function MotionPlayer({
       heel: fr.lm[sp.heel],
       toe: fr.lm[sp.foot],
     }));
-  }, [prep, rec.video, rec.analysis.sideView]);
+  }, [prep, rec.video, sideOk]);
   // バーの軌道（スクワットで持つ重さを入れたとき。手首の点。その回の始めから今のコマまで）
   const bar = useMemo(() => {
     if (!prep.bar) return undefined;
@@ -140,20 +160,20 @@ export function MotionPlayer({
           bothSides: !!profile.frontal,
         }
       : null;
-  // 筋肉の濃さ（スクワットで筋肉を示すとき。推定の要求度）
-  // エルゴと自転車の要求度（力の型と筋電図の型から。真横から撮った記録だけ）
+  // エルゴと自転車の筋肉の負荷（力の型と筋電図の型からの推定。真横から撮った記録だけ）
   const demand = useMemo<DemandSeries | null>(() => {
-    if (!muscles || rec.analysis.sideView === false) return null;
+    if (!sideOk) return null;
     if (prep.kind === "erg")
       return ergDemand(prep.frames, prep.nearSide, prep.f, cycles);
     if (prep.kind === "bike")
       return bikeDemand(prep.frames, prep.nearSide, prep.crank);
     return null;
-  }, [muscles, prep, cycles, rec.analysis.sideView]);
+  }, [prep, cycles, sideOk]);
+  // 3D の体の色の濃さ（「筋肉の色」を入れたとき）
   const levels = useMemo(() => {
+    if (!muscles) return undefined;
     if (demand) return { ts, values: demand.values, far: demand.far };
-    if (!muscles || !prep.load || rec.analysis.sideView === false)
-      return undefined;
+    if (!prep.load || !sideOk) return undefined;
     const values: Partial<Record<MuscleKey, number[]>> = {};
     for (const [m, j] of Object.entries(MUSCLE_JOINT) as [
       MuscleKey,
@@ -161,7 +181,17 @@ export function MotionPlayer({
     ][])
       values[m] = prep.load.demand[j];
     return { ts, values };
-  }, [muscles, prep, ts, rec.analysis.sideView, demand]);
+  }, [muscles, prep, ts, sideOk, demand]);
+  // 1 回ごとの出来事（キャッチ・底・下死点）の時刻。再生の位置の目印と、前後へ移るボタンに使う
+  const marks = useMemo(
+    () =>
+      cycles
+        .map((c) => eventOf(c, profile.mainEvent)?.t)
+        .filter((t): t is number => t !== undefined),
+    [cycles, profile.mainEvent],
+  );
+  const markLabel =
+    (cycles[0] && eventOf(cycles[0], profile.mainEvent)?.label) ?? "区切り";
 
   // 最初だけ、1 回目の出来事（底・キャッチなど）から、ゆっくり再生する
   const started = useRef(false);
@@ -176,11 +206,11 @@ export function MotionPlayer({
     }
   }, [clock, cycles, profile.mainEvent, reduced, autoplay]);
 
-  // 並べて見る: 上に動画、下に 3D。仕切りを上下に動かすと 3D の高さが変わり、3D は全画面にもできる
-  const [stageH, setStageH] = useState(340);
+  // 並べたときの 3D の高さ（仕切りを上下に動かして変える）。3D は全画面にもできる
+  const [stageH, setStageH] = useState(220);
   const [full, setFull] = useState(false);
   const drag = useRef<{ y: number; h: number } | null>(null);
-  const clampH = (h: number) => Math.min(720, Math.max(180, Math.round(h)));
+  const clampH = (h: number) => Math.min(720, Math.max(120, Math.round(h)));
   // 全画面の間は、後ろのページを動かさない。Esc で戻る
   useEffect(() => {
     if (!full) return;
@@ -195,269 +225,390 @@ export function MotionPlayer({
       window.removeEventListener("keydown", onKey);
     };
   }, [full]);
-  const showOverlay =
-    !!video && !!mapping && !videoOverlay && layout === "overlay";
-  return (
-    <div className="mt-4">
-      {video && mapping && !videoOverlay && (
-        <div className="mb-2">
-          <Segmented
-            legend="表示"
-            value={layout}
-            onChange={setLayout}
-            columns={2}
-            options={[
-              { value: "overlay", label: "重ねて比べる" },
-              { value: "split", label: "並べて見る" },
-            ]}
-          />
-        </div>
+
+  const canSwitch = !!video && !!mapping && !videoOverlay;
+  const showOverlay = canSwitch && layout === "overlay";
+  const portrait = !!video && video.height > video.width;
+  const ratio = video ? `${video.width} / ${video.height}` : undefined;
+  /** 動画の幅。高さが画面の高さの maxDvh % を超えないようにする（縦長の動画で、下の数値が見えなくならないように） */
+  const fit = (maxDvh: number, share = "100%") =>
+    video
+      ? `min(${share}, calc(${maxDvh}dvh * ${video.width} / ${video.height}))`
+      : share;
+  const transport = (
+    <Transport
+      clock={clock}
+      ts={ts}
+      marks={marks}
+      markLabel={markLabel}
+      cycles={cycles}
+      unit={profile.unitLabel}
+    />
+  );
+  const frameVideo = video && (
+    <FrameVideo
+      images={video.images}
+      width={video.width}
+      height={video.height}
+      clock={clock}
+      overlay={overlayOn && !videoOverlay ? overlay : undefined}
+      nearSide={prep.nearSide}
+      com={com}
+      bar={bar}
+      bothSides={!!profile.frontal}
+    />
+  );
+  // 3D。全画面のときは画面いっぱいに出し、その中にも再生の操作を置く
+  const stage3d = (
+    <div
+      className={cx(
+        "flex flex-col bg-ink",
+        full
+          ? "fixed inset-0 z-50 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
+          : "absolute inset-0",
       )}
-      {showOverlay && video && mapping && (
-        <>
-          <Suspense
-            fallback={
-              <div
-                className="rounded-[var(--radius-panel)] bg-ink"
-                style={{ aspectRatio: `${video.width} / ${video.height}` }}
-              />
-            }
-          >
-            <OverlayCompare
-              video={video}
+    >
+      <div className="relative min-h-0 flex-1">
+        <div className="absolute inset-0">
+          <Suspense fallback={<div className="size-full bg-ink" />}>
+            <MotionBody3D
               poses={poses}
-              mapping={mapping}
               clock={clock}
               sex={sex}
+              facing={rec.analysis.facing}
               kind={rec.kind}
               muscles={muscles}
               levels={levels}
+              equipment={equipment}
               nearSide={prep.nearSide}
-              rollDeg={rec.video.rollDeg}
+              className="h-full"
+              flat
+              skin={skin}
               onCanvas={(c) => (three.current = c)}
+              camera={
+                profile.frontal
+                  ? prep.view?.view === "front"
+                    ? "front"
+                    : "rear"
+                  : undefined
+              }
             />
           </Suspense>
-          <p className="mt-1.5 text-xs text-ink-3">
-            境目を左右に動かすと、元の動画と、推定した 3D
-            の体を見比べられます。3D
-            は標準の体を、関節が推定した点に重なるように置いたものです。横から撮った記録では、手足と胴の長さを動画の人に合わせ、胴の前後の厚みと位置も動画の輪郭から測れたときは合わせています（測った値は表示に使うだけです）。体の幅や背中の丸みは標準の体のままです。
-          </p>
-        </>
-      )}
-      {!showOverlay && (
-        <div>
-          {video && (
-            <div className="flex justify-center overflow-hidden rounded-[var(--radius-panel)] bg-ink">
-              {/* 縦長の動画でも、画面の高さの半分までに収める（幅は縦横比から決まる） */}
-              <div
-                className="relative"
-                style={{
-                  aspectRatio: `${video.width} / ${video.height}`,
-                  width: `min(100%, calc(46dvh * ${video.width} / ${video.height}))`,
-                }}
-              >
-                <FrameVideo
-                  images={video.images}
-                  width={video.width}
-                  height={video.height}
-                  clock={clock}
-                  overlay={overlayOn && !videoOverlay ? overlay : undefined}
-                  nearSide={prep.nearSide}
-                  com={com}
-                  bar={bar}
-                  bothSides={!!profile.frontal}
-                />
-                {videoOverlay}
-              </div>
-            </div>
-          )}
-          {video && (
-            <div
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="3D の高さ。上下の矢印キーで変えられます"
-              aria-valuemin={180}
-              aria-valuemax={720}
-              aria-valuenow={stageH}
-              tabIndex={0}
-              className="flex h-6 cursor-row-resize touch-none items-center justify-center text-ink-3 hover:text-ink"
-              onPointerDown={(e) => {
-                drag.current = { y: e.clientY, h: stageH };
-                e.currentTarget.setPointerCapture(e.pointerId);
-              }}
-              onPointerMove={(e) => {
-                if (drag.current)
-                  setStageH(clampH(drag.current.h + e.clientY - drag.current.y));
-              }}
-              onPointerUp={() => (drag.current = null)}
-              onPointerCancel={() => (drag.current = null)}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowUp") setStageH((h) => clampH(h - 24));
-                else if (e.key === "ArrowDown") setStageH((h) => clampH(h + 24));
-                else return;
-                e.preventDefault();
-              }}
-            >
-              <GripHorizontal aria-hidden className="size-5" />
-            </div>
-          )}
-          <div
-            className={cx(
-              full
-                ? "fixed inset-0 z-50 flex flex-col bg-ink p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-[max(0.5rem,env(safe-area-inset-top))]"
-                : "relative flex flex-col",
-            )}
-            style={full ? undefined : { height: stageH }}
-          >
-            <div className="relative min-h-0 flex-1">
-              <div className="absolute inset-0">
-                <Suspense
-                  fallback={
-                    <div className="size-full rounded-[var(--radius-panel)] bg-ink" />
-                  }
-                >
-                  <MotionBody3D
-                    poses={poses}
-                    clock={clock}
-                    sex={sex}
-                    facing={rec.analysis.facing}
-                    kind={rec.kind}
-                    muscles={muscles}
-                    levels={levels}
-                    equipment={equipment}
-                    nearSide={prep.nearSide}
-                    className="h-full"
-                    onCanvas={(c) => (three.current = c)}
-                    camera={
-                      profile.frontal
-                        ? prep.view?.view === "front"
-                          ? "front"
-                          : "rear"
-                        : undefined
-                    }
-                  />
-                </Suspense>
-              </div>
-              <button
-                type="button"
-                aria-label={full ? "全画面をやめる" : "3D を全画面にする"}
-                aria-pressed={full}
-                onClick={() => setFull(!full)}
-                className="absolute right-2 top-2 flex size-11 items-center justify-center rounded-full bg-white/15 text-paper backdrop-blur hover:bg-white/25"
-              >
-                {full ? (
-                  <Minimize2 aria-hidden className="size-5" />
-                ) : (
-                  <Maximize2 aria-hidden className="size-5" />
-                )}
-              </button>
-            </div>
-            {full && <Transport clock={clock} ts={ts} />}
-          </div>
         </div>
-      )}
-      {!video && (
-        <p className="mt-2 text-sm text-ink-3">
-          動画は保存していないため、3D の体だけを再生します。
-        </p>
-      )}
-      {levels && prep.load && !demand && (
-        <DemandNow clock={clock} ts={ts} load={prep.load} />
-      )}
-      {demand && <DemandBars clock={clock} ts={ts} demand={demand} />}
-
-      <Transport clock={clock} ts={ts} />
-
-      {cycles.length > 0 && (
-        <div
-          className="mt-2 flex flex-wrap gap-1.5"
-          role="group"
-          aria-label={`${profile.unitLabel}ごとの出来事へ移る`}
+        <button
+          type="button"
+          aria-label={full ? "全画面をやめる" : "3D を全画面にする"}
+          aria-pressed={full}
+          onClick={() => setFull(!full)}
+          className="absolute right-1.5 top-1.5 flex size-11 items-center justify-center rounded-full bg-black/35 text-paper hover:bg-black/50 focus-visible:outline-level"
         >
-          {cycles.map((c, i) => {
-            const ev = eventOf(c, profile.mainEvent);
-            if (!ev) return null;
-            return (
-              <button
-                key={i}
-                type="button"
-                onClick={() => {
-                  clock.pause();
-                  clock.set(ev.t);
-                }}
-                className="min-h-10 rounded-full border border-line bg-surface px-3 text-sm hover:bg-sunken"
-              >
-                {profile.jumpLabel(i + 1)}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="mt-3">
-        <Segmented
-          legend="グラフの値"
-          value={def.key}
-          onChange={setSeries}
-          columns={Math.min(profile.series.length, 6)}
-          options={profile.series.map((d) => ({
-            value: d.key,
-            label: d.short,
-          }))}
-        />
+          {full ? (
+            <Minimize2 aria-hidden className="size-5" />
+          ) : (
+            <Maximize2 aria-hidden className="size-5" />
+          )}
+        </button>
       </div>
-      <AngleChart
-        ts={ts}
-        values={prep.series[def.key]}
-        unit={def.unit}
-        digits={def.digits}
-        cycles={cycles.map((c) => ({
-          start: c.start,
-          end: c.end,
-          mark: eventOf(c, profile.mainEvent)?.t,
-        }))}
-        clock={clock}
-        label={def.label}
-        band={
-          def.band
-            ? { lo: prep.series[def.band[0]], hi: prep.series[def.band[1]] }
-            : undefined
-        }
-        reference={profile.chartRefs?.[def.key]}
-      />
-      <NowTable clock={clock} ts={ts} prep={prep} />
-      {exportName && (
-        <MotionVideoExport
-          rec={rec}
-          prep={prep}
-          cycles={cycles}
-          video={video}
-          clock={clock}
-          three={three}
-          series={def}
-          overlayAt={overlayAt}
-          fileStem={exportName}
-          overlay={showOverlay ? { rollDeg: rec.video.rollDeg } : undefined}
-        />
-      )}
-      {video && !videoOverlay && (
-        <label className="mt-2 flex min-h-11 items-center gap-2 text-[15px]">
+      {full && transport}
+    </div>
+  );
+
+  return (
+    <div>
+      {/* 動画・3D・再生の操作。スクロールしても画面の上に留まる。高さは、下のタブに隠れないところまで */}
+      <div
+        className={cx(
+          "sticky top-[env(safe-area-inset-top)] -mx-4 flex flex-col bg-ink text-paper",
+          "before:absolute before:inset-x-0 before:bottom-full before:h-[env(safe-area-inset-top)] before:bg-ink",
+          full ? "z-50" : "z-10",
+        )}
+        style={{
+          maxHeight: `calc(100dvh - ${NAV_H}px - env(safe-area-inset-top) - env(safe-area-inset-bottom))`,
+        }}
+      >
+        {videoOverlay && video ? (
+          // 点を直している間: 動画だけを大きく出す
+          <div className="flex min-h-0 justify-center">
+            <div
+              className="relative"
+              style={{ aspectRatio: ratio, width: fit(56) }}
+            >
+              {frameVideo}
+              {videoOverlay}
+            </div>
+          </div>
+        ) : showOverlay && video && mapping ? (
+          <div className="flex min-h-0 justify-center">
+            <div style={{ width: fit(46) }}>
+              <Suspense
+                fallback={
+                  <div className="bg-ink" style={{ aspectRatio: ratio }} />
+                }
+              >
+                <OverlayCompare
+                  video={video}
+                  poses={poses}
+                  mapping={mapping}
+                  clock={clock}
+                  sex={sex}
+                  kind={rec.kind}
+                  muscles={muscles}
+                  levels={levels}
+                  nearSide={prep.nearSide}
+                  rollDeg={rec.video.rollDeg}
+                  onCanvas={(c) => (three.current = c)}
+                  flat
+                />
+              </Suspense>
+            </div>
+          </div>
+        ) : video && portrait ? (
+          // 縦長の動画は、動画と 3D を左右に並べる
+          <div className="flex min-h-0">
+            <div
+              className="relative shrink-0"
+              style={{ aspectRatio: ratio, width: fit(46, "50%") }}
+            >
+              {frameVideo}
+            </div>
+            <div className="relative min-w-0 flex-1">{stage3d}</div>
+          </div>
+        ) : (
+          <>
+            {video && (
+              <div className="flex shrink-0 justify-center">
+                <div
+                  className="relative"
+                  style={{ aspectRatio: ratio, width: fit(34) }}
+                >
+                  {frameVideo}
+                </div>
+              </div>
+            )}
+            {video && (
+              <div
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="3D の高さ。上下の矢印キーで変えられます"
+                aria-valuemin={120}
+                aria-valuemax={720}
+                aria-valuenow={stageH}
+                tabIndex={0}
+                className="flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center text-paper/45 hover:text-paper focus-visible:outline-level"
+                onPointerDown={(e) => {
+                  drag.current = { y: e.clientY, h: stageH };
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  if (drag.current)
+                    setStageH(clampH(drag.current.h + e.clientY - drag.current.y));
+                }}
+                onPointerUp={() => (drag.current = null)}
+                onPointerCancel={() => (drag.current = null)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowUp") setStageH((h) => clampH(h - 24));
+                  else if (e.key === "ArrowDown") setStageH((h) => clampH(h + 24));
+                  else return;
+                  e.preventDefault();
+                }}
+              >
+                <GripHorizontal aria-hidden className="size-4" />
+              </div>
+            )}
+            <div
+              className="relative min-h-[120px]"
+              style={{ flex: video ? `0 1 ${stageH}px` : "0 1 46dvh" }}
+            >
+              {stage3d}
+            </div>
+          </>
+        )}
+        {transport}
+      </div>
+
+      {/* 見え方の切り替え */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 py-2">
+        {canSwitch && (
+          <div
+            role="group"
+            aria-label="動画と 3D の並べ方"
+            className="inline-flex rounded-[10px] border border-line p-0.5"
+          >
+            {(
+              [
+                ["overlay", "重ねる"],
+                ["split", "並べる"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={layout === v}
+                onClick={() => setLayout(v)}
+                className={cx(
+                  "min-h-10 rounded-[8px] px-4 text-[15px]",
+                  layout === v ? "bg-ink font-bold text-paper" : "text-ink-2",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+        {video && !videoOverlay && !showOverlay && (
+          <label className="flex min-h-11 items-center gap-2 text-[15px]">
+            <input
+              type="checkbox"
+              className={CHECK}
+              checked={overlayOn}
+              onChange={(e) => setOverlayOn(e.target.checked)}
+            />
+            骨格の線
+          </label>
+        )}
+        <label className="flex min-h-11 items-center gap-2 text-[15px]">
           <input
             type="checkbox"
-            className="size-5 accent-[var(--color-ink)]"
-            checked={overlayOn}
-            onChange={(e) => setOverlayOn(e.target.checked)}
+            className={CHECK}
+            checked={muscles}
+            onChange={(e) => setMuscles(e.target.checked)}
           />
-          {profile.frontal
-            ? "動画に骨格の線を重ねる"
-            : "動画に骨格の線を重ねる（明るい線がカメラ側の半身）"}
+          筋肉の色
         </label>
-      )}
+      </div>
+
+      <div className="border-b border-line">
+        <Fold title="今の値">
+          <NowTable clock={clock} ts={ts} prep={prep} />
+        </Fold>
+        <Fold title="グラフ">
+          <div
+            role="group"
+            aria-label="グラフにする値"
+            className="-mt-1 flex flex-wrap gap-x-1"
+          >
+            {profile.series.map((d) => (
+              <button
+                key={d.key}
+                type="button"
+                aria-pressed={def.key === d.key}
+                onClick={() => setSeries(d.key)}
+                className={cx(
+                  "min-h-10 border-b-2 px-2.5 text-[15px]",
+                  def.key === d.key
+                    ? "border-ink font-bold text-ink"
+                    : "border-transparent text-ink-3",
+                )}
+              >
+                {d.short}
+              </button>
+            ))}
+          </div>
+          <div className="mt-3">
+            <AngleChart
+              ts={ts}
+              values={prep.series[def.key]}
+              unit={def.unit}
+              digits={def.digits}
+              cycles={cycles.map((c) => ({
+                start: c.start,
+                end: c.end,
+                mark: eventOf(c, profile.mainEvent)?.t,
+              }))}
+              clock={clock}
+              label={def.label}
+              band={
+                def.band
+                  ? {
+                      lo: prep.series[def.band[0]],
+                      hi: prep.series[def.band[1]],
+                    }
+                  : undefined
+              }
+              reference={profile.chartRefs?.[def.key]}
+              flat
+            />
+          </div>
+          <p className="mt-1 text-sm text-ink-3">
+            グラフに触ると、その時刻へ移ります。色の帯は 1 {profile.unitLabel}
+            ごとの区間です。
+          </p>
+        </Fold>
+        <Fold title="筋肉の負荷" hint="推定">
+          <MuscleLoad
+            clock={clock}
+            ts={ts}
+            prep={prep}
+            demand={demand}
+            sideOk={sideOk}
+          />
+          <label className="mt-3 flex min-h-11 items-center gap-2 text-[15px]">
+            <input
+              type="checkbox"
+              className={CHECK}
+              checked={skin === "muscle"}
+              onChange={(e) => {
+                const next = e.target.checked ? "muscle" : "plain";
+                setSkin(next);
+                saveBodySkin(next);
+              }}
+            />
+            3D の体を解剖図にする
+          </label>
+        </Fold>
+        {children}
+        {(exportName || exportExtra) && (
+          <Fold title="書き出す" keepMounted>
+            <p className="text-sm text-ink-3">
+              ファイルはこの端末の中で作ります。どこにも送りません。
+            </p>
+            <div className="mt-3 grid gap-2">
+              {exportName && (
+                <MotionVideoExport
+                  rec={rec}
+                  prep={prep}
+                  cycles={cycles}
+                  video={video}
+                  clock={clock}
+                  three={three}
+                  series={def}
+                  overlayAt={overlayAt}
+                  fileStem={exportName}
+                  overlay={
+                    showOverlay ? { rollDeg: rec.video.rollDeg } : undefined
+                  }
+                />
+              )}
+              {exportExtra}
+            </div>
+          </Fold>
+        )}
+        {tail}
+      </div>
     </div>
   );
 }
 
-function Transport({ clock, ts }: { clock: Clock; ts: number[] }) {
+const DARK_BUTTON =
+  "flex size-11 shrink-0 items-center justify-center rounded-[10px] text-paper/85 hover:bg-white/10 active:bg-white/15 disabled:opacity-35 focus-visible:outline-level";
+
+/** 再生の操作。動画・3D のすぐ下に、同じ濃い色の帯で付ける */
+function Transport({
+  clock,
+  ts,
+  marks,
+  markLabel,
+  cycles,
+  unit,
+}: {
+  clock: Clock;
+  ts: number[];
+  /** 1 回ごとの出来事の時刻（再生の位置の上に目印を出し、前後へ移るのに使う） */
+  marks: number[];
+  markLabel: string;
+  cycles: MotionCycle[];
+  unit: string;
+}) {
   const playing = useClockValue(clock, (c) => c.isPlaying());
   const t = useClockValue(clock, (c) => c.get());
   const speed = useClockValue(clock, (c) => c.getSpeed());
@@ -470,184 +621,125 @@ function Transport({ clock, ts }: { clock: Clock; ts: number[] }) {
       next === clock.get() && ts[k + dir] !== undefined ? ts[k + dir] : next,
     );
   };
+  const jump = (dir: 1 | -1) => {
+    clock.pause();
+    const now = clock.get();
+    const to =
+      dir > 0
+        ? marks.find((m) => m > now + 1)
+        : [...marks].reverse().find((m) => m < now - 1);
+    if (to !== undefined) clock.set(to);
+  };
+  const span = Math.max(1, clock.end - clock.start);
+  const rep = cycles.findIndex((c) => t >= c.start && t <= c.end);
   return (
-    <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-2 shadow-lift">
-      <div className="flex items-center gap-1.5">
-        <IconButton label="1 コマ戻る" onClick={() => step(-1)}>
-          <StepBack aria-hidden className="size-5" />
-        </IconButton>
-        <Button
-          variant="secondary"
-          aria-label={playing ? "一時停止" : "再生"}
-          onClick={() => (playing ? clock.pause() : clock.play())}
-          icon={
-            playing ? (
-              <Pause aria-hidden className="size-5" />
-            ) : (
-              <Play aria-hidden className="size-5" />
-            )
-          }
-        >
-          {playing ? "止める" : "再生"}
-        </Button>
-        <IconButton label="1 コマ進む" onClick={() => step(1)}>
-          <StepForward aria-hidden className="size-5" />
-        </IconButton>
-        <span className="ml-auto text-sm text-ink-2 num">
-          {fmtNum((t - clock.start) / 1000, 2)} /{" "}
-          {fmtNum((clock.end - clock.start) / 1000, 1)} 秒
-        </span>
-      </div>
-      <input
-        type="range"
-        min={clock.start}
-        max={clock.end}
-        step={1}
-        value={t}
-        aria-label="再生する位置"
-        onChange={(e) => {
-          clock.pause();
-          clock.set(Number(e.target.value));
-        }}
-        className="mt-1 w-full accent-[var(--color-measure)]"
-      />
-      <div
-        className="mt-1 grid grid-cols-5 gap-1"
-        role="group"
-        aria-label="再生の速さ"
-      >
-        {[2, 1, 0.5, 0.25, 0.1].map((v) => (
-          <button
-            key={v}
-            type="button"
-            aria-pressed={speed === v}
-            onClick={() => clock.setSpeed(v)}
-            className={cx(
-              "min-h-10 rounded-[var(--radius-control)] border text-sm num",
-              speed === v
-                ? "border-ink bg-ink text-paper"
-                : "border-line bg-surface hover:bg-sunken",
-            )}
+    <div className="shrink-0 px-2 pb-1.5 pt-0.5">
+      <div className="flex items-center gap-2.5">
+        <div className="relative min-w-0 flex-1">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-2 top-0.5 h-1.5"
           >
-            {v === 1 ? "等速" : `${v}倍`}
-          </button>
-        ))}
+            {marks.map((m) => (
+              <span
+                key={m}
+                className="absolute top-0 h-1.5 w-px bg-paper/60"
+                style={{ left: `${((m - clock.start) / span) * 100}%` }}
+              />
+            ))}
+          </div>
+          <input
+            type="range"
+            min={clock.start}
+            max={clock.end}
+            step={1}
+            value={t}
+            aria-label="再生する位置"
+            onChange={(e) => {
+              clock.pause();
+              clock.set(Number(e.target.value));
+            }}
+            className="block h-9 w-full accent-[var(--color-level)] focus-visible:outline-level"
+          />
+        </div>
+        <p className="min-w-[4.25rem] shrink-0 text-right text-[13px] leading-[1.25] text-paper/80 num">
+          <span className="block text-paper">
+            {fmtNum((t - clock.start) / 1000, 2)} 秒
+          </span>
+          {rep >= 0 && (
+            <span className="block">
+              {rep + 1}/{cycles.length} {unit}
+            </span>
+          )}
+        </p>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-label={`前の${markLabel}へ`}
+          disabled={!marks.length}
+          onClick={() => jump(-1)}
+          className={DARK_BUTTON}
+        >
+          <SkipBack aria-hidden className="size-5" />
+        </button>
+        <button
+          type="button"
+          aria-label="1 コマ戻る"
+          onClick={() => step(-1)}
+          className={DARK_BUTTON}
+        >
+          <StepBack aria-hidden className="size-5" />
+        </button>
+        <button
+          type="button"
+          aria-label={playing ? "止める" : "再生"}
+          onClick={() => (playing ? clock.pause() : clock.play())}
+          className="flex h-11 w-16 shrink-0 items-center justify-center rounded-[10px] bg-level text-ink hover:brightness-95 active:brightness-90 focus-visible:outline-paper"
+        >
+          {playing ? (
+            <Pause aria-hidden className="size-6" />
+          ) : (
+            <Play aria-hidden className="size-6" />
+          )}
+        </button>
+        <button
+          type="button"
+          aria-label="1 コマ進む"
+          onClick={() => step(1)}
+          className={DARK_BUTTON}
+        >
+          <StepForward aria-hidden className="size-5" />
+        </button>
+        <button
+          type="button"
+          aria-label={`次の${markLabel}へ`}
+          disabled={!marks.length}
+          onClick={() => jump(1)}
+          className={DARK_BUTTON}
+        >
+          <SkipForward aria-hidden className="size-5" />
+        </button>
+        <label className="ml-auto flex items-center gap-1.5 text-[13px] text-paper/80">
+          速さ
+          <select
+            value={speed}
+            onChange={(e) => clock.setSpeed(Number(e.target.value))}
+            className="h-10 rounded-[8px] border border-paper/30 bg-ink px-1.5 text-[15px] text-paper num focus-visible:outline-level"
+          >
+            {[2, 1, 0.5, 0.25, 0.1].map((v) => (
+              <option key={v} value={v}>
+                {v}×
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
     </div>
   );
 }
 
 /** 今の時刻の値 */
-/** 今の時刻の、筋肉ごとの推定の要求度と、伸びながら / 縮みながら */
-function DemandNow({
-  clock,
-  ts,
-  load,
-}: {
-  clock: Clock;
-  ts: number[];
-  load: NonNullable<PreparedMotion["load"]>;
-}) {
-  const t = useClockValue(clock, (c) => c.get());
-  const k = indexAt(ts, t);
-  return (
-    <div className="mt-2 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
-      <p className="text-sm font-medium text-ink-2">推定の要求度（今の時刻）</p>
-      <ul className="mt-1.5 space-y-1.5">
-        {(
-          Object.entries(MUSCLE_JOINT) as [
-            MuscleKey,
-            keyof typeof load.demand,
-          ][]
-        ).map(([m, j]) => {
-          const v = load.demand[j][k] ?? 0;
-          return (
-            <li key={m} className="text-sm">
-              <span className="flex items-baseline justify-between gap-2">
-                <span>{MUSCLE_LABELS[m]}</span>
-                <span className="shrink-0 font-bold num">{fmtNum(v, 2)}</span>
-              </span>
-              <span className="mt-0.5 flex items-center gap-2">
-                <span
-                  className="h-2 flex-1 overflow-hidden rounded-full bg-sunken"
-                  aria-hidden
-                >
-                  <span
-                    className="block h-full rounded-full"
-                    style={{
-                      width: `${Math.round(v * 100)}%`,
-                      background: "#E9B85E",
-                    }}
-                  />
-                </span>
-                <span className="shrink-0 text-xs text-ink-3">
-                  {PHASE_LABELS[load.phase[j][k] ?? "isometric"]}
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="mt-2 text-xs text-ink-3">
-        運動の動きと、条件付きのモデル（体の部分の重さ・床からの力の仮定）から求めた、筋肉にかかる力の要求の目安（0〜1）です。筋電図などで測った値ではありません。太ももの裏とお尻は、どちらも股関節を伸ばす筋肉として同じ値にしています。
-      </p>
-    </div>
-  );
-}
-
-/** エルゴ・自転車の、今の時刻の推定の要求度 */
-function DemandBars({
-  clock,
-  ts,
-  demand,
-}: {
-  clock: Clock;
-  ts: number[];
-  demand: DemandSeries;
-}) {
-  const t = useClockValue(clock, (c) => c.get());
-  const k = indexAt(ts, t);
-  const rows = (Object.keys(demand.values) as MuscleKey[]).filter((m) =>
-    demand.values[m]?.some((v) => v > 0),
-  );
-  return (
-    <div className="mt-2 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
-      <p className="text-sm font-medium text-ink-2">
-        推定の要求度（今の時刻{demand.far ? "。カメラ側の脚" : ""}）
-      </p>
-      <ul className="mt-1.5 space-y-1.5">
-        {rows.map((m) => {
-          const v = demand.values[m]?.[k] ?? 0;
-          return (
-            <li key={m} className="text-sm">
-              <span className="flex items-baseline justify-between gap-2">
-                <span>{MUSCLE_LABELS[m]}</span>
-                <span className="shrink-0 font-bold num">{fmtNum(v, 2)}</span>
-              </span>
-              <span
-                className="mt-0.5 block h-2 overflow-hidden rounded-full bg-sunken"
-                aria-hidden
-              >
-                <span
-                  className="block h-full rounded-full"
-                  style={{
-                    width: `${Math.round(v * 100)}%`,
-                    background: "#E9B85E",
-                  }}
-                />
-              </span>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="mt-2 text-xs text-ink-3">
-        それぞれの筋肉について、この記録の中でいちばん大きいところを 1
-        とした割合です。筋肉どうしの強さは比べられません。力を測っていないので、論文の標準的な力の出方を仮定した推定です。
-      </p>
-    </div>
-  );
-}
-
 function NowTable({
   clock,
   ts,
@@ -661,21 +753,123 @@ function NowTable({
   const k = indexAt(ts, t);
   const defs = PROFILES[prep.kind].series;
   return (
-    <dl
-      className="mt-2 grid gap-1 rounded-[var(--radius-panel)] bg-surface p-2 text-center shadow-lift"
-      style={{
-        gridTemplateColumns: `repeat(${Math.min(defs.length, 4)}, minmax(0, 1fr))`,
-      }}
-    >
+    <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
       {defs.map((d) => (
         <div key={d.key}>
-          <dt className="text-xs text-ink-3">{d.short}</dt>
-          <dd className="text-[15px] font-bold num">
+          <dt className="text-sm text-ink-3">{d.short}</dt>
+          <dd className="text-[20px] font-bold leading-tight num">
             {fmtNum(prep.series[d.key][k], d.digits)}
-            {d.unit}
+            <span className="ml-0.5 text-sm font-normal text-ink-3">
+              {d.unit}
+            </span>
           </dd>
         </div>
       ))}
     </dl>
+  );
+}
+
+/** 筋肉の名前の短い形（「太ももの前（大腿四頭筋）」→「太ももの前」） */
+const shortMuscle = (m: MuscleKey) => MUSCLE_LABELS[m].split("（")[0];
+
+/** 今の時刻の、筋肉ごとの負荷（推定）。棒と、0〜100 の数字 */
+function MuscleLoad({
+  clock,
+  ts,
+  prep,
+  demand,
+  sideOk,
+}: {
+  clock: Clock;
+  ts: number[];
+  prep: PreparedMotion;
+  /** エルゴ・自転車の推定（なければ、スクワットの推定か、出せない） */
+  demand: DemandSeries | null;
+  sideOk: boolean;
+}) {
+  const t = useClockValue(clock, (c) => c.get());
+  const k = indexAt(ts, t);
+  const profile = PROFILES[prep.kind];
+  const load = sideOk ? prep.load : undefined;
+  const rows: { m: MuscleKey; v: number; phase?: string }[] = demand
+    ? (Object.keys(demand.values) as MuscleKey[])
+        .filter((m) => demand.values[m]?.some((v) => v > 0))
+        .map((m) => ({ m, v: demand.values[m]?.[k] ?? 0 }))
+    : load
+      ? (
+          Object.entries(MUSCLE_JOINT) as [
+            MuscleKey,
+            keyof typeof load.demand,
+          ][]
+        ).map(([m, j]) => ({
+          m,
+          v: load.demand[j][k] ?? 0,
+          phase: PHASE_LABELS[load.phase[j][k] ?? "isometric"],
+        }))
+      : [];
+  if (!rows.length)
+    return (
+      <p className="text-[15px] text-ink-2">
+        {!sideOk
+          ? "真横から撮れていないので、負荷は出せません。"
+          : profile.frontal
+            ? "正面や後ろからの動画では、負荷は出せません。"
+            : "この記録では、負荷は出せません。"}
+        「筋肉の色」を入れると、{profile.label}
+        でよく使う筋肉の場所に色がつきます（
+        {profile.muscles.map(shortMuscle).join("・")}）。
+      </p>
+    );
+  return (
+    <>
+      <ul className="space-y-2.5">
+        {rows.map(({ m, v, phase }) => (
+          <li
+            key={m}
+            className="grid grid-cols-[minmax(0,8.5rem)_1fr_2.25rem] items-center gap-3 text-[15px]"
+          >
+            <span>
+              {shortMuscle(m)}
+              {phase && (
+                <span className="block text-xs text-ink-3">{phase}</span>
+              )}
+            </span>
+            <span className="h-1.5 bg-sunken" aria-hidden>
+              <span
+                className="block h-full bg-load"
+                style={{ width: `${Math.round(v * 100)}%` }}
+              />
+            </span>
+            <span className="text-right font-bold num">
+              {Math.round(v * 100)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {demand ? (
+        <>
+          <p className="mt-3 text-sm text-ink-3">
+            色と棒は推定です。
+            {prep.kind === "erg" ? "ハンドルを引く力" : "ペダルを踏む力"}
+            は測れないので、論文にある標準的な力の出方を当てはめ、関節の位置から求めました。数字は、その筋肉がこの記録でいちばん強く働いたところを
+            100 とした割合です。筋肉どうしは比べられません。
+            {demand.far && "棒はカメラ側の脚です。"}
+          </p>
+          <Details summary="もとにした論文">
+            <ul className="list-disc space-y-0.5 pl-5 text-sm">
+              {DEMAND_SOURCES[prep.kind === "erg" ? "erg" : "bike"].map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+          </Details>
+        </>
+      ) : (
+        <p className="mt-3 text-sm text-ink-3">
+          色と棒は推定で、数字は 0〜100
+          の目安です。体の部分ごとの重さの割合（Winter
+          2009）と、床からの力の仮定から求めました。筋電図で測った値ではありません。太ももの裏とお尻は同じ値です。
+        </p>
+      )}
+    </>
   );
 }

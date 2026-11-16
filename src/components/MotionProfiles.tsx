@@ -23,7 +23,7 @@ function linePath(xs: number[], ys: number[], x: (v: number) => number, y: (v: n
   return ys.map((v, i) => (Number.isFinite(v) ? `${i && Number.isFinite(ys[i - 1]) ? 'L' : 'M'}${x(xs[i]).toFixed(1)},${y(v).toFixed(1)}` : '')).join('')
 }
 
-export function SequenceChart({ prep, cycles }: { prep: PreparedMotion; cycles: MotionCycle[] }) {
+export function SequenceChart({ prep, cycles, flat }: { prep: PreparedMotion; cycles: MotionCycle[]; flat?: boolean }) {
   const prof = useMemo(() => strokeProfile(prep, cycles), [prep, cycles])
   if (!prof) return null
   const xs = prof.curves.leg.map((_, k) => k)
@@ -38,7 +38,7 @@ export function SequenceChart({ prep, cycles }: { prep: PreparedMotion; cycles: 
     return { part, at, v: c[at] }
   })
   return (
-    <figure className="rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift'}>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`1 本の中の、脚・上体・腕の動く速さ。速さがいちばん大きい時刻は、${peaks.map((p) => `${SEQ_STYLE[p.part].short} ${p.at}%`).join('、')}`}>
         <rect x={PAD.l} y={PAD.t} width={x(end) - PAD.l} height={plotH} fill="var(--color-measure-soft)" />
         {[0, 0.5, 1].map((v) => (
@@ -83,14 +83,14 @@ export function SequenceChart({ prep, cycles }: { prep: PreparedMotion; cycles: 
           </li>
         ))}
       </ul>
-      <figcaption className="mt-2 text-xs text-ink-3">
-        横軸は 1 本（キャッチから次のキャッチ）を 0〜100% にそろえたもので、色の帯がドライブです。それぞれの速さは、その本の中の最大を 1 として {prof.strokes} 本を平均しました。右の % は、平均の曲線でいちばん速いところがドライブのどこにあるかです（下の「平均」の値は 1 本ごとに求めて平均したもので、少し違うことがあります）。順番や間隔の良し悪しは判定しません。
+      <figcaption className="mt-2 text-sm text-ink-3">
+        脚・上体・腕が、ドライブのどこでいちばん速く動いたかです。横軸は 1 本を 0〜100% にそろえたもので、色の帯がドライブです。{prof.strokes} 本の平均で、順番の良し悪しは判定しません。
       </figcaption>
     </figure>
   )
 }
 
-export function CrankChart({ prep, cycles }: { prep: PreparedMotion; cycles: MotionCycle[] }) {
+export function CrankChart({ prep, cycles, flat }: { prep: PreparedMotion; cycles: MotionCycle[]; flat?: boolean }) {
   const options = PROFILES.bike.series.filter((d) => ['knee', 'hip', 'ankle'].includes(d.key))
   const [key, setKey] = useState('knee')
   const crank = prep.crank
@@ -113,7 +113,7 @@ export function CrankChart({ prep, cycles }: { prep: PreparedMotion; cycles: Mot
   const ticks: number[] = []
   for (let v = lo; v <= hi; v += step) ticks.push(v)
   return (
-    <figure className="rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift'}>
       <Segmented legend="値" value={key} onChange={setKey} columns={options.length} options={options.map((d) => ({ value: d.key, label: d.short }))} />
       <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full" role="img" aria-label={`クランクの角度ごとの${def.label}の平均と揺れ`}>
         {ticks.map((v) => (
@@ -142,9 +142,10 @@ export function CrankChart({ prep, cycles }: { prep: PreparedMotion; cycles: Mot
         <path d={area.join('')} fill="var(--color-measure)" fillOpacity="0.18" />
         <path d={line} fill="none" stroke="var(--color-measure)" strokeWidth="2" />
       </svg>
-      <figcaption className="mt-1 text-xs text-ink-3">
-        {def.label}（{def.unit}）を、クランクの角度 10° ごとに平均した線と、回転ごとの揺れ（± 標準偏差の帯）です。クランクの角度は、腰から見た足首の点の軌跡に当てた円（円からのずれ {fmtNum(crank.roundness * 100, 0)}%）のまわりの向きです。{crank.aspect < 0.85 && `軌跡が楕円に見えた（縦横比 ${fmtNum(crank.aspect, 2)}。斜めから撮ったため）ので、縦横をそろえてから当てています。`}足首はペダルの軸から少し離れているため、クランクそのものの角度とは少しずれます。
-        {crank.reversed && '顔の向きから見ると後ろ向きに回っていたため、回る向きに角度を数えています（90° が後ろになります）。'}
+      <figcaption className="mt-1 text-sm text-ink-3">
+        {def.label}を、クランクの角度 10° ごとに平均した線です。帯は回転ごとの揺れです。角度は、足首の点の軌跡に当てた円から求めました（円からのずれ {fmtNum(crank.roundness * 100, 0)}%）。足首はペダルの軸から少し離れているので、クランクそのものの角度とは少しずれます。
+        {crank.aspect < 0.85 && `斜めから撮ったため軌跡が楕円でした（縦横比 ${fmtNum(crank.aspect, 2)}）。縦横をそろえてから当てています。`}
+        {crank.reversed && '後ろ向きに回っていたので、回る向きに角度を数えています（90° が後ろ）。'}
       </figcaption>
     </figure>
   )

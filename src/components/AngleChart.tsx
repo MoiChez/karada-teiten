@@ -24,6 +24,7 @@ export function AngleChart({
   label,
   band,
   reference,
+  flat,
 }: {
   ts: number[]
   /** 出せないコマは NaN（線を切る） */
@@ -38,6 +39,8 @@ export function AngleChart({
   band?: { lo: number[]; hi: number[] }
   /** 出典のある目安の範囲 */
   reference?: { lo: number; hi: number; label: string }
+  /** 箱と影を付けない（開閉する項目の中に置くとき） */
+  flat?: boolean
 }) {
   const svg = useRef<SVGSVGElement>(null)
   const geo = useMemo(() => {
@@ -90,7 +93,7 @@ export function AngleChart({
   }
 
   return (
-    <figure className="rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift'}>
       <figcaption className="flex items-baseline justify-between gap-2 text-sm text-ink-2">
         <span className="font-medium">{label}</span>
         <NowValue ts={ts} values={values} clock={clock} unit={unit} digits={digits} />
@@ -143,7 +146,7 @@ export function AngleChart({
             </text>
           </g>
         )}
-        {geo.area && <path d={geo.area} fill="#E9B85E" fillOpacity="0.28" stroke="none" />}
+        {geo.area && <path d={geo.area} fill="var(--color-load)" fillOpacity="0.28" stroke="none" />}
         <path d={geo.path} fill="none" stroke="var(--color-measure)" strokeWidth="1.8" strokeLinejoin="round" />
         {cycles.map((r, i) => {
           if (r.mark === undefined) return null

@@ -1,7 +1,7 @@
 // 共通 UI 部品
-import { forwardRef, useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { AlertTriangle, ChevronLeft, Info, Loader2, X } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronLeft, Info, Loader2, X } from 'lucide-react'
 
 export function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(' ')
@@ -119,6 +119,7 @@ export function Screen({
   footer,
   children,
   wide,
+  staticHeader,
 }: {
   title: string
   back?: string | true
@@ -126,6 +127,8 @@ export function Screen({
   footer?: ReactNode
   children: ReactNode
   wide?: boolean
+  /** 見出しを画面の上に留めない（動画を上に留める画面で、動画に場所を空ける） */
+  staticHeader?: boolean
 }) {
   const navigate = useNavigate()
   const h1 = useRef<HTMLHeadingElement>(null)
@@ -136,7 +139,7 @@ export function Screen({
   }, [title])
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[560px] flex-col">
-      <header className="safe-top sticky top-0 z-20 bg-paper/95 backdrop-blur-sm">
+      <header className={cx('safe-top bg-paper', !staticHeader && 'sticky top-0 z-20 bg-paper/95 backdrop-blur-sm')}>
         <div className="flex min-h-14 items-center gap-1 px-2">
           {back ? (
             <IconButton label="戻る" onClick={() => (back === true ? navigate(-1) : navigate(back))}>
@@ -479,6 +482,41 @@ export function ProgressSteps({ total, current, label }: { total: number; curren
         {current} / {total}
       </p>
     </div>
+  )
+}
+
+/**
+ * 開いたり閉じたりする項目。初めは閉じていて、見出しの行を押すと開く。箱や影は付けず、細い線で区切る。
+ * 中身は開いたときに作る（keepMounted なら、閉じても残す。書き出しの途中で閉じても止まらないように）
+ */
+export function Fold({ title, hint, children, keepMounted }: { title: ReactNode; hint?: ReactNode; children: ReactNode; keepMounted?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const [seen, setSeen] = useState(false)
+  const id = useId()
+  return (
+    <section className="border-t border-line">
+      <h2>
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={id}
+          onClick={() => {
+            setOpen(!open)
+            setSeen(true)
+          }}
+          className="flex min-h-14 w-full items-center gap-3 py-2 text-left"
+        >
+          <span className="flex-1 text-[16px] font-bold">{title}</span>
+          {hint && <span className="shrink-0 text-sm text-ink-3 num">{hint}</span>}
+          <ChevronDown aria-hidden className={cx('size-5 shrink-0 text-ink-3 transition-transform duration-150', open && 'rotate-180')} />
+        </button>
+      </h2>
+      {(open || (keepMounted && seen)) && (
+        <div id={id} hidden={!open} className="pb-5">
+          {children}
+        </div>
+      )}
+    </section>
   )
 }
 

@@ -13,7 +13,7 @@ import { PROFILES, type MotionKind, type MuscleKey } from '../domain/motion'
 import { poseAtTime, type MotionEquipment } from '../domain/motionPose'
 import { indexAt, type Clock } from '../components/motionClock'
 import { mannequinKindOf, muscleShader, paintMuscles, poseMannequin, type MannequinKind } from './mannequin'
-import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, MUSCLE_SKIN, hasWebGL, loadBodySkin, mannequinUrl, saveBodySkin, type BodySkin } from './common'
+import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, MUSCLE_SKIN, hasWebGL, loadBodySkin, mannequinUrl, type BodySkin } from './common'
 import { HIGHLIGHT_COLOR } from './StandingBody'
 import { Notice, cx } from '../components/ui'
 
@@ -312,6 +312,8 @@ export default function MotionBody3D({
   className,
   onCanvas,
   camera,
+  flat,
+  skin: skinProp,
 }: {
   poses: { t: number; pose: Pose3D }[]
   clock: Clock
@@ -330,6 +332,10 @@ export default function MotionBody3D({
   onCanvas?: (c: HTMLCanvasElement) => void
   /** 正面・後ろから撮ったときの向き（最初の視点を、撮った動画と同じ向きにする） */
   camera?: 'front' | 'rear'
+  /** 角を丸めない（動画と再生の操作にぴったり付けて置くとき） */
+  flat?: boolean
+  /** 体の見た目。渡さなければ、端末に覚えた見た目 */
+  skin?: BodySkin
 }) {
   const body = mannequinKindOf(sex)
   const facingView = camera === 'rear' ? 'back' : 'front'
@@ -337,7 +343,8 @@ export default function MotionBody3D({
   // 同じ視点のボタンをもう一度押したときも、指で回した視点を元へ戻す
   const [resets, setResets] = useState(0)
   const [failed, setFailed] = useState(false)
-  const [skin, setSkin] = useState<BodySkin>(loadBodySkin)
+  const [stored] = useState<BodySkin>(loadBodySkin)
+  const skin = skinProp ?? stored
   const controls = useRef<OrbitControlsImpl | null>(null)
   const webgl = useMemo(hasWebGL, [])
   const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -350,7 +357,7 @@ export default function MotionBody3D({
   if (failed) return <Notice tone="info">体のモデルを読み込めませんでした。通信できる状態で開き直すと表示されます。</Notice>
 
   return (
-    <div className={cx('relative flex h-full flex-col overflow-hidden rounded-[var(--radius-panel)]', className)} style={{ background: STAGE }}>
+    <div className={cx('relative flex h-full flex-col overflow-hidden', !flat && 'rounded-[var(--radius-panel)]', className)} style={{ background: STAGE }}>
       <div className="relative min-h-0 flex-1" style={{ touchAction: 'none' }}>
         <Canvas
           camera={{ position: [...pos], fov: 35, near: 0.05, far: 50 }}
@@ -376,20 +383,9 @@ export default function MotionBody3D({
           </GizmoHelper>
         </Canvas>
         <LoadingNote />
-        <button
-          type="button"
-          aria-pressed={skin === 'muscle'}
-          onClick={() => {
-            const next = skin === 'muscle' ? 'plain' : 'muscle'
-            setSkin(next)
-            saveBodySkin(next)
-          }}
-          className={cx('absolute bottom-2 left-2 min-h-10 rounded-[var(--radius-control)] border px-3 text-sm', skin === 'muscle' ? 'border-paper bg-paper text-ink' : 'border-white/25 bg-black/30 text-paper hover:bg-white/10')}
-        >
-          筋肉の体
-        </button>
       </div>
-      <div className="grid grid-cols-5 gap-1 p-1.5" role="group" aria-label="3D の視点">
+      {/* 視点の切り替え。3D の下端に重ねて、3D の高さを削らない */}
+      <div className="absolute inset-x-0 bottom-0 flex bg-[rgb(16_40_47/0.72)]" role="group" aria-label="3D の視点">
         {(camera ? ([facingView, 'oblique', 'side', facingView === 'front' ? 'back' : 'front', 'top'] as const) : (['side', 'oblique', 'front', 'back', 'top'] as const)).map((k) => (
           <button
             key={k}
@@ -399,7 +395,7 @@ export default function MotionBody3D({
               setView(k)
               setResets((n) => n + 1)
             }}
-            className={cx('min-h-10 rounded-[var(--radius-control)] border text-sm', view === k ? 'border-paper bg-paper text-ink' : 'border-white/25 text-paper hover:bg-white/10')}
+            className={cx('min-h-9 flex-1 border-t-2 text-[13px]', view === k ? 'border-level font-bold text-paper' : 'border-transparent text-paper/65 hover:text-paper')}
           >
             {VIEW_LABELS[k]}
           </button>

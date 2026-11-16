@@ -1,11 +1,9 @@
-// 動きの一覧と結果。撮った動画と 3D の体を並べ、同じ時刻で再生する。下に角度のグラフ、1 回ごとの値、平均、書き出し
-import { DEMAND_SOURCES } from '../domain/motionDemand'
-import { useEffect, useMemo, useRef, useState } from 'react'
+// 動きの一覧と結果。結果は、上に動画・3D・再生の操作（画面の上に留まる）、下に開いたり閉じたりする項目（数値・グラフ・書き出しなど）
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { ChevronRight, Columns2, Download, PencilRuler, Redo2, Trash2, Undo2, Video } from 'lucide-react'
 import {
   MOTION_KIND_LIST,
-  MUSCLE_LABELS,
   PROFILES,
   analyzeMotion,
   compareMotion,
@@ -34,7 +32,7 @@ import { CrankChart, SequenceChart } from '../components/MotionProfiles'
 import type { ConstraintNote } from '../domain/motionConstraints'
 import { BODY_PRIOR, type BodyParams, type ResolvedBody } from '../domain/motionLoad'
 import { download } from '../components/download'
-import { Badge, Button, ButtonLink, Details, Dialog, EmptyState, IconButton, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
+import { Button, ButtonLink, Details, Dialog, EmptyState, Fold, IconButton, Notice, Screen, SectionTitle, cx } from '../components/ui'
 
 export function fmtMotionValue(def: Pick<MetricDef, 'unit' | 'digits'>, v: number | null | undefined, withUnit = true) {
   if (v === null || v === undefined) return '—'
@@ -148,14 +146,11 @@ export function MotionResult() {
   return <MotionResultBody key={rec.id} rec={rec} prev={prev} video={video} sex={profile?.sex} />
 }
 
-/** 器具の前提の説明（使ったとき、使わなかったとき） */
+/** 器具に合わせて点を置き直したか（置き直したとき、しなかったとき） */
 const CONSTRAINT_TEXT: Record<ConstraintNote['key'], [string, string]> = {
-  footplate: ['足首はフットプレートに留まっている前提で、中央の位置に置きました。', '足首の点が大きく動いていたため、フットプレートに留める前提は使っていません（スマホを固定して撮ると使えます）。'],
-  rail: ['腰はレールに沿って一直線に動く前提で、線の上に乗せました。', '腰の点が一直線に動いていなかったため、レールの前提は使っていません。'],
-  knee: [
-    '膝は、脚がよく伸びたコマで測った太もも・すねの長さから置き直しました（体が縮んだところで、推定した膝の点がずれやすいため）。',
-    '膝の位置は置き直していません。',
-  ],
+  footplate: ['足首は、フットプレートの上で動かないものとして置きました。', '足首の点が大きく動いたので、フットプレートに固定していません（スマホを固定して撮ると使えます）。'],
+  rail: ['腰は、レールに沿ってまっすぐ動くものとして置きました。', '腰の点がまっすぐ動かなかったので、レールには合わせていません。'],
+  knee: ['膝は、太ももとすねの長さから置き直しました。脚を畳んだところで、推定の膝がずれやすいためです。', '膝の位置は置き直していません。'],
 }
 
 function fileStem(rec: MotionRecord) {
@@ -175,7 +170,6 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const navigate = useNavigate()
   const toast = useToast((t) => t.show)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [muscles, setMuscles] = useState(false)
   // 点の補正（この画面を開いている間の取り消し・やり直しを持つ。直すたびに保存する）
   const [work, setWork] = useState(() => ({ edits: saved.edits ?? [], body: saved.body, analysis: saved.analysis }))
   const [past, setPast] = useState<MotionEdit[][]>([])
@@ -255,49 +249,109 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
     navigate('/motion', { replace: true })
   }
 
-  return (
-    <Screen
-      title={profile.label}
-      back="/motion"
-      action={
-        <IconButton label="この記録を削除" onClick={() => setConfirmDelete(true)}>
-          <Trash2 aria-hidden className="size-5" />
-        </IconButton>
-      }
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm text-ink-3 num">{fmtDate(rec.createdAt, true)}</span>
-        <Badge tone="measure">
-          {a.cycles.length} {profile.unitLabel}
-        </Badge>
-        <Badge>{rec.source === 'camera' ? 'アプリで撮影' : '選んだ動画'}</Badge>
-        <Badge>{rec.videoSaved ? '動画を保存' : '動画は未保存'}</Badge>
-        {rec.edits?.length ? <Badge tone="level">点を直した記録</Badge> : null}
-      </div>
-
-      {a.warnings.length > 0 && (
-        <div className="mt-3">
-          <Notice tone="warn" title="撮影の注意">
-            <ul className="list-disc space-y-1 pl-4">
-              {a.warnings.map((w) => (
-                <li key={w}>{w}</li>
+  // 再生の項目（今の値・グラフ・筋肉の負荷）のあとに並べる項目。どれも初めは閉じている
+  const folds = (
+    <>
+      <Fold title={`1 ${profile.unitLabel}ごとの値`} hint={`${a.cycles.length} ${profile.unitLabel}`}>
+        <div className="-mx-4 overflow-x-auto px-4">
+          <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + shown.length * 64}px` }}>
+            <thead className="text-sm text-ink-3">
+              <tr className="border-b border-ink/30">
+                <th className="py-2 pr-3 text-left font-medium">{profile.unitLabel}</th>
+                {shown.map((d) => (
+                  <th key={d.key} className="px-2 py-2 font-medium">
+                    {d.short}
+                    <span className="block text-xs font-normal">{d.unit}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {a.cycles.map((c, i) => (
+                <tr key={i} className="border-b border-line last:border-0">
+                  <td className="py-2 pr-3 text-left">{i + 1}</td>
+                  {shown.map((d) => (
+                    <td key={d.key} className={cx('px-2 py-2', offView(d) && 'text-ink-3')}>
+                      {fmtMotionValue(d, c.values[d.key], false)}
+                      <CycleBand def={d} c={c} />
+                    </td>
+                  ))}
+                </tr>
               ))}
-            </ul>
-          </Notice>
+            </tbody>
+          </table>
         </div>
+        {a.sideView === false && <p className="mt-2 text-sm text-ink-3">灰色の値は、真横から撮れていないので当てになりません。</p>}
+      </Fold>
+
+      <Fold title="平均" hint={prev ? '前回との差つき' : undefined}>
+        {prev ? (
+          <ButtonLink to={`/motion/compare?a=${prev.id}&b=${rec.id}`} variant="secondary" block className="mb-1" icon={<Columns2 aria-hidden className="size-5" />}>
+            前回と並べて比べる
+          </ButtonLink>
+        ) : (
+          <p className="text-sm text-ink-3">2 回目の記録から、前回との差が出ます。</p>
+        )}
+        <ul className="divide-y divide-line">
+          {shown.map((def) => {
+            const m = motionMetric(a, def.key)
+            const band = def.band ? motionBandText(def, motionMetric(a, def.band[0])?.value, motionMetric(a, def.band[1])?.value) : null
+            const ch = changes.find((c) => c.key === def.key)
+            const pm = prev ? motionMetric(prev.analysis, def.key) : undefined
+            return (
+              <li key={def.key} className="py-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h3 className="text-[15px] font-medium">{def.label}</h3>
+                  <span className={cx('shrink-0 text-[20px] font-bold num', offView(def) && 'text-ink-3')}>{fmtMotionMetric(def, m)}</span>
+                </div>
+                <div className="text-right text-sm text-ink-3 num">
+                  {offView(def) && <p>真横から撮れていないので当てになりません</p>}
+                  {band && <p>推定。仮定を動かすと {band}</p>}
+                  {m?.status === 'ok' && m.sd !== null && (
+                    <p>
+                      {profile.unitLabel}ごとの揺れ ±{fmtMotionValue({ unit: def.unit, digits: def.digits + 1 }, m.sd)}・{m.reps} {profile.unitLabel}
+                    </p>
+                  )}
+                  {prev && pm && (
+                    <p>
+                      前回 {fmtMotionMetric(def, pm)}
+                      {ch && (
+                        <>
+                          {' '}→ 差 {motionDiffText(def, ch.diff)}・<span className={ch.noticeable ? 'font-bold text-attention' : undefined}>{ch.noticeable ? '差あり' : 'ばらつきの範囲内'}</span>
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
+                {def.reference && <p className="mt-1.5 text-sm text-ink-2">{def.reference}</p>}
+                <Details summary="この値について">{def.doc}</Details>
+              </li>
+            )
+          })}
+        </ul>
+      </Fold>
+
+      {rec.kind === 'erg' && built && built.cycles.length > 0 && (
+        <Fold title="脚・上体・腕の順番">
+          <SequenceChart prep={built.prep} cycles={built.cycles} flat />
+        </Fold>
+      )}
+      {rec.kind === 'bike' && built && built.cycles.length > 0 && (
+        <Fold title="クランクの角度ごと">
+          <CrankChart prep={built.prep} cycles={built.cycles} flat />
+        </Fold>
       )}
 
-      {built && poses.length > 1 ? (
-        <PlayerWithClock rec={rec} built={built} poses={poses} video={video} sex={sex} muscles={muscles} editor={editing && video ? { spread, onEdit: (added) => apply(mergeEdits(edits, added)) } : undefined} />
-      ) : (
-        <div className="mt-3">
-          <Notice tone="info">再生に使える体の点がありません。</Notice>
-        </div>
+      {profile.load && (
+        <Fold title="身長・体重・重さ" hint={a.body && (a.body.assumed.height || a.body.assumed.weight) ? '仮定の値' : undefined}>
+          <BodyPanel body={work.body} used={a.body} onApply={changeBody} />
+        </Fold>
       )}
-      <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+
+      <Fold title="点を直す" hint={editing ? '直しています' : edits.length ? `${edits.length} か所` : undefined}>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant={editing ? 'primary' : 'secondary'} disabled={!video} aria-pressed={editing} onClick={() => setEditing(!editing)} icon={<PencilRuler aria-hidden className="size-5" />}>
-            {editing ? '点を直すのを終える' : '点を直す'}
+            {editing ? '直すのを終える' : '点を直す'}
           </Button>
           <IconButton label="取り消す" disabled={!past.length} onClick={undo}>
             <Undo2 aria-hidden className="size-5" />
@@ -307,217 +361,138 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
           </IconButton>
           {edits.length > 0 && (
             <Button variant="quiet" onClick={() => apply([])}>
-              直した点をすべて戻す
+              すべて戻す
             </Button>
           )}
         </div>
         {!video ? (
-          <p className="mt-2 text-sm text-ink-3">点を直すには動画が必要です。動画を残した記録か、撮った直後の画面で使えます。</p>
+          <p className="mt-2 text-sm text-ink-3">動画を残した記録でだけ直せます。</p>
         ) : editing ? (
           <>
-            <p className="mt-2 text-sm text-ink-2">
-              動画を止めて、ずれている点をドラッグします（矢印キーでも動かせます）。コマ送りで前後のコマも直せます。直すたびに角度と区切りを計算し直して保存します。推定した点は書き換えずに残します。
-            </p>
-            <div className="mt-2">
-              <Segmented
-                legend="直す範囲"
-                value={spread}
-                onChange={setSpread}
-                columns={2}
-                options={[
-                  { value: 5, label: '前後 5 コマにもなじませる' },
-                  { value: 0, label: 'このコマだけ' },
-                ]}
-              />
-            </div>
-            <p className="text-sm text-ink-3">直せるのは画面の上の位置だけで、奥行きは直せません。黄色い点が直した点です（{edits.length} か所）。</p>
+            <p className="mt-2 text-[15px] text-ink-2">動画を止めて、ずれた点をドラッグします。直すたびに計算し直して保存します。</p>
+            <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
+              <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={spread === 5} onChange={(e) => setSpread(e.target.checked ? 5 : 0)} />
+              前後 5 コマにもなじませる
+            </label>
+            <p className="text-sm text-ink-3">直せるのは画面の上の位置だけです。黄色が直した点（{edits.length} か所）。</p>
           </>
         ) : (
-          <p className="mt-2 text-sm text-ink-3">直さなくても使えます。点が体から大きくずれているコマがあるときだけ、直してください。</p>
+          <p className="mt-2 text-sm text-ink-3">点が体から大きくずれたコマだけ、直してください。</p>
         )}
-      </div>
-      <label className="mt-1 flex min-h-11 items-center gap-2 text-[15px]">
-        <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={muscles} onChange={(e) => setMuscles(e.target.checked)} />
-        {(profile.load || profile.demand) && a.sideView !== false ? '3D の体に、推定した筋肉の要求度を色の濃さで示す' : `3D の体に、${profile.label}で一般に主に使われる筋肉の場所を色で示す`}
-      </label>
-      {muscles && profile.load && a.sideView !== false && (
-        <p className="text-sm text-ink-3">
-          色が濃いほど、その時刻にその筋肉に求められる力が大きいという推定です。体の部分の重さ（Winter 2009）と床からの力の仮定から求めた関節の負担と、関節の曲がりから出した目安で、筋電図などで測った値ではありません。
-        </p>
-      )}
-      {muscles && profile.demand && a.sideView !== false && (
-        <div className="text-sm text-ink-3">
-          <p>
-            色が濃いほど、その時刻にその筋肉に求められる力が大きいという推定です。{profile.demand === 'erg' ? 'ハンドルを引く力' : 'ペダルを踏む力'}は測れないので、論文にある標準的な力の出方を仮定し、あなたの関節の位置から関節ごとの負担を求めました。色を出す時期は、論文の筋電図（どの局面でその筋肉が働くか）に合わせています。
-          </p>
-          <p className="mt-1">
-            あなたの筋電図や力を測った値ではありません。濃さは筋肉ごとに、この記録の中でいちばん大きいところを基準にした割合で、力の大きさや、筋肉どうしの強さの違いは表しません。{profile.demand === 'bike' ? 'クランクの角度が求められなかった記録では、場所だけを色づけます。' : ''}
-          </p>
-          <p className="mt-1">もとにした論文:</p>
-          <ul className="list-disc space-y-0.5 pl-5">
-            {DEMAND_SOURCES[profile.demand].map((s) => (
-              <li key={s}>{s}</li>
+      </Fold>
+    </>
+  )
+
+  const exportButtons = (
+    <>
+      <Button
+        variant="secondary"
+        block
+        icon={<Download aria-hidden className="size-5" />}
+        disabled={!built}
+        onClick={() => built && download(`${fileStem(rec)}-frames.csv`, new Blob([motionFramesCsv(rec, built.prep, built.cycles)], { type: 'text/csv' }))}
+      >
+        コマごとの値（CSV）
+      </Button>
+      <Button variant="secondary" block icon={<Download aria-hidden className="size-5" />} onClick={() => download(`${fileStem(rec)}-cycles.csv`, new Blob([motionCyclesCsv(rec)], { type: 'text/csv' }))}>
+        1 {profile.unitLabel}ごとの値（CSV）
+      </Button>
+      <Button variant="secondary" block icon={<Download aria-hidden className="size-5" />} onClick={() => download(`${fileStem(rec)}.json`, new Blob([motionJson(rec)], { type: 'application/json' }))}>
+        記録（JSON・動画なし）
+      </Button>
+    </>
+  )
+
+  // 説明と注意は、ここ 1 か所にまとめる
+  const about = (
+    <Fold title="この表示について">
+      <ul className="list-disc space-y-1.5 pl-5 text-[15px] text-ink-2">
+        <li>3D は標準の体に、動画から推定した関節の動きをのせたものです。{!profile.frontal && '手足と胴の長さは、動画の人に合わせています。'}</li>
+        {profile.frontal ? (
+          <li>
+            {a.view?.view === 'front' ? '正面' : '後ろ'}から撮った動画なので、前後の位置は当てになりません。{a.view?.view === 'front' ? '画面の右' : '画面の左'}を体の左としています。
+          </li>
+        ) : (
+          <li>横から撮った動画なので、体の左右の位置は当てになりません。</li>
+        )}
+        {a.sideView === false && <li>真横から撮れていないので、3D の形と角度は当てになりません。</li>}
+        {rec.kind === 'erg' && <li>シートとレールは、腰と足首の動きから置いた目安です。</li>}
+        {rec.kind === 'bike' && <li>クランク・サドル・ハンドルは、足首・腰・手首の動きから置いた目安です。奥の脚は、手前の脚を半回転ずらした動きです。</li>}
+        <li>角度は、1 台のカメラの映像から求めた見かけの値です。骨の角度ではありません。</li>
+        <li>動きの良し悪しや、正常かどうかは判定していません。自分の過去の記録と比べるための値です。</li>
+        <li>{rec.videoSaved ? '動画は、この端末にだけ保存しています。' : '動画は保存していません。保存しているのは、体の点の動きだけです。'}</li>
+      </ul>
+      <Details summary="撮影の情報">
+        <ul className="space-y-1 text-sm num">
+          <li>
+            推定したコマ {rec.video.frameCount}（1 秒あたり {fmtNum(rec.video.fps, 1)}）・計算に使えたコマ {a.validFrames}
+          </li>
+          <li>
+            顔の向き: 画面の{a.facing === 'left' ? '左' : '右'}・カメラ側の半身: {a.nearSide === 'left' ? '左' : '右'}
+          </li>
+          <li>{rec.video.rollDeg !== undefined ? `端末の傾き ${fmtNum(rec.video.rollDeg, 1)}° を戻して計算` : '端末の傾きは分からないため、戻していません'}</li>
+          <li>
+            映像 {rec.video.width}×{rec.video.height}
+            {rec.video.quarterTurns ? `（${rec.video.quarterTurns * 90}° 回して使用）` : ''}・{rec.modelVersion}
+          </li>
+          <li>{rec.source === 'camera' ? 'アプリで撮影' : '選んだ動画'}</li>
+          {rec.edits?.length ? <li>手で直した点 {rec.edits.length} か所（推定した点は残しています）</li> : null}
+          {a.constraints?.map((c) => (
+            <li key={c.key}>{CONSTRAINT_TEXT[c.key][c.applied ? 0 : 1]}</li>
+          ))}
+        </ul>
+      </Details>
+    </Fold>
+  )
+
+  return (
+    <Screen
+      title={profile.label}
+      back="/motion"
+      staticHeader
+      action={
+        <IconButton label="この記録を削除" onClick={() => setConfirmDelete(true)}>
+          <Trash2 aria-hidden className="size-5" />
+        </IconButton>
+      }
+    >
+      <p className="text-sm text-ink-3 num">
+        {fmtDate(rec.createdAt, true)}・{a.cycles.length} {profile.unitLabel}・{rec.videoSaved ? '動画を保存' : '動画は未保存'}
+        {rec.edits?.length ? '・点を直した記録' : ''}
+      </p>
+
+      {a.warnings.length > 0 && (
+        <div className="mt-2 text-[15px]">
+          <p className="font-bold text-attention">撮影の注意</p>
+          <ul className="list-disc space-y-0.5 pl-5 text-ink-2">
+            {a.warnings.map((w) => (
+              <li key={w}>{w}</li>
             ))}
           </ul>
         </div>
       )}
-      {muscles && !((profile.load || profile.demand) && a.sideView !== false) && (
-        <p className="text-sm text-ink-3">
-          色を付けた場所: {profile.muscles.map((k) => MUSCLE_LABELS[k]).join('・')}。この種目で一般に主に使われる筋肉のある場所の例で、あなたの筋肉の働きや負担を測ったものではありません。真横から撮っていないため、濃さ（要求度）は付けていません。
-        </p>
-      )}
-      <p className="mt-2 text-sm text-ink-3">
-        {profile.frontal
-          ? `3D の体は全員に共通の標準の体で、${a.view?.view === 'front' ? '正面' : '後ろ'}から撮った関節の左右・上下の動きを反映しています。前後の位置は推定モデルの奥行きの推定で、正面・後ろからの映像では外れやすいため参考です。体の左右は、${a.view?.view === 'front' ? '画面の右を体の左' : '画面の左を体の左'}としています。`
-          : '3D の体は標準の体をもとに、横から撮った関節の前後・上下の動きを反映しています（手足と胴の長さと、測れたときは胴の前後の厚みと位置を、動画の人に合わせています）。左右の位置は推定モデルの奥行きの推定で、横からの映像では外れやすいため参考です。'}
-        {a.sideView === false && '真横から撮っていないため、3D の体の形も正しくありません。'}
-        {rec.kind === 'erg' && 'シートとレールは、腰と足首の点の動きから置いた目安の形です。膝・足首・腰は、器具の前提で置き直した位置です（「撮影の情報」に説明があります）。'}
-        {rec.kind === 'bike' && 'クランクの円・サドル・ハンドルは、足首・腰・手首の点の動きから置いた目安の形です。奥側の脚は、カメラ側の脚の半回転ずれた動きにしています。膝は、太もも・すねの長さから置き直した位置です。'}
-        グラフの帯は 1 {profile.unitLabel}ごとの区間です。
-      </p>
-      {rec.kind === 'erg' && built && built.cycles.length > 0 && (
-        <>
-          <SectionTitle sub="ドライブで、脚・上体・腕のそれぞれが、いちばん速く動いた時刻です。">脚・上体・腕が動く順番</SectionTitle>
-          <SequenceChart prep={built.prep} cycles={built.cycles} />
-        </>
-      )}
-      {rec.kind === 'bike' && built && built.cycles.length > 0 && (
-        <>
-          <SectionTitle sub="1 回転の中のクランクの角度ごとに、関節の角度を平均しました。">クランクの角度ごとの曲線</SectionTitle>
-          <CrankChart prep={built.prep} cycles={built.cycles} />
-        </>
-      )}
 
-      {profile.load && <BodyPanel body={work.body} used={a.body} onApply={changeBody} />}
-
-      <SectionTitle sub={`${profile.frontal ? '正面から見た見かけの位置・傾き' : '横から見た見かけの角度・位置'}です。正常範囲とは比べていません。自分の過去の記録と比べるための値です。`}>1 {profile.unitLabel}ごとの値</SectionTitle>
-      <div className="overflow-x-auto rounded-[var(--radius-panel)] bg-surface shadow-lift">
-        <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + shown.length * 64}px` }}>
-          <thead className="text-sm text-ink-3">
-            <tr className="border-b border-line">
-              <th className="px-3 py-2 text-left font-medium">{profile.unitLabel}</th>
-              {shown.map((d) => (
-                <th key={d.key} className="px-2 py-2 font-medium">
-                  {d.short}
-                  <span className="block text-xs font-normal">{d.unit}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {a.cycles.map((c, i) => (
-              <tr key={i} className="border-b border-line last:border-0">
-                <td className="px-3 py-2 text-left">{i + 1}</td>
-                {shown.map((d) => (
-                  <td key={d.key} className={cx('px-2 py-2', offView(d) && 'text-ink-3')}>
-                    {fmtMotionValue(d, c.values[d.key], false)}
-                    <CycleBand def={d} c={c} />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {a.sideView === false && <p className="mt-1 text-sm text-ink-3">灰色の値は、真横から撮っていないため参考になりません。</p>}
-
-      <SectionTitle sub={prev ? `前回（${fmtDate(prev.createdAt)}）との差。${profile.unitLabel}ごとの揺れから見て、差が測定のばらつきを超えるかを示します。` : '2 回目の記録から、前回との差を表示します。'}>
-        平均
-      </SectionTitle>
-      {prev && (
-        <ButtonLink to={`/motion/compare?a=${prev.id}&b=${rec.id}`} variant="secondary" block className="mb-3" icon={<Columns2 aria-hidden className="size-5" />}>
-          前回と並べて比べる
-        </ButtonLink>
-      )}
-      <ul className="space-y-3">
-        {shown.map((def) => {
-          const m = motionMetric(a, def.key)
-          const band = def.band ? motionBandText(def, motionMetric(a, def.band[0])?.value, motionMetric(a, def.band[1])?.value) : null
-          const ch = changes.find((c) => c.key === def.key)
-          const pm = prev ? motionMetric(prev.analysis, def.key) : undefined
-          return (
-            <li key={def.key} className="rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
-              <div className="flex items-baseline justify-between gap-3">
-                <h3 className="font-bold">{def.label}</h3>
-                <span className={cx('shrink-0 text-[22px] font-bold num', offView(def) && 'text-ink-3')}>{fmtMotionMetric(def, m)}</span>
-              </div>
-              {offView(def) && (
-                <div className="mt-1 text-right">
-                  <Badge tone="attention">真横でないため参考になりません</Badge>
-                </div>
-              )}
-              {band && (
-                <p className="mt-0.5 text-right text-sm text-ink-2 num">
-                  <Badge tone="level">条件付きの推定</Badge> 仮定を動かした幅 {band}
-                </p>
-              )}
-              {m?.status === 'ok' && m.sd !== null && (
-                <p className="mt-0.5 text-right text-sm text-ink-3 num">
-                  {profile.unitLabel}ごとの揺れ ±{fmtMotionValue({ unit: def.unit, digits: def.digits + 1 }, m.sd)}・{m.reps} {profile.unitLabel}
-                </p>
-              )}
-              {prev && pm && (
-                <p className="mt-2 text-[15px] text-ink-2 num">
-                  前回 {fmtMotionMetric(def, pm)}
-                  {ch && (
-                    <>
-                      {' '}→ 差 {motionDiffText(def, ch.diff)} <Badge tone={ch.noticeable ? 'attention' : 'neutral'}>{ch.noticeable ? '差が見られる' : 'ばらつきの範囲内'}</Badge>
-                    </>
-                  )}
-                </p>
-              )}
-              {def.reference && <p className="mt-2 rounded-[var(--radius-control)] bg-sunken p-2.5 text-sm text-ink-2">{def.reference}</p>}
-              <Details summary="この値について">{def.doc}</Details>
-            </li>
-          )
-        })}
-      </ul>
-
-      <SectionTitle sub="この端末の中でファイルを作ります。どこにも送りません。">書き出す</SectionTitle>
-      <div className="grid gap-2">
-        <Button
-          variant="secondary"
-          block
-          icon={<Download aria-hidden className="size-5" />}
-          disabled={!built}
-          onClick={() => built && download(`${fileStem(rec)}-frames.csv`, new Blob([motionFramesCsv(rec, built.prep, built.cycles)], { type: 'text/csv' }))}
-        >
-          コマごとの値（CSV）
-        </Button>
-        <Button variant="secondary" block icon={<Download aria-hidden className="size-5" />} onClick={() => download(`${fileStem(rec)}-cycles.csv`, new Blob([motionCyclesCsv(rec)], { type: 'text/csv' }))}>
-          1 {profile.unitLabel}ごとの値（CSV）
-        </Button>
-        <Button variant="secondary" block icon={<Download aria-hidden className="size-5" />} onClick={() => download(`${fileStem(rec)}.json`, new Blob([motionJson(rec)], { type: 'application/json' }))}>
-          記録そのもの（JSON。動画は含めない）
-        </Button>
+      <div className="mt-3">
+        {built && poses.length > 1 ? (
+          <PlayerWithClock rec={rec} built={built} poses={poses} video={video} sex={sex} editor={editing && video ? { spread, onEdit: (added) => apply(mergeEdits(edits, added)) } : undefined} exportExtra={exportButtons} tail={about}>
+            {folds}
+          </PlayerWithClock>
+        ) : (
+          <>
+            <Notice tone="info">再生に使える体の点がありません。</Notice>
+            <div className="mt-3 border-b border-line">
+              {folds}
+              <Fold title="書き出す">
+                <p className="text-sm text-ink-3">ファイルはこの端末の中で作ります。どこにも送りません。</p>
+                <div className="mt-3 grid gap-2">{exportButtons}</div>
+              </Fold>
+              {about}
+            </div>
+          </>
+        )}
       </div>
 
-      <div className="mt-6">
-        <Details summary="撮影の情報">
-          <ul className="space-y-1 text-sm num">
-            <li>
-              推定したコマ {rec.video.frameCount}（1 秒あたり {fmtNum(rec.video.fps, 1)}）・計算に使えたコマ {a.validFrames}
-            </li>
-            <li>
-              顔の向き: 画面の{a.facing === 'left' ? '左' : '右'}・カメラ側の半身: {a.nearSide === 'left' ? '左' : '右'}
-            </li>
-            <li>{rec.video.rollDeg !== undefined ? `端末の傾き ${fmtNum(rec.video.rollDeg, 1)}° を戻して計算` : '端末の傾きは分からないため、戻していません'}</li>
-            <li>
-              映像 {rec.video.width}×{rec.video.height}
-              {rec.video.quarterTurns ? `（${rec.video.quarterTurns * 90}° 回して使用）` : ''}・{rec.modelVersion}
-            </li>
-            {rec.edits?.length ? <li>手で直した点 {rec.edits.length} か所（推定した点は書き換えずに残しています）</li> : null}
-            {a.constraints?.map((c) => (
-              <li key={c.key}>{CONSTRAINT_TEXT[c.key][c.applied ? 0 : 1]}</li>
-            ))}
-          </ul>
-        </Details>
-      </div>
-
-      <p className="mt-4 text-sm text-ink-3">
-        医療診断ではありません。動きの良し悪しは判定していません。角度はスマホの中で、1 台のカメラの映像から推定した目印の位置から求めた見かけの値で、骨の角度ではありません。
-        {rec.videoSaved ? '動画はこの端末にだけ保存しています。' : '動画は保存していません（体の点の動きだけを保存）。'}
-      </p>
+      <p className="mt-4 text-sm text-ink-3">医療診断ではありません。</p>
 
       <Dialog
         open={confirmDelete}
@@ -558,9 +533,9 @@ function BodyPanel({ body, used, onApply }: { body: BodyParams | undefined; used
   const changed = next.heightCm !== body?.heightCm || next.weightKg !== body?.weightKg || next.loadKg !== body?.loadKg
   const field = (label: string, unit: string, value: string, set: (v: string) => void, assumed: boolean | undefined, prior: number) => (
     <label className="block">
-      <span className="flex items-center gap-1.5 text-sm text-ink-2">
+      <span className="text-sm text-ink-2">
         {label}
-        {assumed ? <Badge tone="attention">仮定 {prior}</Badge> : <Badge tone="measure">入力</Badge>}
+        {assumed && <span className="ml-1.5 text-attention">仮定 {prior}</span>}
       </span>
       <span className="mt-1 flex items-center gap-1.5">
         <input
@@ -576,12 +551,9 @@ function BodyPanel({ body, used, onApply }: { body: BodyParams | undefined; used
     </label>
   )
   return (
-    <section className="mt-4 rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift" aria-labelledby="body-panel-title">
-      <h2 id="body-panel-title" className="font-bold">
-        重心と負担の推定に使う値
-      </h2>
-      <p className="mt-1 text-sm text-ink-3">
-        入れなければ、身長 {BODY_PRIOR.heightCm} cm・体重 {BODY_PRIOR.weightKg} kg・持つ重さ {BODY_PRIOR.loadKg} kg と仮定します。体重と重さは、重心と「股関節と膝の負担の比」を求めるのに使うだけで、力の大きさ（Nm）は出しません。持つ重さを入れると、手首の点をバーの位置とみなして、バーの軌道（動画の白い線）と、前後のぶれ・上がる速さも出します。
+    <>
+      <p className="text-sm text-ink-3">
+        重心と、股関節と膝の負担の比を求めるのに使います。入れなければ、身長 {BODY_PRIOR.heightCm} cm・体重 {BODY_PRIOR.weightKg} kg・重さ {BODY_PRIOR.loadKg} kg と仮定します。持つ重さを入れると、バーの軌道（動画の白い線）も出ます。
       </p>
       <div className="mt-3 grid grid-cols-3 gap-2">
         {field('身長', 'cm', h, setH, used?.assumed.height, BODY_PRIOR.heightCm)}
@@ -591,11 +563,10 @@ function BodyPanel({ body, used, onApply }: { body: BodyParams | undefined; used
       <Button className="mt-3" variant="secondary" block disabled={!changed} onClick={() => onApply(next.heightCm || next.weightKg || next.loadKg ? next : undefined)}>
         この値で計算し直す
       </Button>
-      <div className="mt-3" />
-      <Notice tone="info" title="重心と負担は推定です">
-        床からの力や筋肉の働きは測っていません。体の部分ごとの重さの割合（Winter 2009）と画面の上の点から重心を求め、ゆっくりした動きでは体がほぼつり合うので、床からの力が重心の真下に左右半分ずつかかると仮定して、股関節と膝の負担（力のモーメント）の比を求めています。帯と「幅」は、その位置を足の長さの ±25%、左右を 4:6〜6:4 に動かしたときの範囲です。奥側の手足はカメラ側と同じ位置とみなしています。持つ重さは手首の位置にあるとしています。
-      </Notice>
-    </section>
+      <Details summary="推定のしかた">
+        床からの力や筋肉の働きは測っていません。重心は、体の部分ごとの重さの割合（Winter 2009）と画面の上の点から求めています。床からの力は、重心の真下に、左右半分ずつかかると仮定しました。帯と「幅」は、その位置を足の長さの ±25%、左右を 4:6〜6:4 に動かしたときの範囲です。奥の手足は手前と同じ位置、持つ重さは手首の位置にあるとしています。力の大きさ（Nm）は出していません。
+      </Details>
+    </>
   )
 }
 
@@ -605,16 +576,20 @@ function PlayerWithClock({
   poses,
   video,
   sex,
-  muscles,
   editor,
+  exportExtra,
+  tail,
+  children,
 }: {
   rec: MotionRecord
   built: NonNullable<ReturnType<typeof prepareRecord>>
   poses: ReturnType<typeof motionPoses>
   video: MotionVideoData | null
   sex?: UserProfile['sex']
-  muscles: boolean
   editor?: { spread: number; onEdit: (edits: MotionEdit[]) => void }
+  exportExtra?: ReactNode
+  tail?: ReactNode
+  children?: ReactNode
 }) {
   const ts = built.prep.frames.map((f) => f.t)
   const start = video?.images.length ? Math.min(video.images[0].t, ts[0]) : ts[0]
@@ -629,10 +604,13 @@ function PlayerWithClock({
       video={video}
       sex={sex}
       clock={clock}
-      muscles={muscles}
       autoplay={!editor}
       exportName={editor ? undefined : fileStem(rec)}
+      exportExtra={exportExtra}
+      tail={tail}
       videoOverlay={editor ? <MotionPointEditor prep={built.prep} clock={clock} spread={editor.spread} onEdit={editor.onEdit} /> : undefined}
-    />
+    >
+      {children}
+    </MotionPlayer>
   )
 }

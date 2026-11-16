@@ -67,6 +67,7 @@ export default function OverlayCompare({
   nearSide,
   rollDeg,
   onCanvas,
+  flat,
 }: {
   video: MotionVideoData;
   poses: { t: number; pose: Pose3D }[];
@@ -80,6 +81,8 @@ export default function OverlayCompare({
   /** 端末の傾きを戻した角度（3D は傾きを戻した座標なので、動画に合わせて逆に回す） */
   rollDeg?: number;
   onCanvas?: (c: HTMLCanvasElement) => void;
+  /** 角を丸めない（再生の操作にぴったり付けて置くとき） */
+  flat?: boolean;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const reduced =
@@ -114,7 +117,10 @@ export default function OverlayCompare({
   return (
     <div
       ref={box}
-      className="relative select-none overflow-hidden rounded-[var(--radius-panel)] bg-ink"
+      className={cx(
+        "relative select-none overflow-hidden bg-ink",
+        !flat && "rounded-[var(--radius-panel)]",
+      )}
       style={{
         aspectRatio: `${video.width} / ${video.height}`,
         touchAction: "pan-y",
@@ -143,7 +149,7 @@ export default function OverlayCompare({
         className="pointer-events-none absolute inset-0"
         style={{ clipPath: `inset(0 0 0 ${pct})` }}
       >
-        <div className="absolute inset-0 bg-gradient-to-b from-[rgba(6,20,26,0.55)] via-[rgba(6,20,26,0.35)] to-[rgba(6,20,26,0.6)]" />
+        <div className="absolute inset-0 bg-[rgb(6_20_26/0.45)]" />
         {webgl && !failed && (
           <div
             className="absolute inset-0"
@@ -198,22 +204,12 @@ export default function OverlayCompare({
       </div>
 
       {/* 見出し */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between p-2.5 text-[13px] font-bold text-white">
-        <span
-          className={cx(
-            "rounded-full bg-[rgba(6,20,26,0.55)] px-3 py-1 backdrop-blur-sm transition-opacity",
-            split < 0.14 && "opacity-0",
-          )}
-        >
-          元の動画
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-between px-2.5 py-1.5 text-[13px] font-bold text-white [text-shadow:0_1px_2px_rgb(0_0_0/0.7)]">
+        <span className={cx("transition-opacity", split < 0.14 && "opacity-0")}>
+          動画
         </span>
-        <span
-          className={cx(
-            "rounded-full bg-[rgba(6,20,26,0.55)] px-3 py-1 backdrop-blur-sm transition-opacity",
-            split > 0.86 && "opacity-0",
-          )}
-        >
-          推定した 3D
+        <span className={cx("transition-opacity", split > 0.86 && "opacity-0")}>
+          3D
         </span>
       </div>
 
@@ -222,7 +218,7 @@ export default function OverlayCompare({
         className="pointer-events-none absolute inset-y-0"
         style={{ left: pct }}
       >
-        <div className="absolute inset-y-0 -left-px w-0.5 bg-white/90 shadow-[0_0_12px_rgba(120,220,255,0.75)]" />
+        <div className="absolute inset-y-0 -left-px w-0.5 bg-white" />
       </div>
       <button
         type="button"
@@ -233,13 +229,10 @@ export default function OverlayCompare({
         aria-valuenow={Math.round(split * 100)}
         aria-valuetext={`左から ${Math.round(split * 100)}% が元の動画`}
         className={cx(
-          "absolute top-1/2 flex size-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-white shadow-[0_6px_20px_rgba(0,0,0,0.35)] ring-2 ring-white/70 transition-transform focus-visible:outline-2 focus-visible:outline-white",
+          "absolute top-1/2 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white text-ink shadow-[0_1px_4px_rgb(0_0_0/0.45)] transition-transform focus-visible:outline-2 focus-visible:outline-white",
           dragging ? "scale-110" : "scale-100",
         )}
-        style={{
-          left: pct,
-          background: "linear-gradient(135deg, #12b5a6 0%, #1e7be0 100%)",
-        }}
+        style={{ left: pct }}
         onKeyDown={(e) => {
           const d =
             e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
