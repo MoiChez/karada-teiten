@@ -10,7 +10,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { Pose3D } from '../domain/fusion3d'
 import type { UserProfile } from '../domain/types'
 import { PROFILES, type MotionKind, type MuscleKey } from '../domain/motion'
-import { poseAtTime, type MotionEquipment } from '../domain/motionPose'
+import { holdsBar, poseAtTime, type MotionEquipment } from '../domain/motionPose'
 import { indexAt, type Clock } from '../components/motionClock'
 import { mannequinKindOf, muscleShader, paintMuscles, poseMannequin, type MannequinKind } from './mannequin'
 import { BODY_COLOR, BodyLights, LoadBoundary, LoadingNote, MUSCLE_SKIN, hasWebGL, loadBodySkin, mannequinUrl, type BodySkin } from './common'
@@ -136,6 +136,8 @@ export function MovingBody({
   const accent = maps ? SKIN_ACCENT : HIGHLIGHT_COLOR
   const shade = useMemo(() => (levels ? muscleShader(root, base, accent, nearSide) : null), [root, levels, base, accent, nearSide])
   const shown = useRef('')
+  // スクワットでバーを担いでいる記録は、手を、横向きのバーを順手で握る形にする
+  const rack = useMemo(() => (sport === 'squat' || sport === 'squat_front') && holdsBar(poses), [sport, poses])
   useEffect(() => {
     shown.current = ''
     if (!levels) paintMuscles(root, base, accent, muscles ? PROFILES[sport].muscles : [])
@@ -167,7 +169,7 @@ export function MovingBody({
     // 腰を測った位置に置き、骨の長さを保ったまま足首・手首を測った位置に届かせる（動画に重ねたときに関節が重なるように）。
     // 横から撮った種目は、膝を前後・上下の面の中で曲げる。エルゴ・自転車は座った姿勢の腰にし、手を順手で握る形にする
     const seated = sport === 'erg' || sport === 'bike'
-    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front', seated: sport === 'erg' ? 'round' : seated, grip: seated })
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front', seated: sport === 'erg' ? 'round' : seated, grip: seated ? true : rack ? 'bar' : false })
   })
 
   return (

@@ -155,6 +155,20 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
     }
     return best
   }
+  // 顔の向き: 鼻は顔の真ん中にあり、手前の耳より、頭の幅の半分だけカメラから遠い。カメラが頭より低い（高い）位置から
+  // 見ていると、遠い点ほど画面の下（上）に写るので、手前の耳→鼻の向きが実際より下（上）を向く
+  // （利用者のスクワットの動画で、前を見ているのに 3D の顔が下を向いた。カメラは床の近くから見上げていた）。
+  // 左右の耳の中点は鼻と同じ遠さにあるので、奥の耳が手前の耳からずれて写っている分（記録の中央値）の半分だけ、
+  // 鼻の点を上下に戻す（耳の位置は動かさない）。奥の耳は隠れていて推定が外れることがあるので、
+  // ずれが体の高さの 10% を超えるときは使わない。
+  // 戻すのは上下だけにする。左右のずれ（顔が少しカメラの方を向いている、など）は、向きの上下を変えず、
+  // 利用者の真横の動画でも奥の耳が体の高さの 7% ほど前後にずれて推定されていた（上下は 1% 未満）ため
+  const farEar = prep.nearSide === 'left' ? 8 : 7
+  const earDrop = quantile(
+    fr.map((f) => f.px[farEar].y - f.px[s.ear].y),
+    0.5,
+  )
+  const noseUp = Number.isFinite(earDrop) && Math.abs(earDrop) <= EAR_GAP_MAX * H ? earDrop / 2 : 0
   // 左右の位置は、標準の体の幅で固定する。横からの映像では推定モデルの奥行き（左右）の推定が当てにならず、
   // コマごとに使うと体がくねくね揺れ、中央値でも脚が大きく開いて見えたため（座った姿勢では体の高さの換算も外れる）
   const out = fr.map((f, k) => {
@@ -167,6 +181,7 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
         const h = at(k, s.hip)
         p = { x: h.x + r.x, y: h.y + r.y }
       }
+      if (i === 0) p = { x: p.x, y: p.y - noseUp }
       const base = i === 0 ? 0 : i % 2 === 1 ? i : i - 1
       const x = i === 0 ? 0 : (i % 2 === 1 ? 1 : -1) * (LATERAL[base] ?? 0.06)
       points[i] = { x, y: (floorY - p.y) / H, z: (prep.f * (p.x - ankleX)) / H }
@@ -182,6 +197,36 @@ export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): {
   }
   for (const o of out) o.pose.bones = bones
   return out
+}
+
+/** 奥の耳と手前の耳の上下のずれを使う上限（体の高さに対する割合。頭の幅より大きくずれていたら、奥の耳の推定が外れている） */
+export const EAR_GAP_MAX = 0.1
+
+/**
+ * バーを担いでいるか（スクワット）。記録の半分より多いコマで、手首がひじより上にあり、肩から胴の長さの半分より近くにある。
+ * 担いでいるときは、3D の手を、横向きのバーを順手で握る形にする（腕を前へ伸ばす・腰に当てるスクワットでは開いた手のまま）
+ */
+export function holdsBar(poses: { pose: Pose3D }[]): boolean {
+  let n = 0
+  let hit = 0
+  for (const { pose } of poses) {
+    const sides = (
+      [
+        [11, 13, 15, 23],
+        [12, 14, 16, 24],
+      ] as const
+    )
+      .map((ids) => ids.map((i) => pose.points[i]))
+      .filter((q): q is Vec3[] => q.every((v) => !!v))
+    if (!sides.length) continue
+    n++
+    const up = sides.every(([sh, el, wr, hip]) => {
+      const trunk = Math.hypot(sh.x - hip.x, sh.y - hip.y, sh.z - hip.z)
+      return wr.y > el.y && Math.hypot(wr.y - sh.y, wr.z - sh.z) < 0.5 * trunk
+    })
+    if (up) hit++
+  }
+  return n > 0 && hit / n > 0.5
 }
 
 /** 前後（z）と上下（y）の面の上の点 */

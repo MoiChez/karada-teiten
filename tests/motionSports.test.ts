@@ -2,7 +2,7 @@ import { bikeDemand, ergDemand, ergPhases } from '../src/domain/motionDemand'
 import { describe, expect, it } from 'vitest'
 import type { Landmark } from '../src/domain/types'
 import { analyzeMotion, compareMotion, findCycles, motionMetric, prepareMotion, type MotionInput } from '../src/domain/motion'
-import { motionEquipment, motionPoses } from '../src/domain/motionPose'
+import { holdsBar, motionEquipment, motionPoses } from '../src/domain/motionPose'
 import { motionCyclesCsv, motionFramesCsv, motionJson } from '../src/domain/motionExport'
 
 const W = 2000
@@ -314,5 +314,61 @@ describe('筋肉の要求度（エルゴ・自転車。解析の全工程を通�
     expect(mean(d.values.glutes!, 0, 180)).toBeGreaterThan(0.2)
     expect(mean(d.values.glutes!, 220, 340)).toBe(0)
     expect(mean(d.far!.glutes!, 180, 360)).toBeGreaterThan(mean(d.far!.glutes!, 0, 180))
+  })
+})
+
+describe('顔の向きと、担いだバー（3D の点）', () => {
+  /** 奥の耳（右）を、手前の耳から dy ピクセル下へずらした入力 */
+  const withFarEar = (dy: number): MotionInput => {
+    const base = ergInput(2)
+    return { ...base, frames: base.frames.map((f) => ({ ...f, lm: f.lm.map((q, i) => (i === 8 ? { ...q, y: q.y + dy / H } : q)) })) }
+  }
+  const nose = (input: MotionInput) => {
+    const prep = prepareMotion(input, 'erg')!
+    const poses = motionPoses(prep)
+    const k = 12
+    // 3D の高さ 1 あたりのピクセル（股関節と足首の差から）
+    const px = prep.frames[k].px
+    const scale = (px[27].y - px[23].y) / (poses[k].pose.points[23]!.y - poses[k].pose.points[27]!.y)
+    return { y: poses[k].pose.points[0]!.y * scale, ear: poses[k].pose.points[7]!.y * scale }
+  }
+
+  it('奥の耳が手前の耳より下に写っている（カメラが低い）と、その半分だけ鼻の点を上げる。耳の位置は変えない', () => {
+    const a = nose(withFarEar(0))
+    const b = nose(withFarEar(40))
+    expect(b.y - a.y).toBeCloseTo(20, 0)
+    expect(b.ear).toBeCloseTo(a.ear, 3)
+  })
+
+  it('奥の耳が大きく外れているときは、使わない', () => {
+    const a = nose(withFarEar(0))
+    const b = nose(withFarEar(600))
+    expect(b.y).toBeCloseTo(a.y, 3)
+  })
+
+  it('手首がひじより上で肩の近くにある記録は、バーを担いでいるとみなす。腕を前へ伸ばしているときは、みなさない', () => {
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const frame = (elbow: [number, number], wrist: [number, number]) => {
+      const points: ({ x: number; y: number; z: number } | null)[] = Array.from({ length: 33 }, () => null)
+      for (const [l, r, y, z] of [
+        [23, 24, 0.52, 0],
+        [11, 12, 0.82, 0],
+        [13, 14, ...elbow],
+        [15, 16, ...wrist],
+      ] as const) {
+        points[l] = p(0.1, y, z)
+        points[r] = p(-0.1, y, z)
+      }
+      return { pose: { points, depthSource: 'side_photo' as const } }
+    }
+    const rack = frame([0.78, -0.1], [0.87, -0.02])
+    const forward = frame([0.8, 0.15], [0.82, 0.3])
+    const onHips = frame([0.66, -0.08], [0.56, 0.02])
+    expect(holdsBar(Array.from({ length: 10 }, () => rack))).toBe(true)
+    expect(holdsBar(Array.from({ length: 10 }, () => forward))).toBe(false)
+    expect(holdsBar(Array.from({ length: 10 }, () => onHips))).toBe(false)
+    // 半分より多いコマで担いでいれば、担いでいる
+    expect(holdsBar([...Array.from({ length: 7 }, () => rack), ...Array.from({ length: 3 }, () => forward)])).toBe(true)
+    expect(holdsBar([])).toBe(false)
   })
 })

@@ -346,6 +346,51 @@ describe('マネキンを測った姿勢に合わせる', () => {
     }
   })
 
+  it('スクワットで担いだバーは順手で握る（前腕が上を向くので手のひらは前、指は手のひらの側へ曲がる）', async () => {
+    const root = await load('male')
+    const p = (x: number, y: number, z: number) => ({ x, y, z })
+    const points: Pose3D['points'] = Array.from({ length: 33 }, () => null)
+    const set = (l: number, r: number, y: number, z: number, w: number) => {
+      points[l] = p(w, y, z)
+      points[r] = p(-w, y, z)
+    }
+    // 立った姿勢で、バーを首の後ろに担ぐ: ひじは肩の後ろ・下、手首は肩の上
+    set(23, 24, 0.52, 0, 0.06)
+    set(25, 26, 0.28, 0.02, 0.06)
+    set(27, 28, 0.04, 0, 0.06)
+    set(29, 30, 0, -0.03, 0.06)
+    set(31, 32, 0, 0.1, 0.065)
+    set(11, 12, 0.82, 0, 0.11)
+    set(7, 8, 0.93, 0.02, 0.06)
+    set(13, 14, 0.76, -0.1, 0.16)
+    set(15, 16, 0.87, -0.02, 0.15)
+    points[0] = p(0, 0.92, 0.12)
+    const pose: Pose3D = { points, depthSource: 'side_photo', bones: { upperArm: 0.15, foreArm: 0.14, thigh: 0.24, shank: 0.24, trunk: 0.3 } }
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: true, grip: 'bar' })
+    root.updateMatrixWorld(true)
+    const W = (n: string) => root.getObjectByName(n)!.getWorldPosition(new THREE.Vector3())
+    const bar = W('upperarm_l').sub(W('upperarm_r')).normalize()
+    for (const [s, mirror] of [
+      ['l', 1],
+      ['r', -1],
+    ] as const) {
+      const fore = W(`hand_${s}`).sub(W(`lowerarm_${s}`)).normalize()
+      // 前腕は上を向いている
+      expect(fore.y, `${s} forearm`).toBeGreaterThan(0.5)
+      const knuckles = W(`middle_01_${s}`)
+      const a = knuckles.clone().sub(W(`hand_${s}`)).normalize()
+      const k = W(`index_01_${s}`).sub(W(`pinky_01_${s}`))
+      k.sub(a.clone().multiplyScalar(k.dot(a))).normalize()
+      const palm = new THREE.Vector3().crossVectors(a, k).multiplyScalar(mirror).normalize()
+      // 手のひらは、バーを順手で握る向き（バーの向き × 前腕の向き）で、前を向く
+      const want = new THREE.Vector3().crossVectors(bar, fore).normalize()
+      expect(palm.dot(want), `${s} palm`).toBeGreaterThan(0.95)
+      expect(palm.z, `${s} palm faces front`).toBeGreaterThan(0.5)
+      // 指は手のひらの側へ曲がる
+      expect(W(`middle_03_${s}`).sub(knuckles).dot(palm), `${s} fingers`).toBeGreaterThan(0)
+    }
+  })
+
   it('動画から測った胴の前と後ろの輪郭があると、3D の胴の厚みと前後の位置をそれに合わせる（ないときは標準の体のまま）', async () => {
     const root = await load('male')
     const p = (x: number, y: number, z: number) => ({ x, y, z })

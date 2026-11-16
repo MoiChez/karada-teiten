@@ -85,7 +85,8 @@ function frameRotation(curA: THREE.Vector3, curB: THREE.Vector3, tgtA: THREE.Vec
  * anchor = 'ankles'（既定）: 腕と脚は関節の向きだけを合わせ、両足首の中点が pose の両足首の中点に重なるように置く。
  * anchor = 'hips'（動きの再生）: 両股関節の中点を pose に重ね、脚と腕は骨の長さを保ったまま、
  * 足首・手首が pose の位置に届くように曲げる（膝・ひじは pose の膝・ひじの側へ曲げる）。腰が浮き沈みしないように。
- * seated（エルゴ・自転車）: 座った姿勢の腰（腰の反りを戻す）。grip（エルゴ・自転車）: 手を順手でハンドルを握る形にする
+ * seated（エルゴ・自転車）: 座った姿勢の腰（腰の反りを戻す）。grip（エルゴ・自転車）: 手を順手でハンドルを握る形にする。
+ * grip = 'bar'（スクワットでバーを担いでいるとき）: 横向きのバーを順手で握る形にする（前腕が上を向いていれば、手のひらは前）
  */
 export function poseMannequin(
   root: THREE.Object3D,
@@ -95,7 +96,7 @@ export function poseMannequin(
     planarLegs?: boolean
     /** 座った姿勢。'round' は腰から背中を丸める（エルゴ） */
     seated?: boolean | 'round'
-    grip?: boolean
+    grip?: boolean | 'bar'
     /** false で胴の厚みを合わせない（胴の厚みを決めるために 3D の胴を測るとき） */
     torso?: boolean
   } = {},
@@ -328,8 +329,10 @@ export function poseMannequin(
       fitted.push(bone)
     }
     if (opts.grip) {
-      gripHand(bones, 'l', 1)
-      gripHand(bones, 'r', -1)
+      // バーの向き（体の左へ向かう、両肩の関節を結ぶ線）
+      const bar = opts.grip === 'bar' ? P(11).sub(P(12)).normalize() : undefined
+      gripHand(bones, 'l', 1, bar)
+      gripHand(bones, 'r', -1, bar)
       fitted.push('grip')
     }
     return { scale, fitted }
@@ -703,9 +706,12 @@ const GRIP_THUMB = [0.4, 0.6, 0.7]
 
 /**
  * 手を順手（手のひらを下、手の甲を上）にして、指を曲げてハンドルを握る形にする。手首はまっすぐ（前腕の向き）。
- * mirror: 左手 1・右手 -1（手のひらの向きを、指の付け根の並びと手の向きから決めるときの符号）
+ * mirror: 左手 1・右手 -1（手のひらの向きを、指の付け根の並びと手の向きから決めるときの符号）。
+ * bar（体の左へ向かうバーの向き）を渡すと、そのバーを順手で握る向きにする: 手のひらの向き = バーの向き × 前腕の向き。
+ * 前腕が前を向いていれば手のひらは下（エルゴのハンドルと同じ）、上を向いていれば手のひらは前（担いだバー）。
+ * 「真下に近い向き」で決めると、前腕が上や後ろを向いたときに手のひらが後ろ（逆手）になるため
  */
-function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1 | -1) {
+function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1 | -1, bar?: THREE.Vector3) {
   const get = (n: string) => bones.get(`${n}_${side}`)
   const pos = (n: string) => get(n)?.getWorldPosition(new THREE.Vector3())
   const hand = get('hand')
@@ -720,8 +726,11 @@ function gripHand(bones: Map<string, THREE.Object3D>, side: 'l' | 'r', mirror: 1
     return { a, n: new THREE.Vector3().crossVectors(a, k).multiplyScalar(mirror).normalize() }
   }
   const fore = wrist.clone().sub(elbow).normalize()
-  const n = new THREE.Vector3(0, -1, 0)
-  n.sub(fore.clone().multiplyScalar(n.dot(fore)))
+  const n = bar ? new THREE.Vector3().crossVectors(bar, fore) : new THREE.Vector3(0, 0, 0)
+  if (n.lengthSq() < 1e-6) {
+    n.set(0, -1, 0)
+    n.sub(fore.clone().multiplyScalar(n.dot(fore)))
+  }
   if (n.lengthSq() < 1e-6) n.set(0, 0, -1).sub(fore.clone().multiplyScalar(-fore.z))
   const cur = palmOf()
   rotateWorld(hand, frameRotation(cur.a, cur.n, fore, n.normalize()))
