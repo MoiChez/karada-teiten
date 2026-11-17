@@ -11,6 +11,30 @@ import { ChangeLabel } from '../components/ChangeLabel'
 import { Button, ButtonLink, EmptyState, Notice, Screen, SectionTitle, cx } from '../components/ui'
 import { useSettings } from '../state/stores'
 import { STORAGE_NOTICE, markStorageNoticeShown, storageNoticeShown } from '../data/persist'
+import { redetectTargets } from '../data/redetect'
+
+/** 前の推定で求めた、写真・動画を残した記録があれば、計算し直せることを伝える */
+function RedetectNotice() {
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    let alive = true
+    void redetectTargets().then((t) => alive && setN(t.sessions.length + t.motions.length))
+    return () => {
+      alive = false
+    }
+  }, [])
+  if (!n) return null
+  return (
+    <div className="mb-4">
+      <Notice tone="info" title="点の推定を新しくしました">
+        <p>写真・動画を残した記録 {n} 件を、新しい推定で計算し直せます。</p>
+        <ButtonLink to="/settings" size="sm" variant="secondary" className="mt-2">
+          設定で計算し直す
+        </ButtonLink>
+      </Notice>
+    </div>
+  )
+}
 
 /** 最初の記録のあと、記録が端末の中にだけあることを 1 回だけ伝える */
 function StorageNotice() {
@@ -97,6 +121,7 @@ export function Home() {
       )}
 
       {latest && <StorageNotice />}
+      <RedetectNotice />
 
       {!latest ? (
         <EmptyState

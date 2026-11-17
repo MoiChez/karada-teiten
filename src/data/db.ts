@@ -76,4 +76,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   timerSec: 5,
   shootStyle: 'placed',
   onboarded: false,
+  poseQuality: 'standard',
 }

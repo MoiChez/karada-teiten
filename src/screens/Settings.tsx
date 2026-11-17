@@ -7,6 +7,7 @@ import { localDateKey } from '../domain/format'
 import { db } from '../data/db'
 import { data } from '../data/repo'
 import { exportJson, importJson, sessionsToCsv, validateExport } from '../data/exportImport'
+import { RedetectPanel } from '../components/RedetectPanel'
 import { POSE_MODEL, modelVersion } from '../pose/landmarker'
 import { Button, Details, Dialog, Notice, Screen, SectionTitle, Segmented } from '../components/ui'
 import { useSettings, useToast } from '../state/stores'
@@ -108,6 +109,9 @@ export function Settings() {
           { value: 10, label: '10秒' },
         ]}
       />
+
+      <SectionTitle>点の推定</SectionTitle>
+      <RedetectPanel />
 
       <SectionTitle sub="データはこの端末のブラウザの中にだけあります。機種変更の前には書き出してください">データ</SectionTitle>
       <div className="space-y-2">

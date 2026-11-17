@@ -2,6 +2,7 @@
 import { FilesetResolver, PoseLandmarker, type MPMask } from '@mediapipe/tasks-vision'
 import type { Landmark } from '../domain/types'
 import type { MaskData } from '../domain/backContour'
+import { rtmUsed } from './rtmpose'
 
 export type ModelKind = 'heavy'
 
@@ -10,8 +11,11 @@ export const POSE_MODEL: ModelKind = 'heavy'
 
 const TASKS_VISION_VERSION = '1.2.0'
 
+/** 推定モデルの版。RTMPose で 2D の点を細かくしたときは、その名前も書く（前回と推定モデルが違うと、比べるときに注意を出す） */
 export function modelVersion(model: ModelKind) {
-  return `pose_landmarker_${model} / tasks-vision ${TASKS_VISION_VERSION}`
+  const base = `pose_landmarker_${model} / tasks-vision ${TASKS_VISION_VERSION}`
+  const rtm = rtmUsed()
+  return rtm ? `${base} + ${rtm}` : base
 }
 
 function assetUrl(path: string) {

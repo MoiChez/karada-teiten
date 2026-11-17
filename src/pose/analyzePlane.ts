@@ -7,6 +7,7 @@ import { bodyHeightPx, pointState } from '../domain/metrics'
 import { sidePoints } from '../domain/landmarks'
 import type { PreparedImage } from './image'
 import { detectImage, type ModelKind } from './landmarker'
+import { refineLandmarks } from './rtmpose'
 
 // 推測した位置の点（隠れている・写真の外に少し出ている）も使う
 const usable = (l: Landmark | undefined) => pointState(l) !== 'none'
@@ -53,7 +54,8 @@ export async function analyzePlane(params: {
 }): Promise<PlaneRecord> {
   const { plane, image } = params
   const det = await detectImage(image.canvas, params.model, { withMask: plane === 'side' })
-  const landmarks = det.landmarks ?? []
+  // 2D の点は RTMPose で細かくする（使えなければ MediaPipe の点のまま）
+  const landmarks = det.landmarks ? await refineLandmarks(image.canvas, image.width, image.height, det.landmarks) : []
   let facing: 'left' | 'right' | undefined
   let nearSide: 'left' | 'right' | undefined
   if (plane === 'side' && landmarks.length) {

@@ -3,6 +3,7 @@
 // ためたコマ（画像）は、結果の画面で動画として再生するのに使う。端末に残すのは、残すと選んだときだけ
 import { packLandmarks, packWorld, turnsFromBody, voteTurns } from '../domain/motion'
 import { POSE_MODEL, createVideoLandmarker, detectImage } from './landmarker'
+import { createClipRefiner, loadRtm } from './rtmpose'
 
 /** 推定と再生に使うコマの長い辺（ピクセル）。推定モデルの入力より十分に大きく、再生用に残しても重くなりすぎない大きさ */
 export const MOTION_MAX_SIDE = 720
@@ -222,8 +223,12 @@ export async function detectRecorded(clip: RecordedClip, turns: number, onProgre
   const extra = voteTurns(votes)
   const fix = extra ? rotatedCanvas(clip.width, clip.height, extra) : null
   const lm = await createVideoLandmarker(POSE_MODEL)
-  const out: DetectedClip['frames'] = []
+  await loadRtm()
+  const refiner = createClipRefiner()
+  const found: { t: number; w?: ReturnType<typeof packWorld> }[] = []
   const images: ClipImage[] = []
+  const w = fix ? fix.canvas.width : clip.width
+  const h = fix ? fix.canvas.height : clip.height
   try {
     for (let i = 0; i < clip.frames.length; i++) {
       if (stopRef?.current) throw new Error('cancelled')
@@ -236,7 +241,11 @@ export async function detectRecorded(clip: RecordedClip, turns: number, onProgre
           src = fix.canvas
         }
         const r = lm.detect(src, f.t)
-        if (r.landmarks) out.push({ t: Math.round(f.t), p: packLandmarks(r.landmarks), w: r.worldLandmarks ? packWorld(r.worldLandmarks) : undefined })
+        // 2D の点は RTMPose で細かくする（MediaPipe は人を見つけて 3D の点を出す役）
+        if (r.landmarks) {
+          await refiner.push(src as CanvasImageSource, w, h, r.landmarks)
+          found.push({ t: Math.round(f.t), w: r.worldLandmarks ? packWorld(r.worldLandmarks) : undefined })
+        }
         // 回したときは、回した向きの画像を再生用に作り直す
         const blob = fix ? await jpeg(fix.canvas) : f.blob
         if (blob) images.push({ t: Math.round(f.t), blob })
@@ -250,6 +259,8 @@ export async function detectRecorded(clip: RecordedClip, turns: number, onProgre
   } finally {
     lm.close()
   }
+  const refined = refiner.finish()
+  const out: DetectedClip['frames'] = found.map((f, k) => ({ t: f.t, p: packLandmarks(refined[k]), w: f.w }))
   return {
     frames: out,
     images,
@@ -300,7 +311,9 @@ export async function detectVideoFile(file: File, onProgress: (p: Progress) => v
     const { canvas, draw } = rotatedCanvas(vw, vh, turns)
     const total = Math.floor(end / step) + 1
     const lm = await createVideoLandmarker(POSE_MODEL)
-    const out: DetectedClip['frames'] = []
+    await loadRtm()
+    const refiner = createClipRefiner()
+    const found: { t: number; w?: ReturnType<typeof packWorld> }[] = []
     const images: ClipImage[] = []
     try {
       for (let k = 0; k < total; k++) {
@@ -309,7 +322,10 @@ export async function detectVideoFile(file: File, onProgress: (p: Progress) => v
         draw(video)
         const t = Math.round(k * step * 1000)
         const r = lm.detect(canvas, t)
-        if (r.landmarks) out.push({ t, p: packLandmarks(r.landmarks), w: r.worldLandmarks ? packWorld(r.worldLandmarks) : undefined })
+        if (r.landmarks) {
+          await refiner.push(canvas, canvas.width, canvas.height, r.landmarks)
+          found.push({ t, w: r.worldLandmarks ? packWorld(r.worldLandmarks) : undefined })
+        }
         const blob = await jpeg(canvas)
         if (blob) images.push({ t, blob })
         onProgress({ done: k + 1, total })
@@ -317,6 +333,8 @@ export async function detectVideoFile(file: File, onProgress: (p: Progress) => v
     } finally {
       lm.close()
     }
+    const refined = refiner.finish()
+    const out: DetectedClip['frames'] = found.map((f, k) => ({ t: f.t, p: packLandmarks(refined[k]), w: f.w }))
     return { frames: out, images, width: canvas.width, height: canvas.height, durationMs: end * 1000, frameCount: total, fps: FILE_FPS, quarterTurns: turns }
   } finally {
     video.remove()

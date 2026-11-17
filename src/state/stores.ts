@@ -2,6 +2,7 @@
 import { create } from 'zustand'
 import type { AppSettings, CheckIn, Plane, PlaneRecord, ShootStyle } from '../domain/types'
 import { DEFAULT_SETTINGS } from '../data/db'
+import { setRtmQuality } from '../pose/rtmpose'
 import { data } from '../data/repo'
 
 export interface PlaneDraft {
@@ -102,12 +103,14 @@ export const useSettings = create<SettingsState>((set, get) => ({
   load: async () => {
     try {
       const settings = await data.getSettings()
+      setRtmQuality(settings.poseQuality)
       set({ settings, loaded: true })
     } catch (e) {
       set({ loaded: true, storageError: e instanceof Error ? e.message : String(e) })
     }
   },
   update: async (key, value) => {
+    if (key === 'poseQuality') setRtmQuality(value as AppSettings['poseQuality'])
     set({ settings: { ...get().settings, [key]: value } })
     await data.setSetting(key, value)
   },

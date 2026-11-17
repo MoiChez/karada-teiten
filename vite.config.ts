@@ -44,6 +44,12 @@ export default defineConfig(({ command }) => ({
             options: { cacheName: 'pose-assets-v1', expiration: { maxEntries: 12 } },
           },
           {
+            // 点の推定の部品（onnxruntime-web の WASM）
+            urlPattern: ({ url }) => url.pathname.endsWith('.wasm') && url.pathname.includes('/assets/'),
+            handler: 'CacheFirst',
+            options: { cacheName: 'ort-wasm-v1', expiration: { maxEntries: 4 } },
+          },
+          {
             urlPattern: ({ url }) => url.pathname.endsWith('.woff2'),
             handler: 'CacheFirst',
             options: { cacheName: 'fonts-v1', expiration: { maxEntries: 400 } },

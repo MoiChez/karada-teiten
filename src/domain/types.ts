@@ -425,4 +425,6 @@ export interface AppSettings {
   /** 前回選んだ撮り方（次の測定の初期値） */
   shootStyle: ShootStyle
   onboarded: boolean
+  /** 点の読み取りの精度。standard = RTMPose-m、high = RTMPose-l（大きく重い。ハイエンド・最新のスマホ向け） */
+  poseQuality: 'standard' | 'high'
 }
