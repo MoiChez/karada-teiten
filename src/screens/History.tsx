@@ -1,22 +1,33 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { Camera, ChevronRight } from 'lucide-react'
+import { Camera, ChevronRight, Video } from 'lucide-react'
 import type { AssessmentSession } from '../domain/types'
-import { fmtDate } from '../domain/format'
+import { SESSION_TAG_LABELS, fmtDate } from '../domain/format'
 import { correctedSet } from '../domain/session'
+import { PROFILES, type MotionRecord } from '../domain/motion'
 import { routineById } from '../domain/recommend/routines'
-import { useLogs, useSessions } from '../data/hooks'
+import { useLogs, useMotions, useSessions } from '../data/hooks'
 import { PostureGrid } from '../components/PoseViews'
-import { Badge, Button, ButtonLink, EmptyState, Screen, SectionTitle, cx } from '../components/ui'
+import { Badge, Button, ButtonLink, EmptyState, Screen, SectionTitle, Segmented, cx } from '../components/ui'
 
 export function History() {
   const sessions = useSessions()
+  const motions = useMotions()
   const logs = useLogs()
   const navigate = useNavigate()
   const [selecting, setSelecting] = useState(false)
   const [picked, setPicked] = useState<string[]>([])
+  const [view, setView] = useState<'posture' | 'motion'>('posture')
 
-  if (sessions === undefined) return <Screen title="履歴">{null}</Screen>
+  if (sessions === undefined || motions === undefined) return <Screen title="履歴">{null}</Screen>
+  if (view === 'motion' || (sessions.length === 0 && motions.length > 0)) {
+    return (
+      <Screen title="履歴">
+        {sessions.length > 0 && <ViewSwitch value="motion" onChange={setView} />}
+        <MotionHistory motions={motions} />
+      </Screen>
+    )
+  }
   if (sessions.length === 0) {
     return (
       <Screen title="履歴">
@@ -62,6 +73,7 @@ export function History() {
         ) : undefined
       }
     >
+      {motions.length > 0 && <ViewSwitch value="posture" onChange={setView} />}
       {[...byMonth.entries()].map(([month, list]) => (
         <section key={month}>
           <SectionTitle>{month}</SectionTitle>
@@ -80,9 +92,14 @@ export function History() {
                       {s.front && <Badge>正面</Badge>}
                       {s.side && <Badge>横向き</Badge>}
                       {corrected && <Badge tone="level">補正あり</Badge>}
+                      {s.tags?.map((t) => (
+                        <Badge key={t} tone="measure">
+                          {SESSION_TAG_LABELS[t]}
+                        </Badge>
+                      ))}
                     </div>
                     <p className="mt-1 truncate text-sm text-ink-2">
-                      {notice.length ? notice.slice(0, 2).map((t) => t.label).join('、') : s.front ? '目立った差は見られませんでした' : '横向きの位置を記録'}
+                      {s.note ? `メモ: ${s.note}` : notice.length ? notice.slice(0, 2).map((t) => t.label).join('、') : s.front ? '左右のはっきりした差なし' : '横向きの位置を記録'}
                     </p>
                   </div>
                 </>
@@ -90,12 +107,12 @@ export function History() {
               return (
                 <li key={s.id}>
                   {selecting ? (
-                    <label className={cx('flex items-center gap-3 rounded-[var(--radius-control)] bg-surface p-3', picked.includes(s.id) && 'ring-2 ring-ink')}>
+                    <label className={cx('flex items-center gap-3 rounded-[var(--radius-control)] border border-line bg-surface p-3', picked.includes(s.id) && 'ring-2 ring-ink')}>
                       <input type="checkbox" className="size-5 accent-[var(--color-ink)]" checked={picked.includes(s.id)} onChange={() => toggle(s.id)} />
                       {inner}
                     </label>
                   ) : (
-                    <Link to={`/session/${s.id}`} className="flex items-center gap-3 rounded-[var(--radius-control)] bg-surface p-3 hover:bg-sunken">
+                    <Link to={`/session/${s.id}`} className="flex items-center gap-3 rounded-[var(--radius-control)] border border-line bg-surface p-3 hover:bg-sunken">
                       {inner}
                       <ChevronRight aria-hidden className="size-5 text-ink-3" />
                     </Link>
@@ -124,5 +141,55 @@ export function History() {
         </>
       )}
     </Screen>
+  )
+}
+
+function ViewSwitch({ value, onChange }: { value: 'posture' | 'motion'; onChange: (v: 'posture' | 'motion') => void }) {
+  return (
+    <Segmented
+      legend="表示する記録"
+      columns={2}
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: 'posture', label: '姿勢' },
+        { value: 'motion', label: '動き' },
+      ]}
+    />
+  )
+}
+
+function MotionHistory({ motions }: { motions: MotionRecord[] }) {
+  if (!motions.length) {
+    return (
+      <EmptyState title="まだ動きの記録がありません" action={<ButtonLink to="/motion" variant="primary" size="lg" block icon={<Video aria-hidden className="size-5" />}>動きを撮る</ButtonLink>}>
+        スクワット・ローイングエルゴ・固定式の自転車を動画で撮ると、ここに並びます。
+      </EmptyState>
+    )
+  }
+  return (
+    <ul className="space-y-2">
+      {motions.map((m) => {
+        const profile = PROFILES[m.kind]
+        return (
+          <li key={m.id}>
+            <Link to={`/motion/${m.id}`} className="flex items-center gap-3 rounded-[var(--radius-control)] border border-line bg-surface p-3 hover:bg-sunken">
+              <Video aria-hidden className="size-6 shrink-0 text-measure" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium">{profile.label}</p>
+                <p className="flex flex-wrap gap-x-2 text-sm text-ink-2 num">
+                  <span className="whitespace-nowrap">{fmtDate(m.createdAt, true)}</span>
+                  <span className="whitespace-nowrap">
+                    {m.analysis.cycles.length} {profile.unitLabel}
+                    {m.videoSaved ? '・動画あり' : ''}
+                  </span>
+                </p>
+              </div>
+              <ChevronRight aria-hidden className="size-5 shrink-0 text-ink-3" />
+            </Link>
+          </li>
+        )
+      })}
+    </ul>
   )
 }

@@ -234,7 +234,7 @@ export interface ComputedMetric {
   normalizedUnit?: string
   /** 値の向きの説明（例: 「左肩が低い」） */
   direction: string
-  /** 測定のばらつきの目安（1σ、rawValue と同じ単位） */
+  /** 測定のばらつきの見込み（1σ、rawValue と同じ単位）。点の位置のずれを仮定して求めたもので、撮り直して確かめた値ではない */
   uncertainty: number | null
   status: MetricStatus
   /** 0..1 */
@@ -314,10 +314,16 @@ export type CaptureMode = 'simple' | 'precise'
 /** 撮り方。placed = スマホを置いてタイマーで撮る、mirror = 鏡の前で自撮り */
 export type ShootStyle = 'placed' | 'mirror'
 
+/** 記録に付ける札（施術の前後・時間帯など。比べるときに見分けるため） */
+export type SessionTag = 'before_care' | 'after_care' | 'morning' | 'evening' | 'before_exercise' | 'after_exercise'
+
 export interface AssessmentSession {
   id: string
   createdAt: string
+  /** 利用者のメモ */
   note?: string
+  /** 利用者が付けた札 */
+  tags?: SessionTag[]
   front?: PlaneRecord
   side?: PlaneRecord
   computedMetrics: ComputedMetric[]

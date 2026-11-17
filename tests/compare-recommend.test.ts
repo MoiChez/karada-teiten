@@ -5,6 +5,7 @@ import { buildPlan, comparisonSuggestions, packSet, scoreRoutines } from '../src
 import { ROUTINES } from '../src/domain/recommend/routines'
 import { fuse3D } from '../src/domain/fusion3d'
 import { deriveHypotheses } from '../src/domain/hypotheses'
+import { TRAIT_LABELS } from '../src/domain/traits'
 import type { UserProfile } from '../src/domain/types'
 import { frontPose, record, sidePose } from './helpers'
 
@@ -160,7 +161,7 @@ describe('運動・習慣の提案', () => {
     expect(p1.routines).toEqual(p2.routines)
   })
 
-  it('比較結果から継続・強化・回復を出す', () => {
+  it('比較結果から継続・強化を出す。続けた理由は良し悪しを言わない。回復は疲れを記録したときだけ', () => {
     const later = session('2026-10-15T09:00:00.000Z', { leftShoulderDrop: 5 }, { earForward: 160 })
     const c = compareSessions(s, later)
     const logs = [
@@ -169,9 +170,77 @@ describe('運動・習慣の提案', () => {
     ]
     const sug = comparisonSuggestions(c, logs, { profile })
     expect(sug.continue[0].routineId).toBe('side_bend')
+    expect(sug.continue[0].slot).toBe('continue')
+    expect(sug.continue[0].reasons[1]).toBe(`関連する「${TRAIT_LABELS.shoulder_asymmetry}」は、前回より小さくなりました`)
+    for (const r of sug.continue) expect(r.reasons.join('')).not.toMatch(/改善|悪化|横ばい/)
     expect(sug.strengthen.length).toBeGreaterThan(0)
     expect(sug.strengthen.some((r) => ROUTINES.find((x) => x.id === r.routineId)!.targetTags.includes('forward_head'))).toBe(true)
-    expect(sug.recovery.length).toBeGreaterThan(0)
+    expect(sug.recovery).toEqual([])
+    expect(comparisonSuggestions(c, logs, { profile, fatigue: 4 }).recovery.length).toBeGreaterThan(0)
+  })
+
+  it('比較の次の提案: 疲れの記録がなく変化もないときは、回復ではなく今日のおすすめを出す', () => {
+    const c = compareSessions(session('2026-10-01T09:00:00.000Z'), session('2026-10-15T09:00:00.000Z'))
+    expect(c.changes.length).toBeGreaterThan(0)
+    expect(c.changes.every((ch) => ch.change === 'stable')).toBe(true)
+    // プロフィールの疲れやすさだけでは、回復の組を出さない
+    const calm = comparisonSuggestions(c, [], { profile: { ...profile, fatigueRating: 5 } })
+    expect(calm.recovery).toEqual([])
+    expect(calm.strengthen).toEqual([])
+    expect(calm.continue).toHaveLength(1)
+    expect(calm.continue[0].slot).toBe('today')
+    expect(calm.continue[0].reasons[0]).toBe('前回から、はっきりした変化はありません')
+
+    const tired = comparisonSuggestions(c, [], { profile, fatigue: 4 })
+    expect(tired.continue).toEqual([])
+    expect(tired.recovery.length).toBeGreaterThan(0)
+    for (const r of tired.recovery) {
+      const x = ROUTINES.find((y) => y.id === r.routineId)!
+      expect(x.category === 'breathing' || x.targetTags.includes('recovery')).toBe(true)
+    }
+    expect(comparisonSuggestions(c, [], { profile, fatigue: 3 }).recovery).toEqual([])
+  })
+
+  it('直近 7 日に「痛みや違和感があった」メニューは外し、理由を残す。「少し」は外さずに順位を下げる', () => {
+    const now = new Date('2026-10-10T00:00:00.000Z')
+    const base = buildPlan({ traits: s.postureTraits, profile, now })
+    expect(base.excluded).toEqual([])
+    const top = base.routines.find((r) => r.slot === 'today')!.routineId
+    const log = (date: string, discomfort: 'none' | 'slight' | 'yes') => ({ id: date, date, routineId: top, discomfort })
+
+    // あとで「なし」と記録しても、7 日以内に「あった」があれば外す
+    const hurt = buildPlan({ traits: s.postureTraits, profile, now, recentLogs: [log('2026-10-08T08:00:00.000Z', 'yes'), log('2026-10-09T08:00:00.000Z', 'none')] })
+    expect(hurt.routines.map((r) => r.routineId)).not.toContain(top)
+    expect(hurt.excluded).toEqual([{ routineId: top, reason: '前回、痛みや違和感があったので、しばらく外しています' }])
+
+    // 8 日前の記録なら外さない
+    const old = buildPlan({ traits: s.postureTraits, profile, now, recentLogs: [log('2026-10-02T00:00:00.000Z', 'yes')] })
+    expect(old.excluded).toEqual([])
+    expect(old.routines.map((r) => r.routineId)).toContain(top)
+
+    const scoreOf = (recentLogs: ReturnType<typeof log>[]) => scoreRoutines({ traits: s.postureTraits, profile, now, recentLogs }).find((x) => x.routine.id === top)
+    const slight = scoreOf([log('2026-10-08T08:00:00.000Z', 'slight')])
+    const fine = scoreOf([log('2026-10-08T08:00:00.000Z', 'none')])
+    expect(slight).toBeDefined()
+    expect(fine!.score - slight!.score).toBeCloseTo(1, 1)
+    expect(buildPlan({ traits: s.postureTraits, profile, now, recentLogs: [log('2026-10-08T08:00:00.000Z', 'slight')] }).excluded).toEqual([])
+  })
+
+  it('比較の次の提案でも、痛みや違和感があったメニューは続ける組から外す', () => {
+    const later = session('2026-10-15T09:00:00.000Z', { leftShoulderDrop: 5 }, { earForward: 160 })
+    const c = compareSessions(s, later)
+    const logs = [
+      { id: '1', date: '2026-10-05T08:00:00.000Z', routineId: 'side_bend' },
+      { id: '2', date: '2026-10-14T08:00:00.000Z', routineId: 'side_bend', discomfort: 'yes' as const },
+    ]
+    const sug = comparisonSuggestions(c, logs, { profile, now: new Date('2026-10-16T00:00:00.000Z') })
+    expect(sug.continue.map((r) => r.routineId)).not.toContain('side_bend')
+    expect(sug.strengthen.map((r) => r.routineId)).not.toContain('side_bend')
+    expect(sug.excluded.map((x) => x.routineId)).toEqual(['side_bend'])
+  })
+
+  it('股関節の前側を伸ばすメニューは、反り腰に関連する特徴（スウェイバックの特徴）に結びつけない', () => {
+    expect(ROUTINES.find((r) => r.id === 'hip_flexor_stretch')!.targetTags).not.toContain('swayback_related')
   })
 
   it('生活習慣との関連仮説は「可能性」として出す', () => {

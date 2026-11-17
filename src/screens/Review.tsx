@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { Navigate, useNavigate, useParams } from 'react-router'
-import { Camera } from 'lucide-react'
+import { Camera, PencilRuler } from 'lucide-react'
 import type { Plane, PlaneRecord } from '../domain/types'
 import { applyCorrection, correctedSet, requalify, resetCorrection } from '../domain/session'
 import { hasBlocking, hasMajor } from '../domain/quality'
 import { LandmarkEditor } from '../components/LandmarkEditor'
 import { QualityList } from '../components/QualityList'
 import { BurstNote } from '../components/BurstNote'
+import { PhotoWithPose } from '../components/PoseViews'
 import { Button, Notice, Screen, Segmented } from '../components/ui'
 import { useProfile, useSession } from '../data/hooks'
 import { attachConscious } from '../data/actions'
@@ -30,6 +31,8 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
   const session = useSession(pose === 'conscious' ? sessionId : undefined)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 点を直す道具は、押したときだけ出す（直さなくても分析できる）
+  const [editing, setEditing] = useState(() => (draft ? correctedSet(draft.record).size > 0 : false))
 
   const conscious = pose === 'conscious'
   const base = conscious ? '/measure/conscious' : '/measure'
@@ -94,9 +97,7 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
 
   return (
     <Screen title={title} back={`${base}/capture/${plane}`} footer={footer}>
-      <p className="mt-1 mb-4 text-[15px] text-ink-2">
-        骨格の点が体から大きくずれていたら、ドラッグで直せます。そのままでも分析できます。
-      </p>
+      <p className="mt-1 mb-4 text-[15px] text-ink-2">線が体に沿っていれば、このまま次へ進んでください。大きくずれているときだけ、点を直せます（任意）。</p>
       {draft.notice && (
         <div className="mb-3">
           <Notice tone="info" title="撮影について">
@@ -128,12 +129,23 @@ function ReviewInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; ses
 
       {rec.landmarksRaw.length > 0 ? (
         <div className="mt-4">
-          <LandmarkEditor
-            record={rec}
-            imageUrl={draft.imageUrl}
-            onMove={(i, to, o) => set(applyCorrection(rec, i, to, undefined, o.snap))}
-            onReset={(i) => set(resetCorrection(rec, i))}
-          />
+          {editing ? (
+            <LandmarkEditor
+              record={rec}
+              imageUrl={draft.imageUrl}
+              onMove={(i, to, o) => set(applyCorrection(rec, i, to, undefined, o.snap))}
+              onReset={(i) => set(resetCorrection(rec, i))}
+            />
+          ) : (
+            <>
+              <div className="mx-auto max-w-[360px]">
+                <PhotoWithPose record={rec} imageUrl={draft.imageUrl} alt={`${plane === 'front' ? '正面' : '横向き'}の写真と骨格の線`} />
+              </div>
+              <Button variant="quiet" block className="mt-2" icon={<PencilRuler aria-hidden className="size-5" />} onClick={() => setEditing(true)}>
+                点を直す（任意）
+              </Button>
+            </>
+          )}
           <BurstNote rec={rec} heightCm={profile?.heightCm} onPhoto />
         </div>
       ) : (

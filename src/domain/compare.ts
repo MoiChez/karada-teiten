@@ -6,15 +6,15 @@ import { isTracked, prefersTowardZero, towardPhrase } from './metrics'
 import { correctedSet } from './session'
 
 /**
- * improved / worsened は、0 が「差なし」の指標（正面の左右差）だけに使う。
- * 横向きの前後の位置は良し悪しを判定しないので、smaller / larger（0 に近づいた / 離れた）で伝える
+ * improved / worsened は、0 が「差なし」の指標（正面の左右差）で、左右差が小さく / 大きくなったことを表す（良し悪しは言わない）。
+ * 横向きの前後の位置は smaller / larger（0 に近づいた / 離れた）で伝える
  */
 export type ChangeLabel = 'improved' | 'stable' | 'worsened' | 'smaller' | 'larger' | 'flipped' | 'changed'
 
 export const CHANGE_LABELS: Record<ChangeLabel, string> = {
-  improved: '改善傾向',
-  stable: '横ばい',
-  worsened: '悪化傾向',
+  improved: '左右差が小さく',
+  stable: 'はっきりした変化なし',
+  worsened: '左右差が大きく',
   smaller: '小さくなった',
   larger: '大きくなった',
   flipped: '向きが反対に',
@@ -111,7 +111,7 @@ function compareMetric(a: ComputedMetric, b: ComputedMetric): MetricChange | nul
     } else {
       change = 'stable'
       significance = Math.abs(dAbs) / threshold
-      sentence = `${b.label}は大きく変わっていません（${v(a.rawValue)} → ${v(b.rawValue)}）。`
+      sentence = `${b.label}は、判定の幅を超える変化はありません（${v(a.rawValue)} → ${v(b.rawValue)}）。`
     }
   } else {
     if (Math.abs(diff) > threshold) {
@@ -121,7 +121,7 @@ function compareMetric(a: ComputedMetric, b: ComputedMetric): MetricChange | nul
     } else {
       change = 'stable'
       significance = Math.abs(diff) / threshold
-      sentence = `${b.label}は大きく変わっていません。`
+      sentence = `${b.label}は、判定の幅を超える変化はありません。`
     }
   }
   return {
@@ -198,13 +198,13 @@ export function compareSessions(x: AssessmentSession, y: AssessmentSession): Com
 function overallSentence(counts: Comparison['counts'], top: MetricChange[]): string {
   const total = counts.improved + counts.stable + counts.worsened + counts.changed
   if (total === 0) return '比べられる指標がありませんでした。'
-  if (top.length === 0) return `比べられた ${total} 項目は、いずれも測定のばらつきの範囲内の変化でした。`
+  if (top.length === 0) return `比べた ${total} 項目に、判定の幅を超える変化はありませんでした。`
   const lead = top[0]
   const parts = [
-    counts.improved ? `改善傾向 ${counts.improved} 項目` : '',
-    counts.stable ? `横ばい ${counts.stable} 項目` : '',
-    counts.worsened ? `悪化傾向 ${counts.worsened} 項目` : '',
+    counts.improved ? `左右差が小さくなった ${counts.improved} 項目` : '',
+    counts.worsened ? `左右差が大きくなった ${counts.worsened} 項目` : '',
     counts.changed ? `そのほかの変化 ${counts.changed} 項目` : '',
+    counts.stable ? `はっきりした変化なし ${counts.stable} 項目` : '',
   ].filter(Boolean)
   return `${parts.join('、')}でした。いちばん大きく変わったのは「${lead.label}」です。`
 }
@@ -257,12 +257,42 @@ export function conditionWarnings(a: AssessmentSession, b: AssessmentSession): C
   const da = a.confidenceScores.overall
   const db = b.confidenceScores.overall
   if (Math.abs(da - db) >= COMPARE_WARN.confidenceDiff) {
-    w.push({ key: 'confidence', message: `測定の信頼度が前回と大きく違います（${Math.round(da * 100)} → ${Math.round(db * 100)}）。` })
+    w.push({ key: 'confidence', message: `点の写り具合が前回と大きく違います（${Math.round(da * 100)} → ${Math.round(db * 100)}）。` })
+  }
+  // 顔の上下の向きが違うと、頭の位置の値が変わる
+  const pa = a.computedMetrics.find((m) => m.key === 'side_head_pitch')
+  const pb = b.computedMetrics.find((m) => m.key === 'side_head_pitch')
+  if (pa?.rawValue != null && pb?.rawValue != null) {
+    const d = Math.abs(pb.rawValue - pa.rawValue)
+    const lim = Math.max(5, NOTICEABLE_K * Math.hypot(pa.uncertainty ?? 0, pb.uncertainty ?? 0))
+    if (d > lim) w.push({ key: 'head_pitch', message: `顔の上下の向きが前回と約 ${d.toFixed(0)}° 違います。頭の位置の値に影響します。` })
+  }
+  // 足の開き方が違うと、正面の傾き・体の中心・膝の値が変わる
+  const fa = ankleGap(a)
+  const fb = ankleGap(b)
+  if (fa !== null && fb !== null && Math.abs(fa - fb) > 0.04) {
+    w.push({ key: 'stance', message: '足の開き方が前回と違います。正面の傾き・体の中心の寄り・膝の向きの値に影響します。' })
   }
   if (a.modelVersion !== b.modelVersion) {
     w.push({ key: 'model', message: '前回と違う推定モデルを使っています。' })
   }
   return w
+}
+
+/** 正面: 両足首の間隔（体の高さに対する比）。足の開き方の違いの注意に使う */
+function ankleGap(s: AssessmentSession): number | null {
+  const r = s.front
+  if (!r) return null
+  const L = r.landmarksCorrected.length ? r.landmarksCorrected : r.landmarksRaw
+  const W = r.imageMetadata.width
+  const Hh = r.imageMetadata.height
+  const pt = (i: number) => (L[i] && (L[i].visibility ?? 1) >= 0.5 ? { x: L[i].x * W, y: L[i].y * Hh } : null)
+  const la = pt(27), ra = pt(28), le = pt(7), re = pt(8), lh = pt(29), rh = pt(30)
+  if (!la || !ra || !(le || re) || !(lh || rh)) return null
+  const top = Math.min(le?.y ?? Infinity, re?.y ?? Infinity)
+  const bottom = Math.max(lh?.y ?? -Infinity, rh?.y ?? -Infinity)
+  const h = bottom - top
+  return h > 0 ? Math.hypot(la.x - ra.x, la.y - ra.y) / h : null
 }
 
 // ---------- 推移 ----------

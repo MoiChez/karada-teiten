@@ -142,7 +142,7 @@ export function LandmarkEditor({
                   key={i}
                   role="button"
                   tabIndex={0}
-                  aria-label={`${landmarkName(i)}${isCorr ? '（補正済み）' : ''}${low ? '（検出の信頼度が低い）' : ''}。矢印キーで移動`}
+                  aria-label={`${landmarkName(i)}${isCorr ? '（直した点）' : ''}${low ? '（写りが悪い点）' : ''}。矢印キーで移動`}
                   aria-pressed={isSel}
                   onPointerDown={onPointerDown(i)}
                   onKeyDown={onKey(i)}
@@ -173,14 +173,14 @@ export function LandmarkEditor({
       )}
 
       {/* 選択中の点の操作（ドラッグの代わりにボタンでも動かせる） */}
-      <div className="mt-4 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+      <div className="mt-4 rounded-[var(--radius-panel)] bg-surface p-3 border border-line">
         {selected === null ? (
-          <p className="text-[15px] text-ink-2">点をタップして選ぶと、ボタンで 1 画素ずつ動かせます。ドラッグでも動かせます。</p>
+          <p className="text-[15px] text-ink-2">点をタップして選ぶと、ボタンで少しずつ動かせます。ドラッグでも動かせます。</p>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
               <p className="font-bold">{landmarkName(selected)}</p>
-              <p className="text-sm text-ink-3">{corrected.has(selected) ? '補正済み' : '検出したままの位置'}</p>
+              <p className="text-sm text-ink-3">{corrected.has(selected) ? '直した点' : '読み取ったままの位置'}</p>
             </div>
             <div className="grid grid-cols-3 gap-1" role="group" aria-label={`${landmarkName(selected)}を動かす`}>
               <span />
@@ -211,7 +211,7 @@ export function LandmarkEditor({
                 <span aria-hidden className="size-3 rounded-full border-[1.5px] border-ink bg-level" />
               )}
               <span className="flex-1">{landmarkName(i)}</span>
-              {corrected.has(i) && <Badge tone="level">補正済み</Badge>}
+              {corrected.has(i) && <Badge tone="level">直した</Badge>}
             </button>
           </li>
         ))}
@@ -223,11 +223,11 @@ export function LandmarkEditor({
         </Button>
         {onRedetect && (
           <Button size="sm" variant="secondary" icon={<ScanSearch aria-hidden className="size-4" />} loading={redetecting} onClick={onRedetect}>
-            高精度モデルで再検出
+            もう一度読み取る
           </Button>
         )}
       </div>
-      <p className="mt-2 text-sm text-ink-3">ドラッグで元の位置の近くに戻すと、元の位置に吸着します（ボタンや矢印キーでの微調整は吸着しません）。四角の点が補正済みです。</p>
+      <p className="mt-2 text-sm text-ink-3">ドラッグで元の位置の近くに戻すと、元の位置に戻ります（ボタンや矢印キーで少しずつ動かしたときは戻りません）。四角の点が直した点です。</p>
     </div>
   )
 }

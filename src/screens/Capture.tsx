@@ -212,7 +212,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         setBusy(null)
         setError(
           e instanceof Error && /fetch|load|network|wasm/i.test(e.message)
-            ? '骨格推定の準備に失敗しました。通信状態を確認して、もう一度お試しください。'
+            ? '読み取りの準備ができませんでした。電波のよいところで、もう一度お試しください（写真は送りません）。'
             : '骨格を推定できませんでした。もう一度お試しください。',
         )
       }
@@ -388,7 +388,7 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink/80" role="status">
             <Loader2 aria-hidden className="size-9 animate-spin text-level" />
             <p className="text-[17px]">{busy}…</p>
-            <p className="max-w-[28ch] text-center text-sm text-paper/75">はじめての時はモデルの読み込みに少し時間がかかります</p>
+            <p className="max-w-[28ch] text-center text-sm text-paper/75">初回だけ、体の点を読み取る部品をこのサイトから読み込みます（写真は送りません）。少しお待ちください</p>
           </div>
         )}
       </div>
@@ -424,7 +424,6 @@ function CaptureInner({ plane, pose, sessionId }: { plane: Plane; pose: Pose; se
         </div>
         <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
           <span className="text-sm text-paper/80">{mirrorSelfie ? '鏡の前で自撮り' : 'スマホを置いて撮影'}</span>
-          {vdims && cam === 'live' && <span className="text-xs text-paper/55 num">映像 {vdims.w}×{vdims.h}</span>}
           {guideRec && (
             <Pill pressed={showGuide} onClick={() => setShowGuide(!showGuide)}>
               <History aria-hidden className="mr-1 inline size-4 align-[-3px]" />

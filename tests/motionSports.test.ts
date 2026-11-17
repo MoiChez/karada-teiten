@@ -1,7 +1,7 @@
 import { bikeDemand, ergDemand, ergPhases } from '../src/domain/motionDemand'
 import { describe, expect, it } from 'vitest'
 import type { Landmark } from '../src/domain/types'
-import { analyzeMotion, compareMotion, findCycles, motionMetric, prepareMotion, type MotionInput } from '../src/domain/motion'
+import { analyzeMotion, compareMotion, findCycles, motionMetric, packLandmarks, prepareMotion, prepareRecord, type MotionInput } from '../src/domain/motion'
 import { motionEquipment, motionPoses } from '../src/domain/motionPose'
 import { armStyleOf, detectArms } from '../src/domain/motionArms'
 import { motionCyclesCsv, motionFramesCsv, motionJson } from '../src/domain/motionExport'
@@ -258,17 +258,140 @@ describe('手で直した点と書き出し', () => {
     }
     const prep = prepareMotion(input, 'erg')!
     const { cycles } = findCycles(prep)
-    const frames = motionFramesCsv(rec, prep, cycles).split('\r\n')
+    // 先頭の # の行は計算の条件。表はその後ろ
+    const frames = motionFramesCsv(rec, prep, cycles)
+      .replace(/^﻿/, '')
+      .split('\r\n')
+      .filter((l) => !l.startsWith('#'))
     expect(frames[0]).toContain('上体の前傾（°）')
     expect(frames).toHaveLength(prep.frames.length + 1)
     expect(frames.some((l) => l.includes('キャッチ'))).toBe(true)
     const cyc = motionCyclesCsv(rec).split('\r\n')
     expect(cyc[0]).toContain('ストロークレート（回/分）')
-    expect(cyc).toHaveLength(rec.analysis.cycles.length + 1)
+    // 1 本ごとの行の後ろに、平均・標準偏差・比べるときの幅の 3 行
+    expect(cyc).toHaveLength(rec.analysis.cycles.length + 1 + 3)
     const json = JSON.parse(motionJson(rec))
     expect(json.type).toBe('motion')
     // 動画は書き出さない
     expect(json.record.videoSaved).toBe(false)
+    // 点のない記録では、処理した後の点はない
+    expect(json.processed).toBeNull()
+  })
+
+  it('コマごとの CSV: 先頭に計算の条件の行、後ろに区間の番号と処理した後の点のピクセル座標を足す（前の列の順は変えない）', () => {
+    // 途中で 0.5 秒検出できなかったところを作り、区間を 2 つに分ける
+    const full = ergInput(4)
+    const input = { ...full, frames: full.frames.filter((f) => f.t < 4000 || f.t > 4500) }
+    const rec = {
+      id: 'm_test',
+      createdAt: '2026-11-13T10:00:00.000Z',
+      appVersion: '9.9.9',
+      kind: 'erg' as const,
+      source: 'upload' as const,
+      modelVersion: 'pose_landmarker_full',
+      video: { width: W, height: H, durationMs: 9600, frameCount: input.frames.length, fps: 30, quarterTurns: 0, rollDeg: 1.5 },
+      videoSaved: false,
+      frames: [],
+      analysis: analyzeMotion({ ...input, rollDeg: 1.5 }, 'erg'),
+    }
+    const prep = prepareMotion({ ...input, rollDeg: 1.5 }, 'erg')!
+    expect(prep.breaks.size).toBe(1)
+    const lines = motionFramesCsv(rec, prep, findCycles(prep).cycles).replace(/^﻿/, '').split('\r\n')
+    const meta = lines.filter((l) => l.startsWith('#'))
+    const metaOf = (k: string) => meta.find((l) => l.startsWith(`# ${k}`))
+    expect(lines[0].startsWith('#')).toBe(true)
+    expect(metaOf('アプリの版')).toBe('# アプリの版,9.9.9')
+    expect(metaOf('計算の版')).toMatch(/^# 計算の版,\d+$/)
+    expect(metaOf('推定モデルの版')).toBe('# 推定モデルの版,pose_landmarker_full')
+    expect(metaOf('コマ数/秒')).toBe('# コマ数/秒,30')
+    expect(metaOf('カメラ側の半身')).toBe('# カメラ側の半身,左')
+    expect(metaOf('顔の向き')).toBeDefined()
+    expect(metaOf('傾きの補正')).toMatch(/,1\.5$/)
+    expect(metaOf('なめらか化の σ')).toMatch(/,1$/)
+    expect(metaOf('使った器具の前提')).toContain('膝を太ももとすねの長さから置き直す: 使った')
+    expect(metaOf('角度の符号の決まり')).toBeDefined()
+    expect(metaOf('上体の前傾（°）')).toContain('後ろに傾くと −')
+    const table = lines.filter((l) => !l.startsWith('#')).map((l) => l.split(','))
+    const [header, ...rows] = table
+    expect(header.slice(0, 3)).toEqual(['時刻（ミリ秒）', '膝の曲がり（°）', '股関節の曲がり（上体と太もも）（°）'])
+    const k = header.indexOf('手で直した点')
+    expect(header.slice(k + 1, k + 5)).toEqual(['区間の番号', '器具の前提で置き直した点', '左耳の x（ピクセル）', '左耳の y（ピクセル）'])
+    expect(header).toContain('左膝の x（ピクセル）')
+    expect(rows).toHaveLength(prep.frames.length)
+    expect(rows.every((r) => r.length === header.length)).toBe(true)
+    // 区間の番号は、途切れのあとで 1 つ増える
+    const seg = header.indexOf('区間の番号')
+    const brk = [...prep.breaks][0]
+    expect(rows[brk - 1][seg]).toBe('1')
+    expect(rows[brk][seg]).toBe('2')
+    // 膝の座標は、器具の前提で置き直した後の位置
+    const kx = header.indexOf('左膝の x（ピクセル）')
+    expect(Number(rows[10][kx])).toBeCloseTo(prep.frames[10].px[25].x, 0)
+    expect(Number(rows[10][kx + 1])).toBeCloseTo(prep.frames[10].px[25].y, 0)
+    expect(rows[10][header.indexOf('器具の前提で置き直した点')].split(' ')).toContain('25')
+  })
+
+  it('1 回ごとの CSV の最後の 3 行は、記録の平均・標準偏差・比べるときの幅（下限込み）', () => {
+    const input = ergInput(5)
+    const analysis = analyzeMotion(input, 'erg')
+    const rec = {
+      id: 'm_test',
+      createdAt: '2026-11-13T10:00:00.000Z',
+      appVersion: 'test',
+      kind: 'erg' as const,
+      source: 'upload' as const,
+      modelVersion: 'test',
+      video: { width: W, height: H, durationMs: 12000, frameCount: input.frames.length, fps: 30, quarterTurns: 0 },
+      videoSaved: false,
+      frames: [],
+      analysis,
+    }
+    const [header, ...rows] = motionCyclesCsv(rec)
+      .replace(/^﻿/, '')
+      .split('\r\n')
+      .map((l) => l.split(','))
+    const [avg, sd, unc] = rows.slice(-3)
+    expect(avg[0]).toBe('平均')
+    expect(sd[0]).toBe('標準偏差')
+    expect(unc[0]).toContain('比べるときの幅')
+    const col = header.indexOf('ストロークレート（回/分）')
+    const m = motionMetric(analysis, 'rate')!
+    expect(Number(avg[col])).toBeCloseTo(m.value!, 2)
+    expect(Number(sd[col])).toBeCloseTo(m.sd!, 2)
+    expect(Number(unc[col])).toBeCloseTo(m.uncertainty!, 2)
+    expect(avg[1]).toBe('')
+  })
+
+  it('JSON: 生の点はそのままで、処理した後の点（器具の前提で置き直した膝など）を processed に足す', () => {
+    const input = ergInput(4)
+    const rec = {
+      id: 'm_test',
+      createdAt: '2026-11-13T10:00:00.000Z',
+      appVersion: 'test',
+      kind: 'erg' as const,
+      source: 'upload' as const,
+      modelVersion: 'test',
+      video: { width: W, height: H, durationMs: 9600, frameCount: input.frames.length, fps: 30, quarterTurns: 0 },
+      videoSaved: true,
+      frames: input.frames.map((f) => ({ t: f.t, p: packLandmarks(f.lm) })),
+      analysis: analyzeMotion(input, 'erg'),
+    }
+    const json = JSON.parse(motionJson(rec))
+    expect(json.record.frames).toEqual(rec.frames)
+    const pr = json.processed
+    const prep = prepareRecord(rec)!.prep
+    expect(pr.nearSide).toBe(prep.nearSide)
+    expect(pr.smoothingSigma).toBe(1)
+    expect(pr.constraints.some((c: { key: string; applied: boolean }) => c.key === 'knee' && c.applied)).toBe(true)
+    expect(pr.frames).toHaveLength(prep.frames.length)
+    const f = pr.frames[10]
+    expect(f.t).toBe(prep.frames[10].t)
+    expect(f.segment).toBe(1)
+    expect(f.p).toHaveLength(33 * 3)
+    expect(f.px).toHaveLength(33 * 2)
+    expect(f.px[25 * 2]).toBeCloseTo(prep.frames[10].px[25].x, 0)
+    expect(f.constrained).toContain(25)
+    expect(json.coordinates).toContain('processed')
   })
 })
 

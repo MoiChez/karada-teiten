@@ -5,6 +5,7 @@ import { Button, ProgressSteps, Screen } from '../components/ui'
 import { BasicFields, ConditionFields, GoalFields, LifeFields, emptyProfile, validateProfile, type ProfileDraft } from '../components/ProfileFields'
 import { data } from '../data/repo'
 import { useSettings } from '../state/stores'
+import { IOS_NOTE, isIOS } from '../data/persist'
 
 const STEPS = ['はじめに', '基本情報', '目的', '生活と運動', '体の調子'] as const
 
@@ -60,6 +61,8 @@ export function Onboarding() {
           <p className="mt-4 text-ink-2">
             正面と横向きの写真 2 枚から、姿勢の特徴を数値で記録します。前回と比べて、次にやることを一緒に決めていきます。
           </p>
+          <p className="mt-2 text-[15px] text-ink-2">用意するもの: スマホを立てる場所、2.5m ほどの空き、体の線が分かる服。測るのは 3 分ほどです。</p>
+          {isIOS() && <p className="mt-2 text-[15px] text-ink-2">{IOS_NOTE}</p>}
           <ul className="mt-8 space-y-5">
             <li className="flex gap-3">
               <Smartphone aria-hidden className="mt-0.5 size-6 shrink-0 text-measure" />
@@ -71,7 +74,7 @@ export function Onboarding() {
             <li className="flex gap-3">
               <Stethoscope aria-hidden className="mt-0.5 size-6 shrink-0 text-measure" />
               <div>
-                <p className="font-bold">医療的な診断ではありません</p>
+                <p className="font-bold">医療の診断ではありません</p>
                 <p className="text-[15px] text-ink-2">
                   写真から推定した目印の位置関係を示すもので、病気やけがの判断はできません。痛みやしびれがある場合は医療機関に相談してください。
                 </p>

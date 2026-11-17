@@ -285,7 +285,7 @@ const FRONT: MetricDef[] = [
   },
   {
     key: 'front_neck_shift',
-    label: '首の左右位置ずれ',
+    label: '頭の中心の左右のずれ',
     plane: 'front',
     group: 'alignment',
     unit: '%',
@@ -346,7 +346,7 @@ const FRONT: MetricDef[] = [
   },
   {
     key: 'front_load_shift',
-    label: '左右荷重の傾向（参考推定）',
+    label: '体の中心の左右の寄り（足の間で）',
     plane: 'front',
     group: 'alignment',
     unit: '%',
@@ -376,7 +376,7 @@ function kneeFront(side: 'left' | 'right'): MetricDef {
   const ankle = L ? LM.leftAnkle : LM.rightAnkle
   return {
     key: L ? 'front_knee_left' : 'front_knee_right',
-    label: L ? '脚のアライメント（左）' : '脚のアライメント（右）',
+    label: L ? '膝の左右の向き（左）' : '膝の左右の向き（右）',
     plane: 'front',
     group: 'alignment',
     unit: '°',
@@ -397,7 +397,7 @@ function kneeFront(side: 'left' | 'right'): MetricDef {
       const len = Math.hypot(e.x, e.y) * s
       return { raw: angle * s, norm: pctOf(len, legLen), len }
     },
-    direction: (v) => (v >= 0 ? '膝が外側へ出る方向（O脚に関連）' : '膝が内側へ入る方向（X脚に関連）'),
+    direction: (v) => (v >= 0 ? '膝が外側へ出る方向（O 脚の方向）' : '膝が内側へ入る方向（X 脚の方向）'),
     offsetLabel: '膝の位置（股関節と足首を結ぶ線から）',
   }
 }
@@ -407,7 +407,7 @@ function kneeFront(side: 'left' | 'right'): MetricDef {
 const SIDE: MetricDef[] = [
   {
     key: 'side_head_forward',
-    label: '頭部前方位の参考指標',
+    label: '頭の前後の位置（耳と肩）',
     plane: 'side',
     group: 'alignment',
     unit: '°',
@@ -444,7 +444,7 @@ const SIDE: MetricDef[] = [
   },
   {
     key: 'side_arm_forward',
-    label: '腕の前方位置（巻き肩に関連する参考特徴）',
+    label: '手の前後の位置',
     plane: 'side',
     group: 'alignment',
     unit: '%',
@@ -463,7 +463,7 @@ const SIDE: MetricDef[] = [
   },
   {
     key: 'side_hip_forward',
-    label: '骨盤帯の前後位置',
+    label: '腰の前後の位置（足首と肩の線から）',
     plane: 'side',
     group: 'alignment',
     unit: '%',
@@ -477,12 +477,12 @@ const SIDE: MetricDef[] = [
       const v = pctOf(len, c.H)
       return { raw: v, norm: v, len }
     },
-    direction: (v) => (v >= 0 ? '骨盤のあたりが体の線より前' : '骨盤のあたりが体の線より後ろ'),
-    offsetLabel: '骨盤帯の位置（足首と肩を結ぶ線から）',
+    direction: (v) => (v >= 0 ? '腰（股関節の点）が足首と肩の線より前' : '腰（股関節の点）が足首と肩の線より後ろ'),
+    offsetLabel: '腰の位置（足首と肩を結ぶ線から）',
   },
   {
     key: 'side_knee_extension',
-    label: '膝過伸展傾向の参考指標',
+    label: '膝の後ろへの伸び',
     plane: 'side',
     group: 'alignment',
     unit: '°',
@@ -505,10 +505,10 @@ const SIDE: MetricDef[] = [
     direction: (v) => (v >= 0 ? '膝が後ろへ押し込まれる方向' : '膝が軽く曲がっている方向'),
     offsetLabel: '膝の位置（股関節と足首を結ぶ線から）',
   },
-  plumbAngle('side_plumb_shoulder', '全身の前後傾き', 'shoulder', '全身', '肩の位置（足首から前後に）'),
-  plumbAngle('side_plumb_hip', '下半身の前後傾き', 'hip', '下半身', '股関節の位置（足首から前後に）'),
-  plumb('side_plumb_ear', '耳の前後位置（足首基準）', 'ear'),
-  plumb('side_plumb_knee', '膝の前後位置（足首基準）', 'knee'),
+  plumbAngle('side_plumb_shoulder', '肩の前後の位置（足首の真上から）', 'shoulder', '肩', '肩の位置（足首から前後に）'),
+  plumbAngle('side_plumb_hip', '股関節の前後の位置（足首の真上から）', 'hip', '股関節', '股関節の位置（足首から前後に）'),
+  plumb('side_plumb_ear', '耳の前後の位置（足首の真上から）', 'ear'),
+  plumb('side_plumb_knee', '膝の前後の位置（足首の真上から）', 'knee'),
   {
     key: 'side_head_pitch',
     label: '頭の前後傾き（顔の上下の向き）',
@@ -579,7 +579,7 @@ const SIDE: MetricDef[] = [
     compute: () => ({ fail: '' }),
     direction: () => '',
     unsupportedNote:
-      '骨盤の前端・後端の目印が MediaPipe にないため、この写真からは推定できません。参考として「骨盤帯の前後位置」を見てください。',
+      '骨盤の前端・後端の目印が MediaPipe にないため、この写真からは推定できません。参考として「腰の前後の位置」を見てください。',
   },
 ]
 
@@ -621,7 +621,7 @@ function plumbAngle(key: MetricKey, label: string, part: 'shoulder' | 'hip', nam
       const len = (X.x - A.x) * c.f
       return { raw: angleFromVerticalDeg(A, X, c.f), norm: pctOf(len, c.H), len }
     },
-    direction: (v) => (v >= 0 ? `${name}が前へ傾く方向` : `${name}が後ろへ傾く方向`),
+    direction: (v) => (v >= 0 ? `${name}が足首の真上より前` : `${name}が足首の真上より後ろ`),
     offsetLabel,
   }
 }
@@ -678,12 +678,12 @@ function composite(key: MetricKey, label: string, components: CompositeComponent
 
 const K = COMPOSITE_SCALE
 const COMPOSITES: MetricDef[] = [
-  composite('composite_kyphosis', '猫背傾向スコア', [
+  composite('composite_kyphosis', '頭・上体・手の前寄り（まとめ）', [
     { key: 'side_head_forward', scale: K.kyphosis.headForwardDeg, required: true },
     { key: 'side_trunk_lean', scale: K.kyphosis.trunkLeanDeg, required: true },
     { key: 'side_arm_forward', scale: K.kyphosis.armForwardPct, required: false },
   ]),
-  composite('composite_swayback', '反り腰関連スコア', [
+  composite('composite_swayback', '腰が前・上体が後ろの寄り（まとめ）', [
     { key: 'side_hip_forward', scale: K.swayback.hipForwardPct, required: true },
     { key: 'side_knee_extension', scale: K.swayback.kneeExtensionDeg, required: true },
     { key: 'side_trunk_lean', scale: K.swayback.trunkBackDeg, invert: true, required: false },

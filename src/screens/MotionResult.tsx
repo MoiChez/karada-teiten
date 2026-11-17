@@ -52,6 +52,16 @@ export function motionBandText(def: MetricDef, lo: number | null | undefined, hi
   return `${fmtMotionValue(def, lo, false)}〜${fmtMotionValue(def, hi)}`
 }
 
+/** 要点の帯に出す値（種目ごとに 3〜4 個。なければ表の先頭から） */
+const STRIP_KEYS: Partial<Record<MotionRecord['kind'], string[]>> = {
+  squat: ['knee', 'trunk', 'thigh_bottom', 'ascent'],
+  erg: ['rate', 'ratio', 'trunk_catch', 'trunk_finish'],
+  bike: ['cadence', 'knee_bdc', 'trunk'],
+}
+
+/** 標準偏差を出す桁（時間は 0.01 秒まで。コマの間隔より細かくしない） */
+const sdDigits = (def: MetricDef) => (def.unit === '秒' ? 2 : def.digits)
+
 export function motionDiffText(def: MetricDef, d: number) {
   const u = def.unit === '%' ? ' ポイント' : def.unit === '°' ? '°' : ` ${def.unit}`
   return `${d > 0 ? '+' : d < 0 ? '−' : '±'}${fmtNum(Math.abs(d), def.digits)}${u}`
@@ -65,7 +75,7 @@ export function MotionList() {
   const buttons = (
     <div className="grid gap-2">
       {MOTION_KIND_LIST.map((k) => (
-        <ButtonLink key={k} to={`/motion/capture?kind=${k}`} variant={k === 'squat' ? 'primary' : 'secondary'} size="lg" block icon={<Video aria-hidden className="size-5" />}>
+        <ButtonLink key={k} to={`/motion/capture?kind=${k}`} variant="secondary" size="lg" block icon={<Video aria-hidden className="size-5" />}>
           {PROFILES[k].label}を撮る
         </ButtonLink>
       ))}
@@ -81,20 +91,25 @@ export function MotionList() {
         <>
           <div className="mt-2">{buttons}</div>
           <SectionTitle>記録</SectionTitle>
-          <ul className="divide-y divide-line rounded-[var(--radius-panel)] bg-surface shadow-lift">
+          <ul className="divide-y divide-line border-y border-line">
             {motions.map((m) => {
               const p = PROFILES[m.kind]
               return (
                 <li key={m.id}>
-                  <Link to={`/motion/${m.id}`} className="flex min-h-14 items-center gap-3 px-4 py-3 hover:bg-sunken">
+                  <Link to={`/motion/${m.id}`} className="flex min-h-14 items-center gap-3 py-3 hover:bg-sunken">
                     <Video aria-hidden className="size-5 shrink-0 text-measure" />
                     <div className="min-w-0 flex-1">
-                      <p className="font-medium num">
-                        {fmtDate(m.createdAt, true)}・{p.label}
-                      </p>
-                      <p className="text-sm text-ink-3 num">
-                        {m.analysis.cycles.length} {p.unitLabel}
-                        {p.metrics.slice(0, 2).map((d) => `・${d.short} ${fmtMotionMetric(d, motionMetric(m.analysis, d.key))}`)}
+                      <p className="font-medium">{p.label}</p>
+                      <p className="text-sm text-ink-2 num">{fmtDate(m.createdAt, true)}</p>
+                      <p className="flex flex-wrap gap-x-2 text-sm text-ink-2 num">
+                        <span className="whitespace-nowrap">
+                          {m.analysis.cycles.length} {p.unitLabel}
+                        </span>
+                        {p.metrics.slice(0, 2).map((d) => (
+                          <span key={d.key} className="whitespace-nowrap">
+                            {d.short} {fmtMotionMetric(d, motionMetric(m.analysis, d.key))}
+                          </span>
+                        ))}
                       </p>
                     </div>
                     <ChevronRight aria-hidden className="size-5 text-ink-3" />
@@ -144,6 +159,44 @@ export function MotionResult() {
   const rec = motions[idx]
   const prev = motions.slice(idx + 1).find((m) => m.kind === rec.kind)
   return <MotionResultBody key={rec.id} rec={rec} prev={prev} video={video} sex={profile?.sex} />
+}
+
+/** 再生の操作のすぐ下に出す要点の帯（主な値の平均と、前回との差の有無）。詳しくは「平均」を開く */
+function SummaryStrip({
+  rec,
+  prev,
+  changes,
+  offView,
+}: {
+  rec: MotionRecord
+  prev?: MotionRecord
+  changes: ReturnType<typeof compareMotion>
+  offView: (d: MetricDef) => boolean
+}) {
+  const profile = PROFILES[rec.kind]
+  const keys = STRIP_KEYS[rec.kind] ?? profile.metrics.filter((d) => !d.hidden && !d.estimate).slice(0, 3).map((d) => d.key)
+  const items = keys
+    .map((k) => profile.metrics.find((d) => d.key === k))
+    .filter((d): d is MetricDef => !!d)
+    .map((def) => ({ def, m: motionMetric(rec.analysis, def.key), ch: changes.find((c) => c.key === def.key) }))
+    .filter(({ m }) => m?.status === 'ok')
+  if (!items.length) return null
+  return (
+    <section aria-label="主な値（平均）" className="border-t border-line py-3">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 min-[420px]:grid-cols-4">
+        {items.map(({ def, m, ch }) => (
+          <div key={def.key} className="min-w-0">
+            <dt className="truncate text-sm text-ink-2">{def.short}</dt>
+            <dd className={cx('text-[20px] leading-tight font-bold whitespace-nowrap num', offView(def) && 'text-ink-3')}>{fmtMotionMetric(def, m)}</dd>
+            {prev && ch && <dd className="text-sm whitespace-nowrap text-ink-2 num">前回から {motionDiffText(def, ch.diff)}{ch.judged ? (ch.noticeable ? '・差あり' : '') : ''}</dd>}
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-sm text-ink-3">
+        {rec.analysis.cycles.length} {profile.unitLabel}の平均{prev ? `。前回（${fmtDate(prev.createdAt)}）との差` : ''}。詳しくは「平均」を開いてください。
+      </p>
+    </section>
+  )
 }
 
 /** 器具に合わせて点を置き直したか（置き直したとき、しなかったとき） */
@@ -250,46 +303,19 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
     navigate('/motion', { replace: true })
   }
 
-  // 再生の項目（今の値・グラフ・筋肉の負荷）のあとに並べる項目。どれも初めは閉じている
-  const folds = (
+  // 要点の帯のすぐ下に並べる項目（平均 → 1 回ごと）。どれも初めは閉じている
+  const leadFolds = (
     <>
-      <Fold title={`1 ${profile.unitLabel}ごとの値`} hint={`${a.cycles.length} ${profile.unitLabel}`}>
-        <div className="-mx-4 overflow-x-auto px-4">
-          <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + shown.length * 64}px` }}>
-            <thead className="text-sm text-ink-3">
-              <tr className="border-b border-ink/30">
-                <th className="py-2 pr-3 text-left font-medium">{profile.unitLabel}</th>
-                {shown.map((d) => (
-                  <th key={d.key} className="px-2 py-2 font-medium">
-                    {d.short}
-                    <span className="block text-xs font-normal">{d.unit}</span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {a.cycles.map((c, i) => (
-                <tr key={i} className="border-b border-line last:border-0">
-                  <td className="py-2 pr-3 text-left">{i + 1}</td>
-                  {shown.map((d) => (
-                    <td key={d.key} className={cx('px-2 py-2', offView(d) && 'text-ink-3')}>
-                      {fmtMotionValue(d, c.values[d.key], false)}
-                      <CycleBand def={d} c={c} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {a.sideView === false && <p className="mt-2 text-sm text-ink-3">灰色の値は、真横から撮れていないので当てになりません。</p>}
-      </Fold>
-
       <Fold title="平均" hint={prev ? '前回との差つき' : undefined}>
         {prev ? (
-          <ButtonLink to={`/motion/compare?a=${prev.id}&b=${rec.id}`} variant="secondary" block className="mb-1" icon={<Columns2 aria-hidden className="size-5" />}>
-            前回と並べて比べる
-          </ButtonLink>
+          <>
+            <ButtonLink to={`/motion/compare?a=${prev.id}&b=${rec.id}`} variant="secondary" block className="mb-1" icon={<Columns2 aria-hidden className="size-5" />}>
+              前回と並べて比べる
+            </ButtonLink>
+            <p className="text-sm text-ink-2">
+              「差あり」は、前回との差が比べる幅（{profile.unitLabel}ごとの揺れから求めた幅。下限は推定の点の揺れから決めた目安）を超えたときです。良し悪しは判定しません。
+            </p>
+          </>
         ) : (
           <p className="text-sm text-ink-3">2 回目の記録から、前回との差が出ます。</p>
         )}
@@ -302,15 +328,18 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
             return (
               <li key={def.key} className="py-3">
                 <div className="flex items-baseline justify-between gap-3">
-                  <h3 className="text-[15px] font-medium">{def.label}</h3>
-                  <span className={cx('shrink-0 text-[20px] font-bold num', offView(def) && 'text-ink-3')}>{fmtMotionMetric(def, m)}</span>
+                  <h3 className="text-[15px] font-medium">
+                    {def.label}
+                    {def.estimate && <span className="ml-1.5 rounded-full bg-sunken px-1.5 text-[13px] font-medium text-ink-2">推定</span>}
+                  </h3>
+                  <span className={cx('shrink-0 text-[20px] font-bold whitespace-nowrap num', offView(def) && 'text-ink-3')}>{fmtMotionMetric(def, m)}</span>
                 </div>
-                <div className="text-right text-sm text-ink-3 num">
+                <div className="text-right text-sm text-ink-2 num">
                   {offView(def) && <p>真横から撮れていないので当てになりません</p>}
-                  {band && <p>推定。仮定を動かすと {band}</p>}
+                  {band && <p>仮定を動かすと {band}</p>}
                   {m?.status === 'ok' && m.sd !== null && (
                     <p>
-                      {profile.unitLabel}ごとの揺れ ±{fmtMotionValue({ unit: def.unit, digits: def.digits + 1 }, m.sd)}・{m.reps} {profile.unitLabel}
+                      {profile.unitLabel}ごとの標準偏差 {fmtMotionValue({ unit: def.unit, digits: sdDigits(def) }, m.sd)}・{m.reps} {profile.unitLabel}
                     </p>
                   )}
                   {prev && pm && (
@@ -318,7 +347,14 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
                       前回 {fmtMotionMetric(def, pm)}
                       {ch && (
                         <>
-                          {' '}→ 差 {motionDiffText(def, ch.diff)}・<span className={ch.noticeable ? 'font-bold text-attention' : undefined}>{ch.noticeable ? '差あり' : 'ばらつきの範囲内'}</span>
+                          {' '}→ 差 {motionDiffText(def, ch.diff)}
+                          {ch.judged ? (
+                            <>
+                              （比べる幅 ±{fmtNum(ch.width, sdDigits(def))}）・<span className={ch.noticeable ? 'font-bold text-ink' : undefined}>{ch.noticeable ? '差あり' : '幅の内'}</span>
+                            </>
+                          ) : (
+                            '・推定のため判定しません'
+                          )}
                         </>
                       )}
                     </p>
@@ -332,6 +368,43 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
         </ul>
       </Fold>
 
+      <Fold title={`1 ${profile.unitLabel}ごとの値`} hint={`${a.cycles.length} ${profile.unitLabel}`}>
+        <div className="-mx-4 overflow-x-auto px-4">
+          <table className="w-full text-right text-[15px] num" style={{ minWidth: `${80 + shown.length * 64}px` }}>
+            <thead className="text-sm text-ink-3">
+              <tr className="border-b border-ink/30">
+                <th className="sticky left-0 bg-paper py-2 pr-3 text-left font-medium">{profile.unitLabel}</th>
+                {shown.map((d) => (
+                  <th key={d.key} className="px-2 py-2 font-medium">
+                    {d.short}
+                    <span className="block text-xs font-normal">{d.unit}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {a.cycles.map((c, i) => (
+                <tr key={i} className="border-b border-line last:border-0">
+                  <td className="sticky left-0 bg-paper py-2 pr-3 text-left">{i + 1}</td>
+                  {shown.map((d) => (
+                    <td key={d.key} className={cx('px-2 py-2', offView(d) && 'text-ink-3')}>
+                      {fmtMotionValue(d, c.values[d.key], false)}
+                      <CycleBand def={d} c={c} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {a.sideView === false && <p className="mt-2 text-sm text-ink-3">灰色の値は、真横から撮れていないので当てになりません。</p>}
+      </Fold>
+    </>
+  )
+
+  // グラフ・今の値・筋肉のあとに並べる項目
+  const folds = (
+    <>
       {rec.kind === 'erg' && built && built.cycles.length > 0 && (
         <Fold title="脚・上体・腕の順番">
           <SequenceChart prep={built.prep} cycles={built.cycles} flat />
@@ -458,7 +531,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
       }
     >
       <p className="text-sm text-ink-3 num">
-        {fmtDate(rec.createdAt, true)}・{a.cycles.length} {profile.unitLabel}・{rec.videoSaved ? '動画を保存' : '動画は未保存'}
+        {fmtDate(rec.createdAt, true)}・{a.cycles.length} {profile.unitLabel}・{rec.videoSaved ? '動画あり' : '動画なし'}
         {rec.edits?.length ? '・点を直した記録' : ''}
       </p>
 
@@ -484,6 +557,12 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
             editor={editing && video ? { spread, onEdit: (added) => apply(mergeEdits(edits, added)) } : undefined}
             exportExtra={exportButtons}
             tail={about}
+            lead={
+              <>
+                <SummaryStrip rec={rec} prev={prev} changes={changes} offView={offView} />
+                {leadFolds}
+              </>
+            }
             onArms={(a) => {
               setArms(a)
               void data.saveMotionArms(saved.id, a)
@@ -495,6 +574,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
           <>
             <Notice tone="info">再生に使える体の点がありません。</Notice>
             <div className="mt-3 border-b border-line">
+              {leadFolds}
               {folds}
               <Fold title="書き出す">
                 <p className="text-sm text-ink-3">ファイルはこの端末の中で作ります。どこにも送りません。</p>
@@ -593,10 +673,12 @@ function PlayerWithClock({
   editor,
   exportExtra,
   tail,
+  lead,
   children,
   onArms,
 }: {
   rec: MotionRecord
+  lead?: ReactNode
   built: NonNullable<ReturnType<typeof prepareRecord>>
   poses: ReturnType<typeof motionPoses>
   video: MotionVideoData | null
@@ -624,6 +706,7 @@ function PlayerWithClock({
       exportName={editor ? undefined : fileStem(rec)}
       exportExtra={exportExtra}
       tail={tail}
+      lead={lead}
       onArms={onArms}
       videoOverlay={editor ? <MotionPointEditor prep={built.prep} clock={clock} spread={editor.spread} onEdit={editor.onEdit} /> : undefined}
     >

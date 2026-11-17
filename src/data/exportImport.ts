@@ -2,7 +2,7 @@
 import type { AppDB, StoredImage } from './db'
 import type { AssessmentSession, CheckIn, RecommendationPlan, RoutineLog, UserProfile } from '../domain/types'
 import type { MotionRecord } from '../domain/motion'
-import { fmtDate } from '../domain/format'
+import { fmtDate, offsetCm } from '../domain/format'
 
 export const SCHEMA_VERSION = 1
 const APP_ID = 'karada-teiten'
@@ -153,6 +153,15 @@ const CSV_HEADER = [
   '補正した点',
   '向き',
   '備考',
+  // あとから足した列（前の列の順は変えず、後ろに足す）
+  '測定日時（ISO 8601）',
+  '計算の版',
+  '推定モデルの版',
+  '長さの意味',
+  '長さ（体の高さ H に対する比）',
+  '長さのばらつきの目安（1σ、H に対する比）',
+  '長さの cm の目安',
+  '長さの cm の目安のばらつき（1σ）',
 ]
 
 function csvCell(v: unknown): string {
@@ -161,10 +170,21 @@ function csvCell(v: unknown): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
-export function sessionsToCsv(sessions: AssessmentSession[]): string {
+const isoDate = (iso: string) => {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? iso : d.toISOString()
+}
+const roundTo = (v: number, d: number) => String(Math.round(v * 10 ** d) / 10 ** d)
+
+/**
+ * 姿勢の測定を、1 行 = 1 指標の CSV にする。heightCm（プロフィールの身長）を渡すと、長さ（位置のずれ・高さの差）の
+ * cm の目安も入れる（体の高さ H を身長 × H_TO_STATURE とした換算。渡さなければ空欄）
+ */
+export function sessionsToCsv(sessions: AssessmentSession[], opts: { heightCm?: number } = {}): string {
   const rows = [CSV_HEADER]
   for (const s of [...sessions].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     for (const m of s.computedMetrics) {
+      const cm = offsetCm(m, opts.heightCm)
       rows.push([
         fmtDate(s.createdAt, true),
         s.id,
@@ -181,6 +201,14 @@ export function sessionsToCsv(sessions: AssessmentSession[]): string {
         m.correctedLandmarks.join(' '),
         m.direction,
         m.qualityNote ?? '',
+        isoDate(s.createdAt),
+        String(s.algorithmVersion),
+        s.modelVersion ?? '',
+        m.offset?.label ?? '',
+        m.offset ? String(m.offset.frac) : '',
+        m.offset?.sigma != null ? String(m.offset.sigma) : '',
+        cm ? roundTo(cm.cm, 2) : '',
+        cm?.sigmaCm != null ? roundTo(cm.sigmaCm, 2) : '',
       ])
     }
   }

@@ -1,6 +1,6 @@
 // 向きつきゲージ（7 マス）の位置を決める。
-// 中央のマスは「測定のばらつきの範囲（|値| ≤ 2σ）」。外側へ 1 マス進むごとに、ばらつき 2 つ分（2σ）大きい差。
-// 医学的な基準値ではなく、その差が測定のばらつきに比べてどれだけはっきりしているかを表す
+// 中央のマスは「判定の幅（|値| ≤ 2σ）」。外側へ 1 マス進むごとに、判定の幅 1 つ分（2σ）大きい差。
+// 医学的な基準値ではなく、その差が判定の幅（点の位置のずれを仮定して出した幅）に比べてどれだけはっきりしているかを表す
 import type { ComputedMetric, MetricKey, Plane } from './types'
 import { NOTICEABLE_K } from './constants'
 
@@ -43,22 +43,22 @@ const SPECS: Partial<Record<MetricKey, Spec>> = {
   // + は左が低い = 右が上。上がっている側にマスを置く
   front_shoulder_tilt: { axis: 'lateral', flip: true, tag: higher, short: '肩の高さ' },
   front_pelvis_tilt: { axis: 'lateral', flip: true, tag: higher, short: '骨盤付近の高さ' },
-  front_load_shift: { axis: 'lateral', short: '左右荷重の傾向（参考）' },
-  front_knee_left: { axis: 'leg', short: '左膝（O脚・X脚に関連）' },
-  front_knee_right: { axis: 'leg', short: '右膝（O脚・X脚に関連）' },
+  front_load_shift: { axis: 'lateral', short: '体の中心の寄り' },
+  front_knee_left: { axis: 'leg', short: '左膝の向き' },
+  front_knee_right: { axis: 'leg', short: '右膝の向き' },
   side_head_forward: { axis: 'sagittal', flip: true, short: '頭の前後位置' },
   side_trunk_lean: { axis: 'sagittal', flip: true },
-  side_arm_forward: { axis: 'sagittal', flip: true, short: '腕の前後位置' },
-  side_hip_forward: { axis: 'sagittal', flip: true, short: '骨盤帯の前後位置' },
-  side_knee_extension: { axis: 'sagittal', tag: (v) => (v >= 0 ? '伸びすぎの方向' : '曲がる方向'), short: '膝の伸び' },
-  side_plumb_shoulder: { axis: 'plumb', flip: true },
-  side_plumb_hip: { axis: 'plumb', flip: true },
+  side_arm_forward: { axis: 'sagittal', flip: true, short: '手の前後位置' },
+  side_hip_forward: { axis: 'sagittal', flip: true, short: '腰の前後位置' },
+  side_knee_extension: { axis: 'sagittal', tag: (v) => (v >= 0 ? '後ろへ伸びる方向' : '曲がる方向'), short: '膝の伸び' },
+  side_plumb_shoulder: { axis: 'plumb', flip: true, short: '肩の位置' },
+  side_plumb_hip: { axis: 'plumb', flip: true, short: '股関節の位置' },
   side_plumb_ear: { axis: 'plumb', flip: true, short: '耳の位置' },
   side_plumb_knee: { axis: 'plumb', flip: true, short: '膝の位置' },
   side_head_pitch: { axis: 'pitch', short: '頭の前後傾き（顔の向き）' },
 }
 
-/** ばらつき（1σ）に対する差の段階。0 = ばらつきの範囲内、1〜3 = 外側のマス */
+/** ばらつき（1σ）に対する差の段階。0 = 判定の幅の内、1〜3 = 外側のマス */
 export function gaugeLevel(value: number, sigma: number | null): number {
   if (!sigma || sigma <= 0) return 0
   const z = Math.abs(value) / sigma
@@ -86,7 +86,7 @@ export interface GaugeRow {
   cell: number | null
   pastCell: number | null
   past?: ComputedMetric
-  /** 向きの短い説明。ばらつきの範囲内なら空 */
+  /** 向きの短い説明。判定の幅の内なら空 */
   tag: string
 }
 
@@ -123,8 +123,8 @@ export function gaugeDescription(r: GaugeRow, value: string, pastName = '前回'
   if (r.cell === null) return `${r.label}: 評価できませんでした`
   const where =
     r.cell === 0
-      ? `${value}、測定のばらつきの範囲内`
-      : `${r.tag}へ${value}、ばらつきを超える差（外側へ 3 段階のうち ${Math.abs(r.cell)}）`
-  const past = r.pastCell === null ? '' : `。${pastName}は${r.pastCell === 0 ? 'ばらつきの範囲内' : `${r.pastCell < 0 ? r.axis.left : r.axis.right}側の ${Math.abs(r.pastCell)} 段階目`}`
+      ? `${value}、判定の幅の内`
+      : `${r.tag}へ${value}、判定の幅を超える差（外側へ 3 段階のうち ${Math.abs(r.cell)}）`
+  const past = r.pastCell === null ? '' : `。${pastName}は${r.pastCell === 0 ? '判定の幅の内' : `${r.pastCell < 0 ? r.axis.left : r.axis.right}側の ${Math.abs(r.pastCell)} 段階目`}`
   return `${r.label}: ${where}${past}`
 }

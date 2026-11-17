@@ -1,11 +1,11 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { Box, Camera, ChevronRight } from 'lucide-react'
+import { Box, Camera } from 'lucide-react'
 import type { AssessmentSession, MetricKey, Plane } from '../domain/types'
 import { behaviorBetween, compareSessions, type Comparison } from '../domain/compare'
 import { comparisonSuggestions, reviewTiming } from '../domain/recommend/engine'
 import { routineById } from '../domain/recommend/routines'
-import { confidenceLabel, fmtDate, fmtShortDate, fmtValue } from '../domain/format'
+import { JUDGE_WIDTH_NOTE, SESSION_TAG_LABELS, confidenceLabel, fmtDate, fmtShortDate, fmtValue } from '../domain/format'
 import { correctedSet } from '../domain/session'
 import { gaugeRows } from '../domain/gauge'
 import { useCheckins, useLogs, useProfile, useSessions } from '../data/hooks'
@@ -13,7 +13,7 @@ import { ChangeLabel } from '../components/ChangeLabel'
 import { PhotoWithPose, PostureGrid, useStoredImageUrl } from '../components/PoseViews'
 import { RoutineItem } from '../components/RoutineItem'
 import { GaugeTable } from '../components/Gauge'
-import { Badge, ButtonLink, EmptyState, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
+import { Badge, ButtonLink, EmptyState, Fold, Notice, Screen, SectionTitle, Segmented, cx } from '../components/ui'
 
 const TrendChart = lazy(() => import('../components/TrendChart'))
 
@@ -96,7 +96,7 @@ export function Compare() {
       ) : a && b && a.id !== b.id ? (
         <CompareBody a={a} b={b} />
       ) : (
-        <Notice tone="info">違う日の記録を 2 つ選んでください。</Notice>
+        <Notice tone="info">違う記録を 2 つ選んでください（同じ日の施術の前と後でも比べられます）。</Notice>
       )}
     </Screen>
   )
@@ -109,10 +109,11 @@ function SessionSelect({ label, sessions, value, onChange }: { label: string; se
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium">
         {label}
       </label>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="min-h-12 w-full rounded-[var(--radius-control)] border border-line bg-surface px-2 text-[16px] num">
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className="min-h-12 w-full rounded-[var(--radius-control)] border border-line-strong bg-surface px-2 text-[16px] num">
         {sessions.map((s) => (
           <option key={s.id} value={s.id}>
             {fmtDate(s.createdAt, true)}
+            {tagText(s)}
           </option>
         ))}
       </select>
@@ -137,9 +138,11 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
   return (
     <>
       {/* B. サマリー */}
-      <section aria-labelledby="cmp-sum" className="rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
-        <p className="text-sm text-ink-3 num">
-          {fmtDate(c.before.createdAt)} → {fmtDate(c.after.createdAt)}（{c.days} 日間）
+      <section aria-labelledby="cmp-sum">
+        <p className="text-sm text-ink-2 num">
+          {fmtDate(c.before.createdAt)}
+          {tagText(c.before)} → {fmtDate(c.after.createdAt)}
+          {tagText(c.after)}（{c.days} 日間）
         </p>
         <h2 id="cmp-sum" className="mt-1 text-[19px] leading-snug font-bold">
           {c.overall}
@@ -162,7 +165,10 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
             ))}
           </ol>
         )}
-        <p className="mt-3 text-sm text-ink-3">「改善傾向」は、正面の左右差が小さくなる方向の変化を指します。横向きの前後の位置は、真上や線上がよい位置とは限らないため、良し悪しを判定せずに「小さくなった」「大きくなった」と伝えます。どちらも、測定のばらつき（2 回分）を超えた変化だけを取り上げています。</p>
+        <p className="mt-3 text-sm text-ink-2">
+          「左右差が小さく／大きく」は、正面の左右の差の大きさが変わったことを表し、良し悪しではありません。横向きの前後の位置は「小さくなった／大きくなった」で伝えます。どちらも、判定の幅（2 回分）を超えた変化だけを取り上げています。施術や運動の直後は、一時的に差が大きくなることもあります。
+        </p>
+        <p className="mt-1 text-sm text-ink-3">{JUDGE_WIDTH_NOTE}</p>
       </section>
       {c.warnings.length > 0 && (
         <div className="mt-3">
@@ -189,7 +195,7 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
       {/* ずれの向きと大きさの比較 */}
       {planes.length > 0 && (
         <>
-          <SectionTitle sub="塗りつぶしが今回、点線の枠が前回。中央の帯は測定のばらつきの範囲です">
+          <SectionTitle sub="塗りつぶしが今回、点線の枠が前回。中央の帯は判定の幅です">
             ずれの比較（{plane === 'front' ? '正面' : '横向き'}）
           </SectionTitle>
           <GaugeTable rows={gaugeRows(c.after.computedMetrics, plane, c.before.computedMetrics)} heightCm={profile?.heightCm} pastLegend={`前回（${fmtShortDate(c.before.createdAt)}）`} />
@@ -205,16 +211,17 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
           </li>
         ))}
         {c.top.length > 0 && c.counts.stable > 0 && (
-          <li className="rule-fact pl-3 text-[15px] text-ink-2">ほかの {c.counts.stable} 項目は大きく変わっていません。</li>
+          <li className="rule-fact pl-3 text-[15px] text-ink-2">ほかの {c.counts.stable} 項目は、はっきりした変化はありません。</li>
         )}
       </ul>
 
-      {/* D. 数値比較 */}
-      <SectionTitle sub="前 → 後、差、変化の判定、信頼度（低い方）">数値の比較</SectionTitle>
-      <NumberTable c={c} />
-
-      {/* F. 行動との関連 */}
-      <SectionTitle sub="2 回の測定のあいだの記録">この期間の行動</SectionTitle>
+      {/* D. 数値比較・F. 行動との関連（閉じた項目） */}
+      <div className="mt-8 border-b border-line">
+        <Fold title="数値の比較" hint={`${c.changes.length} 項目`}>
+          <p className="mb-2 text-sm text-ink-2">前 → 後、差、判定の幅（2 回分）。差が判定の幅を超えたものに変化の札が付きます。</p>
+          <NumberTable c={c} />
+        </Fold>
+        <Fold title="この期間の行動" hint={behavior.logCount ? `運動 ${behavior.logCount} 回` : undefined}>
       {behavior.logCount === 0 && behavior.checkinCount === 0 ? (
         <p className="text-ink-2">この期間の運動やコンディションの記録はありません。メニューを行ったら「やった」で記録すると、次の比較で変化と並べて見られます。</p>
       ) : (
@@ -222,8 +229,8 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
           <Stat label="運動の記録" value={`${behavior.logCount} 回`} sub={`${behavior.activeDays} 日`} />
           <Stat label="疲れ（自己評価）" value={ratingChange(behavior.fatigue, behavior.checkinCount)} sub="1 疲れていない〜5 とても疲れている" />
           <Stat label="睡眠（自己評価）" value={ratingChange(behavior.sleep, behavior.checkinCount)} sub="1 よく眠れた〜5 眠れなかった" />
-          <div className="rounded-[var(--radius-control)] bg-surface p-3">
-            <dt className="text-sm text-ink-3">よく行ったメニュー</dt>
+          <div className="border-t border-line pt-2">
+            <dt className="text-sm text-ink-2">よく行ったメニュー</dt>
             <dd className="mt-1 text-[15px]">
               {behavior.topRoutines.length
                 ? behavior.topRoutines.map((t) => `${routineById(t.routineId)?.name ?? t.routineId}（${t.count}）`).join('、')
@@ -232,13 +239,20 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
           </div>
         </dl>
       )}
+        </Fold>
+      </div>
 
       {/* G. 次の提案 */}
       <SectionTitle sub="この変化に対して、次にやること">次の提案</SectionTitle>
       <div className="rule-action space-y-5 pl-3">
-        {suggestions.continue.length > 0 && <SuggestionGroup title="続けたいメニュー" items={suggestions.continue} />}
+        {suggestions.continue.length > 0 && <SuggestionGroup title={suggestions.continue[0].slot === 'today' ? '今日のおすすめ' : '続けたいメニュー'} items={suggestions.continue} />}
         {suggestions.strengthen.length > 0 && <SuggestionGroup title="強化したいメニュー" items={suggestions.strengthen} />}
         {suggestions.recovery.length > 0 && <SuggestionGroup title="疲れている日は回復を優先" items={suggestions.recovery} />}
+        {suggestions.excluded.length > 0 && (
+          <p className="text-sm text-ink-2">
+            「{suggestions.excluded.map((x) => routineById(x.routineId)?.name ?? x.routineId).join('」「')}」は、{suggestions.excluded[0].reason}
+          </p>
+        )}
         <div>
           <p className="font-bold">再測定のタイミング</p>
           <p className="text-[15px] text-ink-2">{timing.text}</p>
@@ -246,11 +260,15 @@ function CompareBody({ a, b }: { a: AssessmentSession; b: AssessmentSession }) {
       </div>
       {suggestions.strengthen[0] && (
         <ButtonLink to={`/move/${suggestions.strengthen[0].routineId}`} variant="primary" size="lg" block className="mt-6">
-          優先メニューを始める
+          このメニューを始める
         </ButtonLink>
       )}
     </>
   )
+}
+
+function tagText(s: AssessmentSession): string {
+  return s.tags?.length ? `（${s.tags.map((t) => SESSION_TAG_LABELS[t]).join('・')}）` : ''
 }
 
 function ratingChange(r: { first?: number; last?: number }, count: number): string {
@@ -260,8 +278,8 @@ function ratingChange(r: { first?: number; last?: number }, count: number): stri
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-[var(--radius-control)] bg-surface p-3">
-      <dt className="text-sm text-ink-3">{label}</dt>
+    <div className="border-t border-line pt-2">
+      <dt className="text-sm text-ink-2">{label}</dt>
       <dd className="mt-0.5 text-[22px] font-medium num">{value}</dd>
       {sub && <dd className="text-xs text-ink-3">{sub}</dd>}
     </div>
@@ -302,14 +320,19 @@ function NumberTable({ c }: { c: Comparison }) {
                     <ChangeLabel change={ch.change} />
                   </div>
                   <div className="mt-1 flex flex-wrap items-baseline gap-x-3 text-[15px] num">
-                    <span className="text-ink-3">{fmtValue(ch.before, ch.unit)}</span>
-                    <ChevronRight aria-label="から" className="size-4 self-center text-ink-3" />
-                    <span className="text-[18px] font-medium">{fmtValue(ch.after, ch.unit)}</span>
-                    <span className="text-ink-2">
+                    <span className="whitespace-nowrap">
+                      <span className="text-ink-2">{fmtValue(ch.before, ch.unit)}</span>
+                      <span aria-label="から" className="px-1 text-ink-3">
+                        →
+                      </span>
+                      <span className="text-[18px] font-medium">{fmtValue(ch.after, ch.unit)}</span>
+                    </span>
+                    <span className="whitespace-nowrap text-ink-2">
                       差 {ch.diff >= 0 ? '+' : ''}
                       {fmtValue(ch.diff, ch.unit)}
                     </span>
-                    <span className="text-sm text-ink-3">信頼度 {confidenceLabel(ch.confidence)}</span>
+                    <span className="whitespace-nowrap text-sm text-ink-2">判定の幅 ±{fmtValue(ch.threshold, ch.unit)}</span>
+                    {confidenceLabel(ch.confidence) !== '高' && <span className="whitespace-nowrap text-sm text-ink-3">点の写り {confidenceLabel(ch.confidence)}</span>}
                   </div>
                   {ch.beforeDirection !== ch.afterDirection && (
                     <p className="mt-0.5 text-sm text-ink-3">
@@ -426,7 +449,7 @@ function VisualCompare({ c, plane }: { c: Comparison; plane: Plane }) {
         )}
       </div>
       <p className="mt-1">
-        <Link to={`/session/${c.after.id}`} className="text-[15px] text-measure underline">
+        <Link to={`/session/${c.after.id}`} className="inline-flex min-h-11 items-center text-[15px] text-measure underline">
           今回の結果を開く
         </Link>
         <Badge>{c.after.imagesSaved ? '写真あり' : '写真なし'}</Badge>

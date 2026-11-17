@@ -64,7 +64,6 @@ const MotionBody3D = lazy(() => import("../three/MotionBody3D"));
 const OverlayCompare = lazy(() => import("../three/OverlayCompare"));
 
 /** 下のタブ（中央の丸いボタンが上にはみ出す分を含む）の高さ。上に留めるまとまりが、これより下へ伸びないようにする */
-const NAV_H = 88;
 
 const CHECK = "size-5 accent-[var(--color-ink)]";
 
@@ -82,6 +81,7 @@ export function MotionPlayer({
   exportExtra,
   children,
   tail,
+  lead,
   onArms,
 }: {
   rec: MotionRecord;
@@ -103,6 +103,8 @@ export function MotionPlayer({
   children?: ReactNode;
   /** 「書き出す」のあとに並べる項目 */
   tail?: ReactNode;
+  /** 再生の操作のすぐ下に並べるもの（要点の帯・平均など。グラフや今の値より前） */
+  lead?: ReactNode;
   /** 腕の構えを手で選んだとき（undefined は「自動」に戻す）。ないときは選べない */
   onArms?: (arms: ArmStyle | undefined) => void;
 }) {
@@ -170,6 +172,19 @@ export function MotionPlayer({
   }, [prep, cycles]);
   // 動画の書き出しで、コマ k に重ねるもの（画面の重ね表示と同じ）
   const three = useRef<HTMLCanvasElement | null>(null);
+  // 上に留まる舞台の高さを --sticky-top に入れて、フォーカスした部品が舞台の下に隠れないようにする
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    const ro = new ResizeObserver(() => root.style.setProperty("--sticky-top", `${Math.round(el.getBoundingClientRect().height) + 8}px`));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--sticky-top");
+    };
+  }, []);
   const overlayAt = (k: number): OverlayInput | null =>
     overlayOn && !videoOverlay && prep.frames[k]
       ? {
@@ -230,7 +245,7 @@ export function MotionPlayer({
   }, [clock, cycles, profile.mainEvent, reduced, autoplay]);
 
   // 並べたときの 3D の高さ（仕切りを上下に動かして変える）。3D は全画面にもできる
-  const [stageH, setStageH] = useState(220);
+  const [stageH, setStageH] = useState(170);
   const [full, setFull] = useState(false);
   const drag = useRef<{ y: number; h: number } | null>(null);
   const clampH = (h: number) => Math.min(720, Math.max(120, Math.round(h)));
@@ -341,13 +356,15 @@ export function MotionPlayer({
     <div>
       {/* 動画・3D・再生の操作。スクロールしても画面の上に留まる。高さは、下のタブに隠れないところまで */}
       <div
+        ref={stageRef}
         className={cx(
           "sticky top-[env(safe-area-inset-top)] -mx-4 flex flex-col bg-ink text-paper",
           "before:absolute before:inset-x-0 before:bottom-full before:h-[env(safe-area-inset-top)] before:bg-ink",
           full ? "z-50" : "z-10",
         )}
         style={{
-          maxHeight: `calc(100dvh - ${NAV_H}px - env(safe-area-inset-top) - env(safe-area-inset-bottom))`,
+          // 下の数値が見えるように、画面の 6 割ほどまで
+          maxHeight: `min(60dvh, calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)))`,
         }}
       >
         {videoOverlay && video ? (
@@ -363,7 +380,7 @@ export function MotionPlayer({
           </div>
         ) : showOverlay && video && mapping ? (
           <div className="flex min-h-0 justify-center">
-            <div style={{ width: fit(46) }}>
+            <div style={{ width: fit(38) }}>
               <Suspense
                 fallback={
                   <div className="bg-ink" style={{ aspectRatio: ratio }} />
@@ -392,7 +409,7 @@ export function MotionPlayer({
           <div className="flex min-h-0">
             <div
               className="relative shrink-0"
-              style={{ aspectRatio: ratio, width: fit(46, "50%") }}
+              style={{ aspectRatio: ratio, width: fit(40, "50%") }}
             >
               {frameVideo}
             </div>
@@ -404,7 +421,7 @@ export function MotionPlayer({
               <div className="flex shrink-0 justify-center">
                 <div
                   className="relative"
-                  style={{ aspectRatio: ratio, width: fit(34) }}
+                  style={{ aspectRatio: ratio, width: fit(26) }}
                 >
                   {frameVideo}
                 </div>
@@ -419,7 +436,7 @@ export function MotionPlayer({
                 aria-valuemax={720}
                 aria-valuenow={stageH}
                 tabIndex={0}
-                className="flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center text-paper/45 hover:text-paper focus-visible:outline-level"
+                className="relative flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center text-paper/45 before:absolute before:inset-x-0 before:-top-3.5 before:-bottom-3.5 hover:text-paper focus-visible:outline-level"
                 onPointerDown={(e) => {
                   drag.current = { y: e.clientY, h: stageH };
                   e.currentTarget.setPointerCapture(e.pointerId);
@@ -471,7 +488,7 @@ export function MotionPlayer({
                 aria-pressed={layout === v}
                 onClick={() => setLayout(v)}
                 className={cx(
-                  "min-h-10 rounded-[8px] px-4 text-[15px]",
+                  "min-h-11 rounded-[8px] px-4 text-[15px]",
                   layout === v ? "bg-ink font-bold text-paper" : "text-ink-2",
                 )}
               >
@@ -508,7 +525,7 @@ export function MotionPlayer({
               onChange={(e) =>
                 onArms(isArmStyle(e.target.value) ? e.target.value : undefined)
               }
-              className="h-10 rounded-[8px] border border-line bg-surface px-2 text-[15px]"
+              className="h-11 rounded-[8px] border border-line-strong bg-surface px-2 text-[15px]"
             >
               <option value="auto">自動（{ARM_LABELS[autoArms]}）</option>
               {ARM_STYLES.map((s) => (
@@ -522,14 +539,12 @@ export function MotionPlayer({
       </div>
 
       <div className="border-b border-line">
-        <Fold title="今の値">
-          <NowTable clock={clock} ts={ts} prep={prep} />
-        </Fold>
+        {lead}
         <Fold title="グラフ">
           <div
             role="group"
             aria-label="グラフにする値"
-            className="-mt-1 flex flex-wrap gap-x-1"
+            className="-mx-4 -mt-1 flex gap-x-1 overflow-x-auto px-4 whitespace-nowrap"
           >
             {profile.series.map((d) => (
               <button
@@ -538,7 +553,7 @@ export function MotionPlayer({
                 aria-pressed={def.key === d.key}
                 onClick={() => setSeries(d.key)}
                 className={cx(
-                  "min-h-10 border-b-2 px-2.5 text-[15px]",
+                  "min-h-11 border-b-2 px-2.5 text-[15px]",
                   def.key === d.key
                     ? "border-ink font-bold text-ink"
                     : "border-transparent text-ink-3",
@@ -578,7 +593,10 @@ export function MotionPlayer({
             ごとの区間です。
           </p>
         </Fold>
-        <Fold title="筋肉の負荷" hint="推定">
+        <Fold title="今の値">
+          <NowTable clock={clock} ts={ts} prep={prep} />
+        </Fold>
+        <Fold title="筋肉の負担の目安" hint="推定">
           <MuscleLoad
             clock={clock}
             ts={ts}
@@ -769,7 +787,7 @@ function Transport({
           <select
             value={speed}
             onChange={(e) => clock.setSpeed(Number(e.target.value))}
-            className="h-10 rounded-[8px] border border-paper/30 bg-ink px-1.5 text-[15px] text-paper num focus-visible:outline-level"
+            className="h-11 rounded-[8px] border border-paper/30 bg-ink px-1.5 text-[15px] text-paper num focus-visible:outline-level"
           >
             {[2, 1, 0.5, 0.25, 0.1].map((v) => (
               <option key={v} value={v}>
@@ -796,22 +814,43 @@ function NowTable({
   const t = useClockValue(clock, (c) => c.get());
   const k = indexAt(ts, t);
   const defs = PROFILES[prep.kind].series;
+  const measured = defs.filter((d) => !d.estimate);
+  const estimated = defs.filter((d) => d.estimate);
+  const cell = (d: (typeof defs)[number]) => (
+    <div key={d.key}>
+      <dt className="text-sm text-ink-2">{d.short}</dt>
+      <dd className="text-[20px] font-bold leading-tight whitespace-nowrap num">
+        {fmtNum(prep.series[d.key][k], d.digits)}
+        <span className="ml-0.5 text-sm font-normal text-ink-2">
+          {d.unit}
+        </span>
+      </dd>
+    </div>
+  );
   return (
-    <dl className="grid grid-cols-3 gap-x-4 gap-y-3">
-      {defs.map((d) => (
-        <div key={d.key}>
-          <dt className="text-sm text-ink-3">{d.short}</dt>
-          <dd className="text-[20px] font-bold leading-tight num">
-            {fmtNum(prep.series[d.key][k], d.digits)}
-            <span className="ml-0.5 text-sm font-normal text-ink-3">
-              {d.unit}
-            </span>
-          </dd>
-        </div>
-      ))}
-    </dl>
+    <>
+      <p className="mb-2 text-sm text-ink-2">見かけの角度・位置（横から見た点から）</p>
+      <dl className="grid grid-cols-3 gap-x-4 gap-y-3">{measured.map(cell)}</dl>
+      {estimated.length > 0 && (
+        <>
+          <p className="mt-4 mb-2 border-t border-line pt-3 text-sm text-ink-2">
+            推定（体の重さの割合と、床からの力の仮定の上に立つ値）
+          </p>
+          <dl className="grid grid-cols-3 gap-x-4 gap-y-3">{estimated.map(cell)}</dl>
+          <p className="mt-2 text-sm text-ink-3">重心はかかと 0%・つま先 100%。負担比は股関節 ÷ 膝で、仮定によって大きく変わります（グラフの帯）。</p>
+        </>
+      )}
+    </>
   );
 }
+
+/** スクワットの行の名前（関節の働き。筋肉の名前は補足） */
+const SQUAT_ROW_NAMES: Partial<Record<MuscleKey, string>> = {
+  quads: "膝を伸ばす（太ももの前）",
+  glutes: "股関節を伸ばす（お尻・太ももの裏）",
+  erectors: "上体を支える（背中）",
+  calves: "足首（ふくらはぎ）",
+};
 
 /** 筋肉の名前の短い形（「太ももの前（大腿四頭筋）」→「太ももの前」） */
 const shortMuscle = (m: MuscleKey) => MUSCLE_LABELS[m].split("（")[0];
@@ -835,21 +874,25 @@ function MuscleLoad({
   const k = indexAt(ts, t);
   const profile = PROFILES[prep.kind];
   const load = sideOk ? prep.load : undefined;
-  const rows: { m: MuscleKey; v: number; phase?: string }[] = demand
+  const rows: { m: MuscleKey; name: string; v: number; phase?: string }[] = demand
     ? (Object.keys(demand.values) as MuscleKey[])
         .filter((m) => demand.values[m]?.some((v) => v > 0))
-        .map((m) => ({ m, v: demand.values[m]?.[k] ?? 0 }))
+        .map((m) => ({ m, name: shortMuscle(m), v: demand.values[m]?.[k] ?? 0 }))
     : load
       ? (
           Object.entries(MUSCLE_JOINT) as [
             MuscleKey,
             keyof typeof load.demand,
           ][]
-        ).map(([m, j]) => ({
-          m,
-          v: load.demand[j][k] ?? 0,
-          phase: PHASE_LABELS[load.phase[j][k] ?? "isometric"],
-        }))
+        )
+          // 太ももの裏はお尻と同じ関節（股関節）から求めるので、1 行にまとめる
+          .filter(([m]) => m !== "hamstrings")
+          .map(([m, j]) => ({
+            m,
+            name: SQUAT_ROW_NAMES[m] ?? shortMuscle(m),
+            v: load.demand[j][k] ?? 0,
+            phase: PHASE_LABELS[load.phase[j][k] ?? "isometric"],
+          }))
       : [];
   if (!rows.length)
     return (
@@ -866,14 +909,17 @@ function MuscleLoad({
     );
   return (
     <>
+      <p className="mb-2 text-sm text-ink-2">
+        数字は、それぞれの行の「この記録の中でいちばん高いとき」を 100 とした今の割合です。いつ高くなるかを見るためのもので、行どうしは比べられません。
+      </p>
       <ul className="space-y-2.5">
-        {rows.map(({ m, v, phase }) => (
+        {rows.map(({ m, name, v, phase }) => (
           <li
             key={m}
-            className="grid grid-cols-[minmax(0,8.5rem)_1fr_2.25rem] items-center gap-3 text-[15px]"
+            className="grid grid-cols-[minmax(0,9.5rem)_1fr_2.25rem] items-center gap-3 text-[15px]"
           >
             <span>
-              {shortMuscle(m)}
+              {name}
               {phase && (
                 <span className="block text-xs text-ink-3">{phase}</span>
               )}
@@ -895,8 +941,11 @@ function MuscleLoad({
           <p className="mt-3 text-sm text-ink-3">
             色と棒は推定です。
             {prep.kind === "erg" ? "ハンドルを引く力" : "ペダルを踏む力"}
-            は測れないので、論文にある標準的な力の出方を当てはめ、関節の位置から求めました。数字は、その筋肉がこの記録でいちばん強く働いたところを
-            100 とした割合です。筋肉どうしは比べられません。
+            は測れないので、論文にある標準的な力の出方を当てはめ、関節の位置から求めました。数字は、推定した負担がこの記録でいちばん大きかったところを
+            100 とした割合で、漕ぐ強さは反映しません。筋肉どうし・ほかの記録とは比べられません。
+            {prep.kind === "erg"
+              ? "お尻・背中の上部・腕の前は、働く時期の筋電図の裏づけがなく、力の型だけから出しています。"
+              : "お尻・ふくらはぎは、働く時期の筋電図の裏づけがなく、力の型だけから出しています。"}
             {demand.far && "棒はカメラ側の脚です。"}
           </p>
           <Details summary="もとにした論文">
@@ -909,9 +958,9 @@ function MuscleLoad({
         </>
       ) : (
         <p className="mt-3 text-sm text-ink-3">
-          色と棒は推定で、数字は 0〜100
-          の目安です。体の部分ごとの重さの割合（Winter
-          2009）と、床からの力の仮定から求めました。筋電図で測った値ではありません。太ももの裏とお尻は同じ値です。
+          色と棒は推定です。体の部分ごとの重さの割合（Winter
+          2009）と床からの力の仮定から関節の負担を求め、曲がりの大きさと合わせた目安の式にしました（式の係数は目安で、文献の値ではありません）。数字は、この記録の中でいちばん高いところを
+          100 とした割合で、重さを足しても同じ濃さになります。行どうし・ほかの記録とは比べられません。筋電図で測った値ではありません。
         </p>
       )}
     </>

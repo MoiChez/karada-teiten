@@ -1,6 +1,6 @@
 // 表示用の文言・数値の整形
-import type { BodyArea, ComputedMetric, GoalTag, LifestyleTag, MetricUnit } from './types'
-import { H_TO_STATURE } from './constants'
+import type { BodyArea, ComputedMetric, GoalTag, LifestyleTag, MetricUnit, SessionTag } from './types'
+import { H_TO_STATURE, NOTICEABLE_K } from './constants'
 
 export const GOAL_LABELS: Record<GoalTag, string> = {
   posture: '姿勢改善',
@@ -35,6 +35,15 @@ export const AREA_LABELS: Record<BodyArea, string> = {
   whole_body: '全身',
 }
 
+export const SESSION_TAG_LABELS: Record<SessionTag, string> = {
+  before_care: '施術の前',
+  after_care: '施術の後',
+  morning: '朝',
+  evening: '夜',
+  before_exercise: '運動の前',
+  after_exercise: '運動の後',
+}
+
 export function fmtNum(v: number, digits = 1): string {
   if (!Number.isFinite(v)) return '—'
   const s = Math.abs(v) < 10 ** -digits / 2 ? 0 : v
@@ -55,12 +64,37 @@ export function confidenceLabel(c: number): '高' | '中' | '低' {
   return c >= 0.75 ? '高' : c >= 0.5 ? '中' : '低'
 }
 
+/**
+ * 判定の幅（この幅を超えたら「差あり」）。点の位置のずれを仮定して出した 1σ の NOTICEABLE_K 倍。
+ * 撮り直して確かめた値ではない
+ */
+export function judgeWidth(sigma: number | null): number | null {
+  return sigma === null || !Number.isFinite(sigma) ? null : NOTICEABLE_K * sigma
+}
+
+/** 判定の幅がどう決まったかの説明（画面の 1 か所に出す） */
+export const JUDGE_WIDTH_NOTE =
+  '判定の幅は、写真の点の位置が体の高さの 0.5% ほどずれると仮定して計算した幅です。撮り直して確かめた値ではなく、立ち直し・服・日による違いは含みません。'
+
+/** cm の目安。ばらつきが 0.5cm を超えるときは整数にする（細かすぎる桁を出さない）。整数で 0 になるときは「1cm 未満」 */
+export function fmtCm(cm: number, sigmaCm: number | null): string {
+  const digits = sigmaCm !== null && sigmaCm > 0.5 ? 0 : 1
+  if (digits === 0 && Math.abs(cm) < 0.5) return '1cm 未満'
+  return `${fmtNum(cm, digits)}cm`
+}
+
+/** 「約 3cm」「1cm 未満」 */
+export function aboutCm(cm: number, sigmaCm: number | null): string {
+  const s = fmtCm(cm, sigmaCm)
+  return s.endsWith('未満') ? s : `約 ${s}`
+}
+
 export function metricStatusLabel(m: ComputedMetric): string {
   switch (m.status) {
     case 'noticeable':
-      return '差が見られる'
+      return '差あり'
     case 'within_noise':
-      return 'ばらつきの範囲内'
+      return 'はっきりした差なし'
     case 'descriptive':
       return '位置の記録'
     case 'unassessable':
@@ -112,6 +146,6 @@ const CM_PRIMARY = new Set<ComputedMetric['key']>(['front_shoulder_tilt', 'front
 export function primaryValue(m: ComputedMetric, heightCm: number | undefined): string {
   if (m.rawValue === null) return '—'
   const off = offsetCm(m, heightCm)
-  if (off && (m.unit === '%' || CM_PRIMARY.has(m.key))) return `${fmtNum(Math.abs(off.cm))}cm`
+  if (off && (m.unit === '%' || CM_PRIMARY.has(m.key))) return fmtCm(Math.abs(off.cm), off.sigmaCm)
   return fmtAbs(m.rawValue, m.unit)
 }

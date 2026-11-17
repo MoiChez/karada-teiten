@@ -51,8 +51,9 @@ export default function StandingPreview({ session, sex }: { session: AssessmentS
   const kind = mannequinKindOf(sex)
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius-panel)] bg-surface shadow-lift">
-      <div className="relative h-[min(46dvh,360px)]" style={{ touchAction: 'none' }}>
+    <div className="overflow-hidden rounded-[var(--radius-panel)] bg-surface border border-line">
+      {/* 縦の指の動きはページのスクロールに回し、横の動きで回す */}
+      <div className="relative h-[min(46dvh,360px)]" style={{ touchAction: 'pan-y' }}>
         <Canvas camera={{ position: [...VIEWS.oblique], fov: 35, near: 0.05, far: 50 }} dpr={[1, 2]} aria-label="立ち姿勢の 3D。ドラッグで回転、ピンチで拡大縮小できます">
           <BodyLights />
           <gridHelper args={[2, 20, '#cfd9d8', '#dfe7e6']} position={[0, floorY, 0]} />
@@ -87,7 +88,7 @@ export default function StandingPreview({ session, sex }: { session: AssessmentS
             type="button"
             aria-pressed={view === k}
             onClick={() => setView(k)}
-            className={cx('min-h-10 rounded-[var(--radius-control)] border text-sm', view === k ? 'border-ink bg-ink text-paper' : 'border-line bg-surface hover:bg-sunken')}
+            className={cx('min-h-11 rounded-[var(--radius-control)] border text-[15px]', view === k ? 'border-ink bg-ink text-paper' : 'border-line-strong bg-surface hover:bg-sunken')}
           >
             {label}
           </button>

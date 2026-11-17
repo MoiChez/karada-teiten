@@ -8,7 +8,7 @@ export function QualityList({ flags }: { flags: QualityFlag[] }) {
   if (!flags.length) {
     return (
       <Notice tone="info" title="大きな問題は見つかりませんでした">
-        点の位置がずれていないか確認し、必要なら直してください。
+        線が体に沿っているかだけ、目で確かめてください。
       </Notice>
     )
   }

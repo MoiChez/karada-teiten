@@ -52,7 +52,7 @@ export function Move() {
       )}
 
       {today && (
-        <section aria-labelledby="today" className="mt-4 rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
+        <section aria-labelledby="today" className="mt-4 rounded-[var(--radius-panel)] bg-surface p-4 border border-line">
           <h2 id="today" className="text-sm font-medium text-ink-3">
             今日のおすすめ
           </h2>
@@ -62,6 +62,11 @@ export function Move() {
             {doneToday.has(today.routineId) ? 'もう一度やる' : '始める'}（{routineById(today.routineId)?.durationMin} 分）
           </ButtonLink>
         </section>
+      )}
+      {plan.excluded.length > 0 && (
+        <p className="mt-3 text-sm text-ink-2">
+          「{plan.excluded.map((x) => routineById(x.routineId)?.name ?? x.routineId).join('」「')}」は、{plan.excluded[0].reason}
+        </p>
       )}
 
       <SectionTitle sub="時間に合わせて、組み合わせを選べます">時間で選ぶ</SectionTitle>

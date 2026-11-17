@@ -1,6 +1,7 @@
 // 共通 UI 部品
 import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router'
+import { canGoBack } from '../state/nav'
 import { AlertTriangle, ChevronDown, ChevronLeft, Info, Loader2, X } from 'lucide-react'
 
 export function cx(...c: (string | false | null | undefined)[]) {
@@ -42,7 +43,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         size === 'lg' && 'min-h-14 px-5 text-[17px]',
         size === 'md' && 'min-h-12 px-4 text-[15px]',
         size === 'sm' && 'min-h-11 px-3 text-sm',
-        block && 'w-full',
+        block ? 'w-full' : 'shrink-0 whitespace-nowrap',
         VARIANT[variant],
         className,
       )}
@@ -78,7 +79,7 @@ export function ButtonLink({
         size === 'lg' && 'min-h-14 px-5 text-[17px]',
         size === 'md' && 'min-h-12 px-4 text-[15px]',
         size === 'sm' && 'min-h-11 px-3 text-sm',
-        block && 'w-full',
+        block ? 'w-full' : 'shrink-0 whitespace-nowrap',
         VARIANT[variant],
         className,
       )}
@@ -139,10 +140,14 @@ export function Screen({
   }, [title])
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[560px] flex-col">
-      <header className={cx('safe-top bg-paper', !staticHeader && 'sticky top-0 z-20 bg-paper/95 backdrop-blur-sm')}>
+      <header className={cx('safe-top bg-paper', !staticHeader && 'sticky top-0 z-20')}>
         <div className="flex min-h-14 items-center gap-1 px-2">
           {back ? (
-            <IconButton label="戻る" onClick={() => (back === true ? navigate(-1) : navigate(back))}>
+            <IconButton
+              label="戻る"
+              // アプリの中から来たときは来た画面へ。直接開いたときや撮影の直後は、決まった画面へ移る
+              onClick={() => (back === true || canGoBack() ? navigate(-1) : navigate(back, { replace: true }))}
+            >
               <ChevronLeft aria-hidden className="size-6" />
             </IconButton>
           ) : (
@@ -156,7 +161,7 @@ export function Screen({
       </header>
       <main className={cx('flex-1 px-4 pb-8', wide && 'px-0')}>{children}</main>
       {footer && (
-        <div className="safe-bottom sticky bottom-0 z-20 border-t border-line bg-paper/95 px-4 pt-3 pb-3 backdrop-blur-sm">
+        <div className="safe-bottom sticky bottom-0 z-20 border-t border-line bg-paper px-4 pt-3 pb-3">
           <div className="flex flex-col gap-2 pb-1">{footer}</div>
         </div>
       )}
@@ -266,7 +271,10 @@ export function Field({
 }
 
 export const inputClass =
-  'w-full min-h-12 rounded-[var(--radius-control)] border border-line bg-surface px-3.5 text-[16px] text-ink placeholder:text-ink-3 focus:border-measure focus:outline-none focus-visible:outline-3 focus-visible:outline-measure'
+  'w-full min-h-12 rounded-[var(--radius-control)] border border-line-strong bg-surface px-3.5 text-[16px] text-ink placeholder:text-ink-3 focus:border-measure focus:outline-none focus-visible:outline-3 focus-visible:outline-measure'
+
+/** 見えない input を包む label に、キーボードで選んだときのフォーカスの輪を出す */
+const FOCUS_WITHIN = 'has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-measure'
 
 /** 単一選択（ラジオボタン） */
 export function Segmented<T extends string | number>({
@@ -294,7 +302,8 @@ export function Segmented<T extends string | number>({
               key={String(o.value)}
               className={cx(
                 'relative flex min-h-12 items-center justify-center rounded-[var(--radius-control)] border px-2 py-2 text-center text-[15px] transition-colors',
-                checked ? 'border-ink bg-ink text-paper font-medium' : 'border-line bg-surface text-ink hover:bg-sunken',
+                FOCUS_WITHIN,
+                checked ? 'border-ink bg-ink text-paper font-medium' : 'border-line-strong bg-surface text-ink hover:bg-sunken',
               )}
             >
               <input
@@ -342,7 +351,8 @@ export function ChipGroup<T extends string>({
               key={o.value}
               className={cx(
                 'flex min-h-11 items-center gap-1.5 rounded-full border px-3.5 text-[15px] transition-colors',
-                checked ? 'border-ink bg-ink text-paper' : 'border-line bg-surface text-ink hover:bg-sunken',
+                FOCUS_WITHIN,
+                checked ? 'border-ink bg-ink text-paper' : 'border-line-strong bg-surface text-ink hover:bg-sunken',
               )}
             >
               <input
@@ -389,11 +399,19 @@ export function RatingScale({
             key={n}
             className={cx(
               'flex min-h-12 items-center justify-center rounded-[var(--radius-control)] border text-[17px] num transition-colors',
-              value === n ? 'border-ink bg-ink text-paper font-bold' : 'border-line bg-surface hover:bg-sunken',
+              FOCUS_WITHIN,
+              value === n ? 'border-ink bg-ink text-paper font-bold' : 'border-line-strong bg-surface hover:bg-sunken',
             )}
           >
-            <input type="radio" name={name} className="sr-only" checked={value === n} onChange={() => onChange(n)} />
-            <span aria-label={`${n}（${n === 1 ? low : n === 5 ? high : '中間'}）`}>{n}</span>
+            <input
+              type="radio"
+              name={name}
+              className="sr-only"
+              aria-label={`${n}（${n === 1 ? low : n === 5 ? high : '中間'}）`}
+              checked={value === n}
+              onChange={() => onChange(n)}
+            />
+            <span aria-hidden>{n}</span>
           </label>
         ))}
       </div>
@@ -489,12 +507,34 @@ export function ProgressSteps({ total, current, label }: { total: number; curren
  * 開いたり閉じたりする項目。初めは閉じていて、見出しの行を押すと開く。箱や影は付けず、細い線で区切る。
  * 中身は開いたときに作る（keepMounted なら、閉じても残す。書き出しの途中で閉じても止まらないように）
  */
-export function Fold({ title, hint, children, keepMounted }: { title: ReactNode; hint?: ReactNode; children: ReactNode; keepMounted?: boolean }) {
-  const [open, setOpen] = useState(false)
-  const [seen, setSeen] = useState(false)
+export function Fold({
+  title,
+  hint,
+  children,
+  keepMounted,
+  defaultOpen = false,
+  anchor,
+}: {
+  title: ReactNode
+  hint?: ReactNode
+  children: ReactNode
+  keepMounted?: boolean
+  /** 初めから開いておく（あとから true になったときも開く） */
+  defaultOpen?: boolean
+  /** 画面の中で移動するときの目印（section の id） */
+  anchor?: string
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const [seen, setSeen] = useState(defaultOpen)
   const id = useId()
+  useEffect(() => {
+    if (defaultOpen) {
+      setOpen(true)
+      setSeen(true)
+    }
+  }, [defaultOpen])
   return (
-    <section className="border-t border-line">
+    <section id={anchor} className="border-t border-line">
       <h2>
         <button
           type="button"

@@ -37,27 +37,36 @@ export function SequenceChart({ prep, cycles, flat }: { prep: PreparedMotion; cy
     for (let k = 0; k <= Math.round(end); k++) if (c[k] > c[at]) at = k
     return { part, at, v: c[at] }
   })
+  // 山の札が重ならないように、近い札は上へずらす
+  const labelY = new Map<SequencePart, number>()
+  const placed: { x: number; y: number }[] = []
+  for (const p of [...peaks].sort((a, b) => a.at - b.at)) {
+    let ly = y(p.v) + 3.5
+    while (placed.some((q) => Math.abs(q.x - x(p.at)) < 26 && Math.abs(q.y - ly) < 12)) ly -= 12
+    placed.push({ x: x(p.at), y: ly })
+    labelY.set(p.part, Math.max(PAD.t + 9, ly))
+  }
   return (
-    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift'}>
+    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 border border-line'}>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={`1 本の中の、脚・上体・腕の動く速さ。速さがいちばん大きい時刻は、${peaks.map((p) => `${SEQ_STYLE[p.part].short} ${p.at}%`).join('、')}`}>
         <rect x={PAD.l} y={PAD.t} width={x(end) - PAD.l} height={plotH} fill="var(--color-measure-soft)" />
         {[0, 0.5, 1].map((v) => (
           <g key={v}>
             <line x1={PAD.l} x2={W - PAD.r} y1={y(v)} y2={y(v)} stroke="var(--color-grid)" />
-            <text x={PAD.l - 4} y={y(v) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--color-ink-3)">
+            <text x={PAD.l - 4} y={y(v) + 3.5} textAnchor="end" fontSize="11" fill="var(--color-ink-3)">
               {v}
             </text>
           </g>
         ))}
         {[0, 25, 50, 75, 100].map((p) => (
-          <text key={p} x={x(p)} y={H - 7} textAnchor="middle" fontSize="9.5" fill="var(--color-ink-3)">
+          <text key={p} x={x(p)} y={H - 7} textAnchor="middle" fontSize="11" fill="var(--color-ink-3)">
             {p}%
           </text>
         ))}
-        <text x={x(end / 2)} y={H - PAD.b - 4} textAnchor="middle" fontSize="9.5" fill="var(--color-ink-2)">
+        <text x={x(end / 2)} y={H - PAD.b - 4} textAnchor="middle" fontSize="11" fill="var(--color-ink-2)">
           ドライブ
         </text>
-        <text x={x((end + 100) / 2)} y={H - PAD.b - 4} textAnchor="middle" fontSize="9.5" fill="var(--color-ink-2)">
+        <text x={x((end + 100) / 2)} y={H - PAD.b - 4} textAnchor="middle" fontSize="11" fill="var(--color-ink-2)">
           リカバリー
         </text>
         {SEQUENCE_PARTS.map((part) => (
@@ -66,7 +75,7 @@ export function SequenceChart({ prep, cycles, flat }: { prep: PreparedMotion; cy
         {peaks.map((p) => (
           <g key={p.part}>
             <circle cx={x(p.at)} cy={y(p.v)} r="3.5" fill={SEQ_STYLE[p.part].color} stroke="var(--color-surface)" strokeWidth="1" />
-            <text x={x(p.at) + 5} y={y(p.v) + 3.5} fontSize="10" fontWeight="bold" fill="var(--color-ink)">
+            <text x={x(p.at) + 5} y={labelY.get(p.part)} fontSize="11.5" fontWeight="bold" fill="var(--color-ink)" stroke="var(--color-surface)" strokeWidth="3" paintOrder="stroke">
               {SEQ_STYLE[p.part].short}
             </text>
           </g>
@@ -79,12 +88,12 @@ export function SequenceChart({ prep, cycles, flat }: { prep: PreparedMotion; cy
               <line x1="0" x2="28" y1="4" y2="4" stroke={SEQ_STYLE[p.part].color} strokeWidth="2" strokeDasharray={SEQ_STYLE[p.part].dash} />
             </svg>
             <span className="flex-1">{SEQUENCE_LABELS[p.part]}</span>
-            <span className="num text-ink-2">ドライブの {Math.round((p.at / end) * 100)}%</span>
+            <span className="num text-ink-2">1 本の {p.at}%（ドライブの {Math.round((p.at / end) * 100)}%）</span>
           </li>
         ))}
       </ul>
       <figcaption className="mt-2 text-sm text-ink-3">
-        脚・上体・腕が、ドライブのどこでいちばん速く動いたかです。横軸は 1 本を 0〜100% にそろえたもので、色の帯がドライブです。{prof.strokes} 本の平均で、順番の良し悪しは判定しません。
+        脚・上体・腕が、ドライブのどこでいちばん速く動いたかです。横軸は 1 本（キャッチから次のキャッチ）を 0〜100% にそろえたもので、色の帯がドライブです。{prof.strokes} 本をそろえた平均の曲線の山なので、「平均」の項目（1 本ごとの山の平均）と少し違うことがあります。人形の動画では、上体の山が正解より 8 ポイントほど早く出ました。順番の良し悪しは判定しません。
       </figcaption>
     </figure>
   )
@@ -113,13 +122,13 @@ export function CrankChart({ prep, cycles, flat }: { prep: PreparedMotion; cycle
   const ticks: number[] = []
   for (let v = lo; v <= hi; v += step) ticks.push(v)
   return (
-    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift'}>
+    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 border border-line'}>
       <Segmented legend="値" value={key} onChange={setKey} columns={options.length} options={options.map((d) => ({ value: d.key, label: d.short }))} />
       <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full" role="img" aria-label={`クランクの角度ごとの${def.label}の平均と揺れ`}>
         {ticks.map((v) => (
           <g key={v}>
             <line x1={PAD.l} x2={W - PAD.r} y1={y(v)} y2={y(v)} stroke="var(--color-grid)" />
-            <text x={PAD.l - 4} y={y(v) + 3.5} textAnchor="end" fontSize="9.5" fill="var(--color-ink-3)">
+            <text x={PAD.l - 4} y={y(v) + 3.5} textAnchor="end" fontSize="11" fill="var(--color-ink-3)">
               {v}
             </text>
           </g>
@@ -134,7 +143,7 @@ export function CrankChart({ prep, cycles, flat }: { prep: PreparedMotion; cycle
         ).map(([a, label]) => (
           <g key={a}>
             <line x1={x(a)} x2={x(a)} y1={PAD.t} y2={H - PAD.b} stroke="var(--color-grid)" strokeDasharray="2 3" />
-            <text x={x(a) + (a === 0 ? 2 : 0)} y={H - 7} textAnchor={a === 0 ? 'start' : 'middle'} fontSize="9.5" fill="var(--color-ink-3)">
+            <text x={x(a) + (a === 0 ? 2 : 0)} y={H - 7} textAnchor={a === 0 ? 'start' : 'middle'} fontSize="11" fill="var(--color-ink-3)">
               {label}
             </text>
           </g>

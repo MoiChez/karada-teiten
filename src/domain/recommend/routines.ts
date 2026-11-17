@@ -155,7 +155,8 @@ export const ROUTINES: Routine[] = [
     category: 'stretch',
     durationMin: 3,
     difficulty: 2,
-    targetTags: ['swayback_related', 'hips', 'lower_back'],
+    // swayback_related（骨盤帯が前に出る・膝が伸びきる・上体が後ろへ倒れる）とは結びつけない。腰の反りは測っていないため
+    targetTags: ['hips', 'lower_back'],
     summary: '脚の付け根の前側をゆるめ、骨盤まわりを楽にする',
     instructions: [
       '片膝立ちになります。膝の下にはタオルを敷きます。',
@@ -173,12 +174,13 @@ export const ROUTINES: Routine[] = [
     category: 'mobility',
     durationMin: 2,
     difficulty: 1,
-    targetTags: ['swayback_related', 'pelvis_asymmetry', 'lower_back', 'recovery'],
+    // 腰の反りや骨盤の傾きは測っていないので、立ち方の特徴（swayback_related）とは結びつけない
+    targetTags: ['pelvis_asymmetry', 'lower_back', 'recovery'],
     summary: '寝たままできる、腰と骨盤の小さな動き',
     instructions: [
       '仰向けになり、膝を立てます。',
       '息を吐きながら、腰を床に近づけるように骨盤を後ろへ傾けます。',
-      '息を吸いながら元に戻します。',
+      '息を吸いながら、腰と床の間に少しすき間ができるくらいまで、骨盤を前へ傾けます。',
       '小さな動きで 10 回くり返します。',
     ],
     cautions: ['大きく動かす必要はありません。', COMMON_STOP],

@@ -58,23 +58,23 @@ export function EditSaved() {
 
   return (
     <Screen
-      title={`${conscious ? '意識した姿勢：' : ''}${p === 'front' ? '正面' : '横向き'}の点を補正`}
+      title={`${conscious ? '意識した姿勢：' : ''}${p === 'front' ? '正面' : '横向き'}の点を直す`}
       back={`/session/${id}`}
       footer={
         imageUrl ? (
           <Button variant="primary" size="lg" block onClick={save} loading={saving}>
-            補正を保存して再計算
+            直した点を保存して計算し直す
           </Button>
         ) : undefined
       }
     >
       {!imageUrl ? (
-        <EmptyState title="写真が残っていないため補正できません" action={<ButtonLink to={`/session/${id}`} variant="secondary" block>結果に戻る</ButtonLink>}>
-          この記録は写真を保存しない設定で測りました。補正は、写真がある間（撮影直後でアプリを閉じる前）か、写真を保存する設定にしているときにできます。
+        <EmptyState title="写真が残っていないため、点を直せません" action={<ButtonLink to={`/session/${id}`} variant="secondary" block>結果に戻る</ButtonLink>}>
+          この記録は写真を残さない設定で測りました。点を直せるのは、写真がある間（撮った直後でアプリを閉じる前）か、写真を残す設定にしているときです。
         </EmptyState>
       ) : (
         <>
-          <p className="mt-1 mb-4 text-[15px] text-ink-2">点を動かして「補正を保存して再計算」を押すと、すべての指標を計算し直します。補正前の値も記録に残ります。</p>
+          <p className="mt-1 mb-4 text-[15px] text-ink-2">点を動かして「直した点を保存して計算し直す」を押すと、すべての値を計算し直します。直す前の値も記録に残ります。</p>
           <QualityList flags={rec.qualityFlags} />
           <div className="mt-4">
             <LandmarkEditor

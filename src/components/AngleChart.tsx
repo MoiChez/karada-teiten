@@ -43,6 +43,8 @@ export function AngleChart({
   flat?: boolean
 }) {
   const svg = useRef<SVGSVGElement>(null)
+  // 指で触ったとき: 縦の動きはページのスクロールに回し、軽く触れたときと横に動かしたときだけ時刻を移す
+  const touch = useRef<{ x: number; y: number; drag: boolean } | null>(null)
   const geo = useMemo(() => {
     const t0 = clock.start
     const t1 = clock.end
@@ -93,7 +95,7 @@ export function AngleChart({
   }
 
   return (
-    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift'}>
+    <figure className={flat ? undefined : 'rounded-[var(--radius-panel)] bg-surface p-3 border border-line'}>
       <figcaption className="flex items-baseline justify-between gap-2 text-sm text-ink-2">
         <span className="font-medium">{label}</span>
         <NowValue ts={ts} values={values} clock={clock} unit={unit} digits={digits} />
@@ -101,16 +103,36 @@ export function AngleChart({
       <svg
         ref={svg}
         viewBox={`0 0 ${W} ${H}`}
-        className="mt-1 w-full touch-none select-none"
+        className="mt-1 w-full touch-pan-y select-none"
         role="img"
         aria-label={`${label}の時間変化。触ると、その時刻へ移ります`}
         onPointerDown={(e) => {
-          e.currentTarget.setPointerCapture(e.pointerId)
-          seekAt(e.clientX)
+          if (e.pointerType === 'mouse') {
+            e.currentTarget.setPointerCapture(e.pointerId)
+            seekAt(e.clientX)
+          } else touch.current = { x: e.clientX, y: e.clientY, drag: false }
         }}
         onPointerMove={(e) => {
-          if (e.buttons) seekAt(e.clientX)
+          if (e.pointerType === 'mouse') {
+            if (e.buttons) seekAt(e.clientX)
+            return
+          }
+          const t = touch.current
+          if (!t) return
+          const dx = e.clientX - t.x
+          const dy = e.clientY - t.y
+          if (!t.drag && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+            t.drag = true
+            e.currentTarget.setPointerCapture(e.pointerId)
+          }
+          if (t.drag) seekAt(e.clientX)
         }}
+        onPointerUp={(e) => {
+          const t = touch.current
+          touch.current = null
+          if (t && !t.drag && Math.abs(e.clientX - t.x) < 8 && Math.abs(e.clientY - t.y) < 8) seekAt(e.clientX)
+        }}
+        onPointerCancel={() => (touch.current = null)}
       >
         {cycles.map((r, i) => (
           <rect key={i} x={geo.x(r.start)} y={PAD.t} width={Math.max(1, geo.x(r.end) - geo.x(r.start))} height={H - PAD.t - PAD.b} fill="var(--color-measure-soft)" />
@@ -118,13 +140,13 @@ export function AngleChart({
         {geo.ticks.map((v) => (
           <g key={v}>
             <line x1={PAD.l} x2={W - PAD.r} y1={geo.y(v)} y2={geo.y(v)} stroke="var(--color-grid)" />
-            <text x={PAD.l - 4} y={geo.y(v) + 4} textAnchor="end" fontSize="10" fill="var(--color-ink-3)">
+            <text x={PAD.l - 4} y={geo.y(v) + 4} textAnchor="end" fontSize="11" fill="var(--color-ink-3)">
               {fmtNum(v, 0)}
             </text>
           </g>
         ))}
         {Array.from({ length: Math.floor(geo.seconds / geo.every) + 1 }, (_, k) => k * geo.every).map((s) => (
-          <text key={s} x={geo.x(geo.t0 + s * 1000)} y={H - 6} textAnchor="middle" fontSize="10" fill="var(--color-ink-3)">
+          <text key={s} x={geo.x(geo.t0 + s * 1000)} y={H - 6} textAnchor="middle" fontSize="11" fill="var(--color-ink-3)">
             {s}秒
           </text>
         ))}
@@ -141,7 +163,7 @@ export function AngleChart({
               strokeDasharray="3 3"
               strokeWidth="0.8"
             />
-            <text x={PAD.l + 4} y={geo.y(reference.hi) - 3} fontSize="9.5" fill="var(--color-ink-2)">
+            <text x={PAD.l + 4} y={geo.y(reference.hi) - 3} fontSize="11" fill="var(--color-ink-2)">
               {reference.label}
             </text>
           </g>

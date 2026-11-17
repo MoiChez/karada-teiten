@@ -2,7 +2,7 @@
 // エルゴと自転車では、体の点の動きから決めた器具の形（シートとレール、クランクとサドル）を添える
 import { Suspense, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
-import { ContactShadows, GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei'
+import { ContactShadows, Grid, OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
@@ -373,7 +373,8 @@ export default function MotionBody3D({
 
   return (
     <div className={cx('relative flex h-full flex-col overflow-hidden', !flat && 'rounded-[var(--radius-panel)]', className)} style={{ background: STAGE }}>
-      <div className="relative min-h-0 flex-1" style={{ touchAction: 'none' }}>
+      {/* 縦の指の動きはページのスクロールに回し、横の動きで回す */}
+      <div className="relative min-h-0 flex-1" style={{ touchAction: 'pan-y' }}>
         <Canvas
           camera={{ position: [...pos], fov: 35, near: 0.05, far: 50 }}
           dpr={[1, 2]}
@@ -392,10 +393,6 @@ export default function MotionBody3D({
           <Gear eq={equipment} poses={poses} clock={clock} hip={nearSide === 'left' ? 23 : 24} ankle={nearSide === 'left' ? 27 : 28} side={nearSide === 'left' ? 1 : -1} />
           <OrbitControls ref={controls} makeDefault target={[0, 0.45, 0]} enableDamping={!reduced} minDistance={0.8} maxDistance={8} />
           <ViewSetter view={`${view}:${resets}`} pos={pos} controls={controls} />
-          {/* 軸の向き（X: 体の左、Y: 上、Z: 体の前）。軸の先を押すと、その向きから見る */}
-          <GizmoHelper alignment="top-left" margin={[44, 44]}>
-            <GizmoViewport axisColors={['#e0707a', '#9fc54a', '#5aa9d6']} labelColor="#10282f" axisHeadScale={0.9} />
-          </GizmoHelper>
         </Canvas>
         <LoadingNote />
       </div>
@@ -410,7 +407,7 @@ export default function MotionBody3D({
               setView(k)
               setResets((n) => n + 1)
             }}
-            className={cx('min-h-9 flex-1 border-t-2 text-[13px]', view === k ? 'border-level font-bold text-paper' : 'border-transparent text-paper/65 hover:text-paper')}
+            className={cx('min-h-11 flex-1 border-t-2 text-[14px]', view === k ? 'border-level font-bold text-paper' : 'border-transparent text-paper/80 hover:text-paper')}
           >
             {VIEW_LABELS[k]}
           </button>

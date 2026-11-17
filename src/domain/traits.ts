@@ -99,7 +99,7 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'neck_shift',
-    label: '首の左右の位置ずれ',
+    label: '頭の中心の左右のずれ',
     plane: 'front',
     evidence: ['front_neck_shift'],
     direction: 0,
@@ -112,7 +112,7 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'leg_alignment',
-    label: '脚のアライメント（O 脚 / X 脚に関連する特徴）',
+    label: '膝の左右の向き（O 脚・X 脚の方向）',
     plane: 'front',
     evidence: ['front_knee_left', 'front_knee_right'],
     direction: 0,
@@ -134,12 +134,12 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'load_shift',
-    label: '左右荷重の傾向（参考）',
+    label: '体の中心の左右の寄り（足の間で）',
     plane: 'front',
     evidence: ['front_load_shift'],
     direction: 0,
     areas: ['feet', 'hips'],
-    caution: '体重のかかり方を測ったものではありません。体の位置の偏りから方向を推測した参考値です。',
+    caution: '体重のかかり方を測ったものではありません。肩と股関節の中央が、両足の中央から左右にどれだけ寄っているかです。',
     summary: (m) => {
       const v = m.get('front_load_shift')!.rawValue!
       return `体の中心が両足の中央より${side(v, '左', '右')}足側へ、股関節の幅の約${fmtAbs(v, '%')}寄っています。`
@@ -147,12 +147,12 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'forward_head',
-    label: '頭部前方位傾向',
+    label: '頭の前後の位置（耳と肩）',
     plane: 'side',
     evidence: ['side_head_forward'],
     direction: 1,
     areas: ['neck', 'shoulders', 'upper_back'],
-    caution: '耳と肩の点の位置関係から見た参考指標です。首の骨の形を評価したものではありません。',
+    caution: '耳と肩の点の位置関係です（いわゆる頭が前に出た姿勢の見方の 1 つ）。首の骨の形は分かりません。臨床で使う頭蓋脊椎角とは目印も角度の向きも違い、この値は大きいほど頭が前です。',
     summary: (m) => {
       const x = m.get('side_head_forward')!
       const v = x.rawValue!
@@ -163,25 +163,25 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'kyphosis_related',
-    label: '猫背傾向に関連する特徴',
+    label: '頭・上体・手が前に寄る傾向',
     plane: 'side',
     evidence: ['composite_kyphosis', 'side_head_forward', 'side_trunk_lean', 'side_arm_forward'],
     direction: 1,
     areas: ['upper_back', 'neck', 'shoulders'],
-    caution: '背骨の丸みは写真の点からは見えません。頭・肩・腕の位置関係から計算した、自分の変化を見るためのスコアです。',
+    caution: '「猫背」と呼ばれる見た目と関係する見方ですが、背骨の丸みは写真の点からは見えません。頭・肩・手の位置関係から計算した、自分の変化を見るための値です。背中の丸みは「背中上部の丸み（背中の輪郭）」で見られます。',
     summary: (m) => {
       const v = m.get('composite_kyphosis')!.rawValue!
-      return `猫背傾向スコアは ${fmtNum(v, 2)} です（頭の前方位・体幹の前傾・腕の位置から計算）。`
+      return `まとめの値は ${fmtNum(v, 2)} です（頭の前後の位置・上半身の傾き・手の位置から計算した、単位のない値）。`
     },
   },
   {
     key: 'rounded_shoulder_related',
-    label: '巻き肩に関連する特徴',
+    label: '手の前後の位置',
     plane: 'side',
     evidence: ['side_arm_forward', 'side_head_forward'],
     direction: 1,
     areas: ['shoulders', 'upper_back'],
-    caution: '腕の置き方で簡単に変わる参考特徴です。肩甲骨の位置は測れません。',
+    caution: '腕の垂らし方や手のひらの向きで簡単に変わります。いわゆる巻き肩の見方の 1 つですが、肩や肩甲骨の位置は測れません。',
     summary: (m) => {
       const v = m.get('side_arm_forward')!.rawValue!
       return v >= 0
@@ -204,20 +204,20 @@ const TRAIT_DEFS: TraitDef[] = [
   },
   {
     key: 'swayback_related',
-    label: '反り腰に関連する特徴',
+    label: '腰が前に出て上体が後ろに寄る傾向',
     plane: 'side',
     evidence: ['composite_swayback', 'side_hip_forward', 'side_knee_extension', 'side_trunk_lean'],
     direction: 1,
     areas: ['lower_back', 'hips', 'knees'],
-    caution: '骨盤の傾きや腰の反りの角度は測れません。骨盤帯の位置・膝の伸び・体幹の傾きから計算した参考スコアです。',
+    caution: 'スウェイバックと呼ばれる立ち方の特徴（腰が前に出る・膝が伸びきる・上体が後ろへ倒れる）と関係する見方です。腰の反り（反り腰）や骨盤の傾きは測れません。',
     summary: (m) => {
       const v = m.get('composite_swayback')!.rawValue!
-      return `反り腰関連スコアは ${fmtNum(v, 2)} です（骨盤帯の前後位置・膝の伸び・体幹の後傾から計算）。`
+      return `まとめの値は ${fmtNum(v, 2)} です（腰の前後の位置・膝の伸び・上半身の後ろへの傾きから計算した、単位のない値）。`
     },
   },
   {
     key: 'knee_hyperextension',
-    label: '膝過伸展傾向',
+    label: '膝の後ろへの伸び',
     plane: 'side',
     evidence: ['side_knee_extension'],
     direction: 1,
@@ -287,7 +287,7 @@ export function deriveTraits(metrics: ComputedMetric[], measuredPlanes: Plane[])
     return {
       ...base,
       status: 'within_noise',
-      summary: nearZero ? `${def.label}は、ほぼ見られません。` : opposite ? `${fact}この特徴とは反対の向きです。` : `${fact}この差は測定のばらつきの範囲内です。`,
+      summary: nearZero ? `${def.label}は、ほぼ見られません。` : opposite ? `${fact}この特徴とは反対の向きです。` : `${fact}判定の幅の内で、はっきりした差とは言えません。`,
       magnitude: Math.round(magnitude * 100) / 100,
     }
   })

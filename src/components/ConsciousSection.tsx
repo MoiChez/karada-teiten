@@ -83,7 +83,7 @@ export function ConsciousSection({
 
   if (!c || !cmp) {
     return (
-      <section id="conscious" aria-labelledby="conscious-h" className="mt-8 rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
+      <section id="conscious" aria-labelledby="conscious-h" className="rounded-[var(--radius-panel)] border border-line bg-surface p-4">
         <h2 id="conscious-h" className="flex items-center gap-2 text-[17px] font-bold">
           <PersonStanding aria-hidden className="size-5 text-measure" />
           意識した姿勢でも撮って比べる
@@ -157,7 +157,7 @@ export function ConsciousSection({
         <p className="mt-1 text-ink-2">意識しても、ばらつきを超えて変わった項目はありませんでした。</p>
       )}
       {cmp.items.length > 0 && cmp.quietCount > 0 && (
-        <p className="mt-2 text-sm text-ink-3">ほかの {cmp.quietCount} 項目は、どちらの姿勢でも測定のばらつきの範囲内でした。</p>
+        <p className="mt-2 text-sm text-ink-3">ほかの {cmp.quietCount} 項目は、どちらの姿勢でも判定の幅の内でした。</p>
       )}
       {cmp.shifts.length > 0 && (
         <div className="mt-3">
@@ -187,7 +187,7 @@ export function ConsciousSection({
             )}
             {adjust.length > 0 && (
               <li className="rule-hypothesis pl-3 text-[15px]">
-                {names(adjust)}は、意識すると差が大きくなるか、反対の向きになりました。良い姿勢をつくるときに、その部分を動かしすぎている可能性があります。
+                {names(adjust)}は、意識すると差が大きくなるか、反対の向きになりました。意識した姿勢をとるときに、その部分を動かしすぎている可能性があります。
               </li>
             )}
           </ul>

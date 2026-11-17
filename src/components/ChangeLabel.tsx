@@ -1,11 +1,12 @@
-import { AlertCircle, ArrowDownRight, ArrowLeftRight, ArrowUpRight, CheckCircle2, Minus, MoveHorizontal } from 'lucide-react'
+import { ArrowDownRight, ArrowLeftRight, ArrowUpRight, Minus, MoveHorizontal } from 'lucide-react'
 import { CHANGE_LABELS, type ChangeLabel as CL } from '../domain/compare'
 import { cx } from './ui'
 
+// 良し悪しを言わないので、色は変化の有無だけで分ける（変化あり = 青、変化なし = 灰色）
 const STYLE: Record<CL, { icon: typeof Minus; cls: string }> = {
-  improved: { icon: CheckCircle2, cls: 'bg-good-soft text-good' },
+  improved: { icon: ArrowDownRight, cls: 'bg-measure-soft text-measure' },
   stable: { icon: Minus, cls: 'bg-sunken text-ink-2' },
-  worsened: { icon: AlertCircle, cls: 'bg-attention-soft text-attention' },
+  worsened: { icon: ArrowUpRight, cls: 'bg-measure-soft text-measure' },
   smaller: { icon: ArrowDownRight, cls: 'bg-measure-soft text-measure' },
   larger: { icon: ArrowUpRight, cls: 'bg-measure-soft text-measure' },
   flipped: { icon: ArrowLeftRight, cls: 'bg-measure-soft text-measure' },

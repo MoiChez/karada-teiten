@@ -156,8 +156,10 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 const flex = (a: Point, b: Point, c: Point) => 180 - interiorAngleDeg(a, b, c)
 
 /**
- * 要求度 D = clip(0.7 × |負担| / 基準 + 0.3 × 曲がりの度合い, 0.05, 1)。
- * 基準は「（体重 + 重さ）× 重力 × 身長の 10%」（脚は片脚ぶんで半分）。曲がりの度合いは、膝・股関節 120°、上体 60°、すね 45° を 1 とする
+ * 要求度: 目安の量 R = 0.7 × |負担| / 基準 + 0.3 × 曲がりの度合い を、この記録の中の 98% 点で割って 0.05〜1 にする
+ * （エルゴ・自転車と同じく記録の中の割合。重さを足しても同じ濃さになり、ほかの記録・関節どうしとは比べられない）。
+ * 基準は「（体重 + 重さ）× 重力 × 身長の 10%」（脚は片脚ぶんで半分）。曲がりの度合いは、膝・股関節 120°、上体 60°、すね 45° を 1 とする。
+ * 係数（0.7・0.3）と基準は目安で、文献の値ではない
  */
 const W_MOMENT = 0.7
 const W_ROM = 0.3
@@ -246,7 +248,9 @@ export function squatLoad(frames: PreparedFrame[], s: Side, f: 1 | -1, body: Res
   const demand = {} as Record<JointKey, number[]>
   const phase = {} as Record<JointKey, ContractionPhase[]>
   for (const j of ['knee', 'hip', 'trunk', 'ankle'] as JointKey[]) {
-    demand[j] = moments[j].map((m, k) => clamp(W_MOMENT * (m / ref[j]) + W_ROM * clamp(angles[j][k] / ROM_FULL[j], 0, 1), 0.05, 1))
+    const raw = moments[j].map((m, k) => Math.max(0, W_MOMENT * (m / ref[j]) + W_ROM * clamp(angles[j][k] / ROM_FULL[j], 0, 1)))
+    const top = quantile(raw.filter(Number.isFinite), 0.98)
+    demand[j] = raw.map((v) => (Number.isFinite(v) && top > 0 ? clamp(v / top, 0.05, 1) : 0.05))
     phase[j] = angles[j].map((_, k) => {
       const a = Math.max(0, k - 2)
       const b = Math.min(n - 1, k + 2)

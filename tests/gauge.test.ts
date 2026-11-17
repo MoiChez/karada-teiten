@@ -42,7 +42,7 @@ describe('ゲージの段階', () => {
     expect(rows.find((x) => x.key === 'side_head_forward')!.cell!).toBeLessThan(0)
     const knee = rows.find((x) => x.key === 'side_knee_extension')!
     expect(knee.cell!).toBeGreaterThan(0)
-    expect(knee.tag).toBe('伸びすぎの方向')
+    expect(knee.tag).toBe('後ろへ伸びる方向')
   })
 
   it('横向きはすべて位置の記録（判定なし）で、推定できない指標は出さない', () => {
@@ -72,8 +72,8 @@ describe('cm の目安', () => {
     const m = find(front({ leftShoulderDrop: 30 }), 'front_shoulder_tilt')
     expect(primaryValue(m, 170)).toMatch(/cm$/)
     expect(primaryValue(m, undefined)).toMatch(/°$/)
-    // 30px / H 1540px × 170cm × 0.91 ≈ 3.0cm
-    expect(primaryValue(m, 170)).toBe(`${((30 / 1540) * 170 * H_TO_STATURE).toFixed(1)}cm`)
+    // 30px / H 1540px × 170cm × 0.91 ≈ 3.0cm。ばらつきが 0.5cm を超えるので整数で出す（細かすぎる桁を出さない）
+    expect(primaryValue(m, 170)).toBe(`${((30 / 1540) * 170 * H_TO_STATURE).toFixed(0)}cm`)
   })
 
   it('角度の指標（全身の左右傾き）は身長があっても角度のまま', () => {

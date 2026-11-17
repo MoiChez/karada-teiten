@@ -1,9 +1,9 @@
-// 向きつきゲージ（7 マス）と、左右荷重の傾向の足の図
+// 向きつきゲージ（7 マス）と、体の中心の左右の寄りの足の図
 import { Link } from 'react-router'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import type { ComputedMetric } from '../domain/types'
 import { gaugeDescription, type GaugeAxis, type GaugeRow } from '../domain/gauge'
-import { fmtAbs, fmtNum, offsetCm, primaryValue } from '../domain/format'
+import { JUDGE_WIDTH_NOTE, aboutCm, fmtAbs, fmtNum, offsetCm, primaryValue } from '../domain/format'
 import { cx } from './ui'
 
 const CELLS = [-3, -2, -1, 0, 1, 2, 3]
@@ -46,7 +46,7 @@ export function GaugeTable({
   const hasOffset = rows.some((r) => r.metric.offset)
   return (
     <div>
-      <div className="rounded-[var(--radius-panel)] bg-surface px-3 py-2 shadow-lift">
+      <div className="border-y border-line py-2">
         {blocks.map((b, i) => (
           <div key={i} className={cx(i > 0 && 'mt-3 border-t border-line pt-2')}>
             {!b.judged && (blocks[i - 1]?.judged ?? true) && (
@@ -70,11 +70,11 @@ export function GaugeTable({
           )}
           <span className="flex items-center gap-1.5">
             <span aria-hidden className="inline-block h-4 w-5 rounded-sm bg-measure-soft" />
-            ばらつきの範囲
+            判定の幅
           </span>
         </p>
         <p>
-          中央の帯は測定のばらつきの範囲で、差があるとは言えない幅です。外側のマスほど、ばらつきに比べてはっきりした差です（1 マス = ばらつき 2 つ分）。医学的な基準値ではありません。
+          中央の帯は判定の幅で、この中は差があるとは言えません。外側のマスほど、はっきりした差です（1 マス = 判定の幅 1 つ分）。医学的な基準値ではありません。{JUDGE_WIDTH_NOTE}
         </p>
         {hasOffset &&
           (heightCm ? (
@@ -95,7 +95,7 @@ export function GaugeTable({
 function BlockView({ block, heightCm, pastName }: { block: Block; heightCm?: number; pastName: string }) {
   return (
     <div className="relative">
-      {/* 中央の帯（ばらつきの範囲） */}
+      {/* 中央の帯（判定の幅） */}
       <div
         aria-hidden
         className="absolute top-0 bottom-0 rounded-md bg-measure-soft"
@@ -156,9 +156,9 @@ function ValueTag({ r, value }: { r: GaugeRow; value: string }) {
   )
 }
 
-// ---------- 左右荷重の傾向（足の図） ----------
+// ---------- 体の中心の左右の寄り（足の図） ----------
 
-/** 体の中心が両足の中央からどちらへ寄っているかを、足の図に点で示す（参考推定） */
+/** 体の中心が両足の中央からどちらへ寄っているかを、足の図に点で示す（体重のかかり方ではない） */
 export function LoadShiftFeet({ metric, heightCm }: { metric: ComputedMetric | undefined; heightCm?: number }) {
   if (!metric || metric.rawValue === null) return null
   const v = metric.rawValue // 股関節の幅に対する %（+ は被写体の左）
@@ -172,8 +172,8 @@ export function LoadShiftFeet({ metric, heightCm }: { metric: ComputedMetric | u
   const cm = offsetCm(metric, heightCm)
   const toward = v >= 0 ? '左' : '右'
   return (
-    <div className="mt-4 grid grid-cols-[140px_1fr] items-center gap-3 rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
-      <svg viewBox="16 0 168 128" role="img" aria-label={`足の図。体の中心の位置を点で示しています。${noticeable ? `${toward}足側へ寄っています` : '両足の中央からのずれは、ばらつきの範囲内です'}`} className="w-full">
+    <div className="mt-4 grid grid-cols-[120px_1fr] items-center gap-3">
+      <svg viewBox="16 0 168 128" role="img" aria-label={`足の図。体の中心の位置を点で示しています。${noticeable ? `${toward}足側へ寄っています` : '両足の中央からのずれは、判定の幅の内です'}`} className="w-full">
         <rect x={cx0 - band} y={10} width={band * 2} height={100} rx={4} fill="var(--color-measure-soft)" />
         <ellipse cx={cx0 - footGap / 2} cy={cy} rx={17} ry={40} fill="var(--color-sunken)" stroke="var(--color-line)" strokeWidth={2} />
         <ellipse cx={cx0 + footGap / 2} cy={cy} rx={17} ry={40} fill="var(--color-sunken)" stroke="var(--color-line)" strokeWidth={2} />
@@ -189,13 +189,13 @@ export function LoadShiftFeet({ metric, heightCm }: { metric: ComputedMetric | u
         </text>
       </svg>
       <div>
-        <p className="text-sm font-medium text-ink-3">体の中心の位置（参考推定）</p>
+        <p className="text-sm font-medium text-ink-2">体の中心の左右の寄り（足の間で）</p>
         <p className="mt-0.5 text-[15px]">
           {noticeable
-            ? `両足の中央より${toward}足側へ寄っています（股関節の幅の約${fmtAbs(v, '%')}${cm ? `、約 ${fmtNum(Math.abs(cm.cm))}cm` : ''}）。`
-            : '両足の中央からのずれは、測定のばらつきの範囲内です。'}
+            ? `両足の中央より${toward}足側へ寄っています（股関節の幅の約${fmtAbs(v, '%')}${cm ? `、${aboutCm(Math.abs(cm.cm), cm.sigmaCm)}` : ''}）。`
+            : '両足の中央からのずれは、判定の幅の内です。'}
         </p>
-        <p className="mt-1 text-sm text-ink-3">体重のかかり方を測ったものではありません。肩と股関節の位置の偏りから、方向を推測した参考値です。</p>
+        <p className="mt-1 text-sm text-ink-2">体重のかかり方を測ったものではありません。肩と股関節の中央が、両足の中央から左右にどれだけ寄っているかです。</p>
       </div>
     </div>
   )

@@ -11,7 +11,7 @@ import { isTracked, towardPhrase } from './metrics'
 export type ConsciousEffect = 'resolved' | 'reduced' | 'smaller' | 'remains' | 'increased' | 'overshoot'
 
 export const CONSCIOUS_EFFECT_LABELS: Record<ConsciousEffect, string> = {
-  resolved: 'ばらつきの範囲まで小さく',
+  resolved: '判定の幅の内まで小さく',
   reduced: '小さくなるが残る',
   smaller: '小さくなる',
   remains: '変わりにくい',
@@ -62,7 +62,7 @@ function sentenceOf(e: ConsciousEffect, a: ComputedMetric, b: ComputedMetric): s
   const v = `いつも ${fmtAbs(a.rawValue!, a.unit)} → 意識すると ${fmtAbs(b.rawValue!, b.unit)}`
   switch (e) {
     case 'resolved':
-      return `${v}。意識すると、ばらつきの範囲まで小さくなりました。`
+      return `${v}。意識すると、判定の幅の内まで小さくなりました。`
     case 'reduced':
       return `${v}。意識すると小さくなりましたが、差は残っています。`
     case 'smaller':

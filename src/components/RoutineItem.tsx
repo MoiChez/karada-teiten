@@ -5,7 +5,7 @@ import { routineById } from '../domain/recommend/routines'
 
 const CATEGORY: Record<string, string> = {
   stretch: 'ストレッチ',
-  mobility: 'モビリティ',
+  mobility: '動かしてほぐす',
   light_exercise: '軽い運動',
   posture_tip: '姿勢のコツ',
   breathing: '呼吸',
@@ -27,9 +27,9 @@ export function RoutineItem({ plan, showReason = true }: { plan: Pick<PlannedRou
         </span>
         <span className="min-w-0 flex-1">
           <span className="block font-medium">{r.name}</span>
-          <span className="block text-sm text-ink-3">
-            {categoryLabel(r.category)}・難易度 {'●'.repeat(r.difficulty)}
-            {'○'.repeat(3 - r.difficulty)}
+          <span className="block text-sm text-ink-2">
+            {categoryLabel(r.category)}・<span aria-label={`難易度 ${r.difficulty} / 3`}><span aria-hidden>難易度 {'●'.repeat(r.difficulty)}
+            {'○'.repeat(3 - r.difficulty)}</span></span>
           </span>
           {showReason && plan.reasons[0] && <span className="mt-0.5 block text-sm text-ink-2">{plan.reasons[0]}</span>}
         </span>

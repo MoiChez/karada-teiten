@@ -210,7 +210,7 @@ export function MotionCapture() {
     }
     setFailure([
       e instanceof Error && /fetch|load|network|wasm/i.test(e.message)
-        ? '骨格推定の準備に失敗しました。通信状態を確かめて、もう一度お試しください。'
+        ? '読み取りの準備ができませんでした。電波のよいところで、もう一度お試しください（動画は送りません）。'
         : e instanceof Error && e.message
           ? e.message
           : '推定の途中で問題が起きました。もう一度お試しください。',

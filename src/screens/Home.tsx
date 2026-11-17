@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { Camera, ChevronRight, HeartPulse, Settings as SettingsIcon, Video } from 'lucide-react'
 import { compareSessions } from '../domain/compare'
@@ -8,8 +8,40 @@ import { fmtDate, localDateKey } from '../domain/format'
 import { useCheckins, useLogs, useProfile, useSessions } from '../data/hooks'
 import { PostureGrid } from '../components/PoseViews'
 import { ChangeLabel } from '../components/ChangeLabel'
-import { ButtonLink, EmptyState, Notice, Screen, SectionTitle, cx } from '../components/ui'
+import { Button, ButtonLink, EmptyState, Notice, Screen, SectionTitle, cx } from '../components/ui'
 import { useSettings } from '../state/stores'
+import { STORAGE_NOTICE, markStorageNoticeShown, storageNoticeShown } from '../data/persist'
+
+/** 最初の記録のあと、記録が端末の中にだけあることを 1 回だけ伝える */
+function StorageNotice() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void storageNoticeShown().then((shown) => alive && setShow(!shown))
+    return () => {
+      alive = false
+    }
+  }, [])
+  if (!show) return null
+  return (
+    <div className="mb-4">
+      <Notice tone="info" title="記録の保存について">
+        <p>{STORAGE_NOTICE}</p>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="mt-2"
+          onClick={() => {
+            setShow(false)
+            void markStorageNoticeShown()
+          }}
+        >
+          わかった
+        </Button>
+      </Notice>
+    </div>
+  )
+}
 
 const WEEK = ['月', '火', '水', '木', '金', '土', '日']
 
@@ -64,6 +96,8 @@ export function Home() {
         </Notice>
       )}
 
+      {latest && <StorageNotice />}
+
       {!latest ? (
         <EmptyState
           title="最初の測定で、今の姿勢を記録します"
@@ -76,18 +110,18 @@ export function Home() {
           正面と横向きの写真 2 枚で、肩の高さの左右差や頭の位置などを数値にします。写真は端末の中だけで処理します。
         </EmptyState>
       ) : (
-        <section aria-labelledby="latest" className="rounded-[var(--radius-panel)] bg-surface p-4 shadow-lift">
+        <section aria-labelledby="latest">
           <div className="flex items-baseline justify-between">
-            <h2 id="latest" className="font-bold">
+            <h2 id="latest" className="text-[19px] font-bold">
               最新の姿勢
             </h2>
-            <span className="text-sm text-ink-3 num">{fmtDate(latest.createdAt)}</span>
+            <span className="text-sm text-ink-2 num">{fmtDate(latest.createdAt)}</span>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3">
             {latest.front && <PostureGrid current={latest.front} past={prev?.front} label="正面の骨格。前回は破線" compact />}
             {latest.side && <PostureGrid current={latest.side} past={prev?.side} label="横向きの骨格。前回は破線" compact />}
           </div>
-          {prev && <p className="mt-2 text-xs text-ink-3">実線が今回、破線が前回（{fmtDate(prev.createdAt)}）です。</p>}
+          {prev && <p className="mt-2 text-sm text-ink-3">実線が今回、破線が前回（{fmtDate(prev.createdAt)}）です。</p>}
           {comparison ? (
             <div className="mt-3 border-t border-line pt-3">
               <p className="text-[15px]">{comparison.overall}</p>
@@ -101,7 +135,7 @@ export function Home() {
           ) : (
             <p className="mt-3 border-t border-line pt-3 text-[15px] text-ink-2">
               {latest.postureTraits.find((t) => t.status === 'noticeable')?.summary ??
-                (latest.front ? '正面の写真からは、測定のばらつきを超える目立った差は見られませんでした。' : '横向きの位置を記録しました。次の測定から、変化をお知らせします。')}
+                (latest.front ? '正面から見て、左右のはっきりした差はありませんでした。' : '横向きの位置を記録しました。次の測定から、変化をお知らせします。')}
             </p>
           )}
           <div className="mt-2 flex gap-4">
@@ -131,6 +165,11 @@ export function Home() {
           <ButtonLink to={`/move/${todayRoutine.id}`} variant={latest ? 'primary' : 'secondary'} size="lg" block className="mt-4">
             今日のメニューを始める
           </ButtonLink>
+          {plan.excluded.length > 0 && (
+            <p className="mt-2 text-sm text-ink-2">
+              「{plan.excluded.map((x) => routineById(x.routineId)?.name ?? x.routineId).join('」「')}」は、{plan.excluded[0].reason}
+            </p>
+          )}
         </>
       )}
 
@@ -151,7 +190,7 @@ export function Home() {
           </li>
         ))}
       </ol>
-      <div className="mt-4 flex items-center justify-between gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3">
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
         <div className="flex items-center gap-2">
           <HeartPulse aria-hidden className="size-5 text-measure" />
           <span className="text-[15px]">{todayCheckin ? '今日の調子は記録済みです' : '今日の調子はどうですか'}</span>
@@ -160,10 +199,10 @@ export function Home() {
           {todayCheckin ? '記録し直す' : '記録する'}
         </ButtonLink>
       </div>
-      <div className="mt-2 flex items-center justify-between gap-3 rounded-[var(--radius-control)] bg-surface px-3.5 py-3">
+      <div className="mt-3 flex items-center justify-between gap-3 border-t border-b border-line py-3">
         <div className="flex items-center gap-2">
-          <Video aria-hidden className="size-5 text-measure" />
-          <span className="text-[15px]">動きを撮る（スクワット・エルゴ・自転車）</span>
+          <Video aria-hidden className="size-5 shrink-0 text-measure" />
+          <span className="text-[15px]">動きを撮る（スクワット・ローイングエルゴ・自転車）</span>
         </div>
         <ButtonLink to="/motion" size="sm" variant="secondary">
           開く

@@ -12,8 +12,10 @@
   --color-sunken: #e6ecea;
   --color-ink: #10282f;
   --color-ink-2: #3d555c;
-  --color-ink-3: #5a6e75;
+  --color-ink-3: #53666d;
   --color-line: #cfd9d8;
+  /* 入力欄・選んでいない選択肢の枠（背景に対して 3:1 以上） */
+  --color-line-strong: #7f8f95;
   --color-grid: #dfe7e6;
   --color-level: #cde14b;
   --color-level-soft: #eef5c8;
@@ -42,6 +44,9 @@
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    /* 上に留まる見出し・動画の下に、フォーカスした部品が隠れないように */
+    scroll-padding-top: var(--sticky-top, 64px);
+    scroll-padding-bottom: 96px;
   }
   body {
     background: var(--color-paper);
@@ -58,6 +63,12 @@
   h3 {
     line-height: 1.35;
     text-wrap: balance;
+  }
+  /* 行の終わりに 1 文字だけ残らないように */
+  p,
+  li,
+  dd {
+    text-wrap: pretty;
   }
   button,
   a,

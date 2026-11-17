@@ -9,6 +9,36 @@ import { frontPose, record, sidePose } from './helpers'
 let n = 0
 const freshRepo = () => repo(new AppDB(`test-${Date.now()}-${n++}`))
 
+/** BOM を除いて、行とセルに分ける（"…" で囲んだセルの , と "" も扱う） */
+function parseCsv(csv: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  const s = csv.replace(/^﻿/, '')
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (quoted) {
+      if (c === '"' && s[i + 1] === '"') {
+        cell += '"'
+        i++
+      } else if (c === '"') quoted = false
+      else cell += c
+    } else if (c === '"') quoted = true
+    else if (c === ',') {
+      row.push(cell)
+      cell = ''
+    } else if (c === '\r' && s[i + 1] === '\n') {
+      rows.push([...row, cell])
+      row = []
+      cell = ''
+      i++
+    } else cell += c
+  }
+  rows.push([...row, cell])
+  return rows
+}
+
 const makeSession = (createdAt: string) =>
   buildSession({ createdAt, front: record('front', frontPose({ leftShoulderDrop: 20 })), side: record('side', sidePose({ earForward: 30 })), imagesSaved: false, modelVersion: 'full' })
 
@@ -132,6 +162,34 @@ describe('エクスポートとインポート', () => {
     const lines = csv.split('\r\n')
     expect(lines.length).toBe(1 + s.computedMetrics.length)
     expect(csv).toContain('front_shoulder_tilt')
+  })
+
+  it('CSV の後ろに、ISO 8601 の日時・計算と推定モデルの版・長さの比と cm の目安を足す（前の列の順は変えない）', () => {
+    const s = makeSession('2026-10-01T09:00:00.000Z')
+    const [header, ...rows] = parseCsv(sessionsToCsv([s], { heightCm: 170 }))
+    expect(header.slice(0, 15)).toEqual(['測定日時', 'セッションID', '面', '指標キー', '指標名', '値', '単位', '正規化値', '正規化の単位', 'ばらつきの目安(1σ)', '判定', '信頼度', '補正した点', '向き', '備考'])
+    const col = (name: string) => {
+      const k = header.indexOf(name)
+      expect(k).toBeGreaterThanOrEqual(15)
+      return k
+    }
+    const row = rows.find((r) => r[3] === 'front_shoulder_tilt')!
+    const m = s.computedMetrics.find((x) => x.key === 'front_shoulder_tilt')!
+    expect(row[col('測定日時（ISO 8601）')]).toBe('2026-10-01T09:00:00.000Z')
+    expect(row[col('計算の版')]).toBe(String(s.algorithmVersion))
+    expect(row[col('推定モデルの版')]).toBe('full')
+    expect(m.offset).toBeDefined()
+    expect(Number(row[col('長さ（体の高さ H に対する比）')])).toBe(m.offset!.frac)
+    expect(Number(row[col('長さの cm の目安')])).toBeCloseTo(m.offset!.frac * 170 * 0.91, 2)
+    // 身長を渡さなければ cm は空欄（比は入る）
+    const [h2, ...rows2] = parseCsv(sessionsToCsv([s]))
+    const row2 = rows2.find((r) => r[3] === 'front_shoulder_tilt')!
+    expect(row2[h2.indexOf('長さの cm の目安')]).toBe('')
+    expect(row2[h2.indexOf('長さ（体の高さ H に対する比）')]).toBe(String(m.offset!.frac))
+    // 長さのない指標は空欄
+    const angleOnly = s.computedMetrics.find((x) => !x.offset)
+    if (angleOnly) expect(rows.find((r) => r[3] === angleOnly.key)![col('長さ（体の高さ H に対する比）')]).toBe('')
+    expect(rows.every((r) => r.length === header.length)).toBe(true)
   })
 
   it('Blob と data URL の相互変換', async () => {

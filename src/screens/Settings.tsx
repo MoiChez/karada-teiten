@@ -31,7 +31,8 @@ export function Settings() {
   }
   const exportCsv = async () => {
     const sessions = await data.listSessions()
-    download(`karada-teiten-metrics-${localDateKey()}.csv`, new Blob([sessionsToCsv(sessions)], { type: 'text/csv' }))
+    const profile = await data.getProfile()
+    download(`karada-teiten-metrics-${localDateKey()}.csv`, new Blob([sessionsToCsv(sessions, { heightCm: profile?.heightCm })], { type: 'text/csv' }))
   }
   const pickImport = async (file: File | undefined) => {
     if (!file) return
@@ -115,13 +116,13 @@ export function Settings() {
           保存済みの写真も含める（ファイルが大きくなります）
         </label>
         <Button block icon={<Download aria-hidden className="size-5" />} onClick={exportAll} loading={busy}>
-          すべてのデータを書き出す（JSON）
+          すべての記録を保存する（引っ越し用・JSON）
         </Button>
         <Button block icon={<Download aria-hidden className="size-5" />} onClick={exportCsv}>
-          測定値を書き出す（CSV）
+          姿勢の値を表で保存する（CSV）
         </Button>
         <Button block icon={<FileUp aria-hidden className="size-5" />} onClick={() => fileRef.current?.click()}>
-          書き出したデータを読み込む（JSON）
+          保存した記録を読み込む（JSON）
         </Button>
         <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => pickImport(e.target.files?.[0])} />
         {importErrors.length > 0 && (
@@ -145,7 +146,7 @@ export function Settings() {
         このアプリは、写真から推定した体の目印の位置関係を数値にするものです。病気やけがの診断、治療の判断はできません。痛み・しびれ・めまいなどがある場合は、医療機関に相談してください。
       </Details>
       <Details summary="解析の限界">
-        骨格の点は MediaPipe Pose Landmarker が服や体の見た目から推定した位置で、骨や関節そのものの位置ではありません。服装・撮影角度・照明・立ち方で値が変わります。基準値（正常範囲）は使わず、測定のばらつきを超える差かどうかと、自分の過去との比較を中心にしています。
+        骨格の点は MediaPipe Pose Landmarker が服や体の見た目から推定した位置で、骨や関節そのものの位置ではありません。服装・撮影角度・照明・立ち方で値が変わります。基準値（正常範囲）は使わず、判定の幅（点の位置のずれを仮定して出した幅）を超える差かどうかと、自分の過去との比較を中心にしています。
       </Details>
       <Details summary="通信について">
         アプリ本体・骨格推定のモデル・フォントはこのサイトから読み込み、写真や測定値を外部へ送ることはありません。

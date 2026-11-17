@@ -108,8 +108,8 @@ function CompareBody({ a, b, videoA, videoB, sex }: { a: MotionRecord; b: Motion
         </div>
       )}
 
-      <SectionTitle sub={`${profile.unitLabel}ごとの揺れから見て、差が測定のばらつきを超えるかを示します。`}>平均の差</SectionTitle>
-      <div className="overflow-x-auto rounded-[var(--radius-panel)] bg-surface shadow-lift">
+      <SectionTitle sub={`差が、${profile.unitLabel}ごとの揺れから求めた比べる幅を超えるかを示します。良し悪しは判定しません。`}>平均の差</SectionTitle>
+      <div className="overflow-x-auto rounded-[var(--radius-panel)] bg-surface border border-line">
         <table className="w-full min-w-[420px] text-right text-[15px] num">
           <thead className="text-sm text-ink-3">
             <tr className="border-b border-line">
@@ -130,7 +130,7 @@ function CompareBody({ a, b, videoA, videoB, sex }: { a: MotionRecord; b: Motion
                   <td className="px-2 py-2">
                     {ch ? (
                       <>
-                        {motionDiffText(d, ch.diff)} <Badge tone={ch.noticeable ? 'attention' : 'neutral'}>{ch.noticeable ? '差が見られる' : '範囲内'}</Badge>
+                        {motionDiffText(d, ch.diff)} {ch.judged ? <Badge tone={ch.noticeable ? 'measure' : 'neutral'}>{ch.noticeable ? '差あり' : '幅の内'}</Badge> : <Badge>推定のため判定しません</Badge>}
                       </>
                     ) : (
                       '—'
@@ -264,7 +264,7 @@ function PhaseTransport({ clock }: { clock: Clock }) {
   const speed = useClockValue(clock, (c) => c.getSpeed())
   const pct = ((t - clock.start) / Math.max(1, clock.end - clock.start)) * 100
   return (
-    <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-2 shadow-lift">
+    <div className="mt-3 rounded-[var(--radius-panel)] bg-surface p-2 border border-line">
       <div className="flex items-center gap-2">
         <Button
           variant="secondary"
@@ -321,7 +321,7 @@ function PhaseChart({ a, b, label, unit, digits, clock }: { a: number[]; b: numb
   const y = (v: number) => CH - PAD.b - ((v - lo) / Math.max(1e-6, hi - lo)) * (CH - PAD.t - PAD.b)
   const path = (v: number[]) => v.map((p, k) => `${k ? 'L' : 'M'}${x(k, v.length).toFixed(1)},${y(p).toFixed(1)}`).join('')
   return (
-    <figure className="rounded-[var(--radius-panel)] bg-surface p-3 shadow-lift">
+    <figure className="rounded-[var(--radius-panel)] bg-surface p-3 border border-line">
       <figcaption className="flex flex-wrap items-center justify-between gap-2 text-sm text-ink-2">
         <span className="font-medium">
           {label}（全部の回の平均、{unit}）

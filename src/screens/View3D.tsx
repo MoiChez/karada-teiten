@@ -224,7 +224,7 @@ function View3DBody({ s, past, kind }: { s: AssessmentSession; past?: Assessment
               <Notice tone="info">体のモデルを読み込めなかったため、骨格で表示しています。通信できる状態で開き直すと表示されます。</Notice>
             </div>
           )}
-          <div className="relative mt-3 h-[min(62dvh,520px)] overflow-hidden rounded-[var(--radius-panel)] bg-surface" style={{ touchAction: 'none' }}>
+          <div className="relative mt-3 h-[min(62dvh,520px)] overflow-hidden rounded-[var(--radius-panel)] bg-surface" style={{ touchAction: 'pan-y' }}>
             <Canvas camera={{ position: [...VIEWS.oblique], fov: 35, near: 0.05, far: 50 }} dpr={[1, 2]} aria-label="姿勢の 3D 表示。ドラッグで回転、ピンチで拡大縮小できます">
               <ambientLight intensity={body ? 0.3 : 0.75} />
               <directionalLight position={[2, 3, 2]} intensity={body ? 1.5 : 1.2} />

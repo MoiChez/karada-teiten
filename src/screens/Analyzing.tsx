@@ -59,7 +59,7 @@ export function Analyzing() {
         setDone(5)
         // 画像を保存しない設定でも、アプリを開いている間は補正し直せるよう下書きを残す
         draft.setEditing(session.id)
-        navigate(`/session/${session.id}`, { replace: true })
+        navigate(`/session/${session.id}`, { replace: true, state: { justMeasured: true } })
       } catch (e) {
         setError(e instanceof Error ? e.message : '保存できませんでした')
       }

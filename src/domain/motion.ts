@@ -270,9 +270,13 @@ export interface MotionChange {
   key: string
   diff: number
   noticeable: boolean
+  /** 差とみなす幅（両方の幅を合わせた 2 倍） */
+  width: number
+  /** 差を判定する値か（推定の値は判定しない） */
+  judged: boolean
 }
 
-/** 前の記録との差（同じ種目で、両方とも測れた値だけ）。差が両方のばらつきを合わせた 2 倍を超えれば「差が見られる」 */
+/** 前の記録との差（同じ種目で、両方とも測れた値だけ）。差が両方の幅を合わせた 2 倍を超えれば「差あり」。推定の値は判定しない */
 export function compareMotion(prev: MotionAnalysis, cur: MotionAnalysis): MotionChange[] {
   if ((prev.kind ?? 'squat') !== (cur.kind ?? 'squat')) return []
   const out: MotionChange[] = []
@@ -281,7 +285,9 @@ export function compareMotion(prev: MotionAnalysis, cur: MotionAnalysis): Motion
     const b = motionMetric(cur, def.key)
     if (a?.status !== 'ok' || b?.status !== 'ok' || a.value === null || b.value === null) continue
     const diff = b.value - a.value
-    out.push({ key: def.key, diff, noticeable: Math.abs(diff) > NOTICEABLE_K * Math.hypot(a.uncertainty ?? 0, b.uncertainty ?? 0) })
+    const width = NOTICEABLE_K * Math.hypot(a.uncertainty ?? 0, b.uncertainty ?? 0)
+    const judged = !def.estimate
+    out.push({ key: def.key, diff, width, judged, noticeable: judged && Math.abs(diff) > width })
   }
   return out
 }

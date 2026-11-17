@@ -9,6 +9,7 @@ import { newId } from '../domain/session'
 import { categoryLabel } from '../components/RoutineItem'
 import { Badge, Button, Dialog, Field, Screen, SectionTitle, Segmented, inputClass } from '../components/ui'
 import { data } from '../data/repo'
+import { useLogs } from '../data/hooks'
 import { useToast } from '../state/stores'
 
 function tagLabel(t: TargetTag): string | null {
@@ -25,7 +26,10 @@ export function RoutineDetail() {
   const [open, setOpen] = useState(false)
   const [log, setLog] = useState<Partial<RoutineLog>>({})
   const [saving, setSaving] = useState(false)
+  const logs = useLogs()
   if (!r) return <Navigate to="/move" replace />
+  // 記録は日付順。このメニューの最後の記録で「痛みや違和感があった」なら、手順の上に知らせる
+  const lastHadDiscomfort = logs?.filter((l) => l.routineId === r.id).at(-1)?.discomfort === 'yes'
 
   const save = async () => {
     setSaving(true)
@@ -54,6 +58,13 @@ export function RoutineDetail() {
       </div>
       <p className="mt-3 text-[17px]">{r.summary}</p>
       {targets.length > 0 && <p className="mt-2 text-sm text-ink-3">関係する傾向・部位: {targets.join('・')}</p>}
+
+      {lastHadDiscomfort && (
+        <p className="mt-4 flex gap-2">
+          <CircleAlert aria-hidden className="mt-1 size-4 shrink-0 text-attention" />
+          前回は痛みや違和感がありました。続くときは医療機関に相談してください。
+        </p>
+      )}
 
       <SectionTitle>やり方</SectionTitle>
       <ol className="space-y-3">

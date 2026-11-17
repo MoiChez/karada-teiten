@@ -5,6 +5,7 @@ import type { AppSettings, AssessmentSession, CheckIn, RecommendationPlan, Routi
 import { ALGORITHM_VERSION } from '../domain/constants'
 import { recomputeSession } from '../domain/session'
 import { upgradeMotion, type MotionRecord } from '../domain/motion'
+import { ensurePersisted } from './persist'
 
 export function repo(db: AppDB = defaultDb) {
   return {
@@ -80,6 +81,8 @@ export function repo(db: AppDB = defaultDb) {
         copy.imagesSaved = !!(copy.front?.imageMetadata.imageId || copy.side?.imageMetadata.imageId)
         await db.assessments.put(copy)
       })
+      // 記録が消されにくいよう、ブラウザに頼む（待たない。失敗しても保存は済んでいる）
+      void ensurePersisted()
     },
     async updateSession(s: AssessmentSession) {
       await db.assessments.put(s)
@@ -149,6 +152,7 @@ export function repo(db: AppDB = defaultDb) {
         await db.motions.put({ ...r, videoSaved: !!video })
         if (video) await db.motionVideos.put({ id: r.id, ...video })
       })
+      void ensurePersisted()
     },
     async deleteMotion(id: string) {
       await db.transaction('rw', db.motions, db.motionVideos, async () => {

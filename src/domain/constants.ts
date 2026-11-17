@@ -2,7 +2,7 @@
 // 測定の品質や「ばらつきを超える差か」を判断するための工学的な目安（docs/05-analysis-logic.md）
 
 /** 計算ロジックの版。変えたら保存済みセッションは読み込み時に再計算される */
-export const ALGORITHM_VERSION = 6
+export const ALGORITHM_VERSION = 7
 
 /** ランドマーク位置の想定誤差（体の高さ H に対する割合、1σ） */
 export const LANDMARK_SIGMA_FRACTION = 0.005

@@ -73,7 +73,7 @@ export default function TrendChart({ sessions }: { sessions: AssessmentSession[]
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <figcaption className="mt-1 text-sm text-ink-3">縦の線は測定のばらつきの目安（±2σ）です。線どうしが重なる範囲の変化は、ばらつきの範囲内の可能性があります。</figcaption>
+          <figcaption className="mt-1 text-sm text-ink-3">縦の線は判定の幅（±2σ。点の位置のずれを仮定して出した幅）です。線どうしが重なる範囲の変化は、はっきりした変化とは言えません。</figcaption>
         </figure>
       )}
 

@@ -5,6 +5,7 @@ import { BottomNav } from './components/BottomNav'
 import { Toast } from './components/Toast'
 import { useSettings } from './state/stores'
 import { data } from './data/repo'
+import { NavRecorder } from './state/nav'
 import { Home } from './screens/Home'
 import { Onboarding } from './screens/Onboarding'
 import { ProfileEdit } from './screens/ProfileEdit'
@@ -13,6 +14,7 @@ import { Capture } from './screens/Capture'
 import { Review } from './screens/Review'
 import { Analyzing } from './screens/Analyzing'
 import { Result } from './screens/Result'
+import { ShareView } from './screens/ShareView'
 import { EditSaved } from './screens/EditSaved'
 import { Compare } from './screens/Compare'
 import { Move } from './screens/Move'
@@ -63,6 +65,7 @@ export function App() {
   return (
     <HashRouter>
       <UpdatePrompt />
+      <NavRecorder />
       <Gate>
         <Suspense fallback={<div className="p-8 text-center text-ink-3">読み込み中…</div>}>
           <Routes>
@@ -76,7 +79,8 @@ export function App() {
             <Route path="/measure/analyzing" element={<Analyzing />} />
             <Route path="/measure/conscious/capture/:plane" element={<Capture pose="conscious" />} />
             <Route path="/measure/conscious/review/:plane" element={<Review pose="conscious" />} />
-            <Route path="/session/:id" element={<WithNav><Result /></WithNav>} />
+            <Route path="/session/:id" element={<Result />} />
+            <Route path="/session/:id/share" element={<ShareView />} />
             <Route path="/session/:id/edit/:plane" element={<EditSaved />} />
             <Route path="/session/:id/3d" element={<View3D />} />
             <Route path="/compare" element={<WithNav><Compare /></WithNav>} />
@@ -86,7 +90,7 @@ export function App() {
             <Route path="/motion" element={<WithNav><MotionList /></WithNav>} />
             <Route path="/motion/capture" element={<MotionCapture />} />
             <Route path="/motion/compare" element={<MotionCompare />} />
-            <Route path="/motion/:id" element={<WithNav><MotionResult /></WithNav>} />
+            <Route path="/motion/:id" element={<MotionResult />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/status" element={<Status />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -38,6 +38,8 @@ export interface SeriesDef {
   value?: (p: Point[], c: SeriesCtx) => number
   /** 仮定を動かした幅の、下限と上限の値の名前 */
   band?: [string, string]
+  /** 推定の値（重心・負担の比）。測った角度と分けて「推定」として出す */
+  estimate?: boolean
 }
 
 export interface PreparedMotion extends PreparedBase {
@@ -97,6 +99,8 @@ export interface MetricDef {
   optional?: boolean
   /** 真横から撮っていなくても使える値（回数・深さ・時間）。ほかの値は、真横から撮っていないと参考にならない */
   anyView?: boolean
+  /** 推定の値（重心・負担の比）。「推定」として出し、前回との差は判定しない（点の揺れによる幅を求めていないため） */
+  estimate?: boolean
 }
 
 /** 種目で一般に主に使われる筋肉（3D の体に場所を色で示すだけ。個人の測定値ではない） */
@@ -165,16 +169,16 @@ const KNEE: SeriesDef = {
   short: '膝',
   unit: '°',
   digits: 0,
-  doc: '股関節・膝・足首の点を結ぶ線の角度です。脚がまっすぐなとき 0° で、曲げるほど大きくなります。横から見た見かけの角度で、骨の角度ではありません。',
+  doc: '股関節・膝・足首の点を結ぶ線の角度です。脚がまっすぐなとき 0° で、曲げるほど大きくなります。横から見た見かけの角度で、骨の角度ではありません。人形の動画（正解つき）で確かめたコマごとの差は、スクワット約 4°（深くしゃがむほど小さく出て、いちばん深い回で約 10° 小さい）、エルゴ約 4°、自転車約 6° でした。実際の人では確かめていません。',
   value: (p, c) => flex(p[c.s.hip], p[c.s.knee], p[c.s.ankle]),
 }
 const HIP: SeriesDef = {
   key: 'hip',
-  label: '股関節の曲がり',
+  label: '股関節の曲がり（上体と太もも）',
   short: '股関節',
   unit: '°',
   digits: 0,
-  doc: '肩・股関節・膝の点を結ぶ線の角度です。上体と太ももが一直線のとき 0° で、曲げるほど大きくなります。骨盤そのものの傾きや、背骨の曲がりは分けて測れません。',
+  doc: '上体（股関節から肩への線）と太もも（股関節から膝への線）の間の曲がりです。一直線のとき 0° で、曲げるほど大きくなります。骨盤の傾きと腰・背中の曲がりも含むので、臨床で測る股関節の屈曲（骨盤に対する太ももの角度）より大きな値になります。人形の動画（正解つき）で確かめたコマごとの差は、スクワット約 6°（深いほど小さく出る）、エルゴ約 7°、自転車約 5° でした。',
   value: (p, c) => flex(p[c.s.shoulder], p[c.s.hip], p[c.s.knee]),
 }
 const TRUNK: SeriesDef = {
@@ -183,7 +187,7 @@ const TRUNK: SeriesDef = {
   short: '上体',
   unit: '°',
   digits: 0,
-  doc: '股関節の点から肩の点への線が、鉛直からどれだけ前に傾いたかです（後ろに傾くと −）。背中の丸みは含みません。',
+  doc: '股関節の点から肩の点への線が、鉛直からどれだけ前に傾いたかです（後ろに傾くと −）。背中の丸みは含みません。人形の動画（正解つき）で確かめたコマごとの差は約 3〜4° でした（エルゴのフィニッシュでは約 6° 後ろに出ました）。',
   value: (p, c) => angleFromVerticalDeg(p[c.s.hip], p[c.s.shoulder], c.f),
 }
 const SHIN: SeriesDef = {
@@ -192,7 +196,7 @@ const SHIN: SeriesDef = {
   short: 'すね',
   unit: '°',
   digits: 0,
-  doc: '足首の点から膝の点への線が、鉛直からどれだけ前に傾いたかです。足首がどれだけ曲がったかの目安になります。',
+  doc: '足首の点から膝の点への線が、鉛直からどれだけ前に傾いたかです。足首がどれだけ曲がったかの目安になります。人形の動画（正解つき）で確かめたコマごとの差は約 2° でした（スクワット）。',
   value: (p, c) => angleFromVerticalDeg(p[c.s.ankle], p[c.s.knee], c.f),
 }
 const ELBOW: SeriesDef = {
@@ -201,7 +205,7 @@ const ELBOW: SeriesDef = {
   short: 'ひじ',
   unit: '°',
   digits: 0,
-  doc: '肩・ひじ・手首の点を結ぶ線の角度です。腕がまっすぐなとき 0° で、曲げるほど大きくなります。',
+  doc: '肩・ひじ・手首の点を結ぶ線の角度です。腕がまっすぐなとき 0° で、曲げるほど大きくなります。人形の動画（正解つき）で確かめたコマごとの差は約 4° でした（エルゴ。フィニッシュでは約 7° 小さく出ました）。',
   value: (p, c) => flex(p[c.s.shoulder], p[elbowOf(c.s)], p[c.s.wrist]),
 }
 const ANKLE: SeriesDef = {
@@ -210,7 +214,7 @@ const ANKLE: SeriesDef = {
   short: '足首',
   unit: '°',
   digits: 0,
-  doc: '膝・足首・足先の点を結ぶ線の角度（すねと足の甲の間）です。つま先を下げるほど大きくなります。靴を履いていると、足先の点は靴の先になります。',
+  doc: '膝・足首・足先の点を結ぶ線の角度（すねと足の甲の間）です。つま先を下げるほど大きくなります。靴を履いていると、足先の点は靴の先になります。人形の動画（自転車）では、正解より約 19° 大きく出て、動いた幅は小さく出ました（正解の取り方と、足先の点の位置が違うため）。',
   value: (p, c) => interiorAngleDeg(p[c.s.knee], p[c.s.ankle], p[c.s.foot]),
 }
 
@@ -279,7 +283,7 @@ const DEPTH: SeriesDef = {
   short: '深さ',
   unit: '%',
   digits: 0,
-  doc: '腰（股関節の点）がどれだけ下がったかを、立っているときの股関節から足首までの高さに対する割合で表した値です。0% が立った姿勢です。',
+  doc: '腰（股関節の点）がどれだけ下がったかを、立っているときの股関節から足首までの高さに対する割合で表した値です。0% が立った姿勢です。人形の動画（正解つき）で確かめたコマごとの差は約 1 ポイントでした（いちばん深い回で約 4 ポイント浅く出ました）。',
   value: (p, c) => ((c.standLeg - (p[c.s.ankle].y - p[c.s.hip].y)) / c.standLeg) * 100,
 }
 
@@ -295,10 +299,11 @@ const THIGH: SeriesDef = {
 
 const COM_FOOT: SeriesDef = {
   key: 'com',
-  label: '重心の真下の位置（かかと 0%・つま先 100%）',
+  label: '重心の真下の位置（推定。かかと 0%・つま先 100%）',
   short: '重心',
   unit: '%',
   digits: 0,
+  estimate: true,
   doc: '推定した体の重心（持つ重さを含む）の真下が、足のどこにあるかです。かかとが 0%、つま先が 100% です。体の部分ごとの重さの割合（Winter 2009）と、画面の上の点から求めた推定で、測った値ではありません。奥側の手足はカメラ側と同じ位置とみなしています。',
   value: (p, c) => {
     const com = bodyCom(p, c.s, c.body.weightKg, c.body.loadKg)
@@ -310,11 +315,12 @@ const COM_FOOT: SeriesDef = {
 
 const RATIO: SeriesDef = {
   key: 'ratio',
-  label: '股関節と膝の負担の比（股関節 ÷ 膝）',
+  label: '股関節と膝の負担の比（推定。股関節 ÷ 膝）',
   short: '負担比',
   unit: '倍',
-  digits: 2,
-  doc: '股関節を伸ばす向きの負担（力のモーメント）が、膝を伸ばす向きの負担の何倍かの推定です。1 より大きいと股関節の側、小さいと膝の側に負担が寄っています。床からの力は測っていないため、推定の重心の真下に、左右の脚へ半分ずつかかると仮定して求め、その仮定を動かした幅（その位置から足の長さの ±25%、左右 4:6〜6:4）を帯で示します。ほぼ立っているとき（膝の負担が 10 Nm 未満）は出しません。良し悪しは判定しません。',
+  digits: 1,
+  estimate: true,
+  doc: '股関節を伸ばす向きの負担（力のモーメント）が、膝を伸ばす向きの負担の何倍かの推定です。1 より大きいと股関節の側、小さいと膝の側に負担が寄っています。床からの力は測っていないため、推定の重心の真下に、左右の脚へ半分ずつかかると仮定して求め、その仮定を動かした幅（その位置から足の長さの ±25%、左右 4:6〜6:4）を帯で示します。点の位置のずれや体の形の違いは、この幅に入っていません。ほぼ立っているとき（膝の負担が 10 Nm 未満）は出しません。良し悪しも、前回との差も判定しません。',
   band: ['ratio_lo', 'ratio_hi'],
 }
 
@@ -448,22 +454,24 @@ const SQUAT: SportProfile = {
     },
     {
       key: 'com_bottom',
-      label: '重心の真下の位置（いちばん深いところ）',
+      label: '重心の真下の位置（推定。いちばん深いところ）',
       short: '重心',
       unit: '%',
       digits: 0,
       doc: COM_FOOT.doc,
       floor: 3,
+      estimate: true,
       value: (c, prep) => at(prep, 'com', eventOf(c, 'bottom')?.index),
     },
     {
       key: 'ratio_bottom',
-      label: '股関節と膝の負担の比（いちばん深いところ）',
+      label: '股関節と膝の負担の比（推定。いちばん深いところ）',
       short: '負担比',
       unit: '倍',
-      digits: 2,
+      digits: 1,
       doc: RATIO.doc,
       floor: 0.05,
+      estimate: true,
       band: ['ratio_bottom_lo', 'ratio_bottom_hi'],
       value: (c, prep) => at(prep, 'ratio', eventOf(c, 'bottom')?.index),
     },
@@ -518,8 +526,8 @@ const SQUAT: SportProfile = {
         return prep.bar && b ? maxIn(prep.bar.v, b.index, c.endIndex) : null
       },
     },
-    { key: 'ratio_bottom_lo', label: '負担の比の幅（下限）', short: '比の下限', unit: '倍', digits: 2, doc: RATIO.doc, floor: 0.05, hidden: true, value: (c, prep) => at(prep, 'ratio_lo', eventOf(c, 'bottom')?.index) },
-    { key: 'ratio_bottom_hi', label: '負担の比の幅（上限）', short: '比の上限', unit: '倍', digits: 2, doc: RATIO.doc, floor: 0.05, hidden: true, value: (c, prep) => at(prep, 'ratio_hi', eventOf(c, 'bottom')?.index) },
+    { key: 'ratio_bottom_lo', label: '負担の比の幅（下限）', short: '比の下限', unit: '倍', digits: 1, doc: RATIO.doc, floor: 0.05, hidden: true, estimate: true, value: (c, prep) => at(prep, 'ratio_lo', eventOf(c, 'bottom')?.index) },
+    { key: 'ratio_bottom_hi', label: '負担の比の幅（上限）', short: '比の上限', unit: '倍', digits: 1, doc: RATIO.doc, floor: 0.05, hidden: true, estimate: true, value: (c, prep) => at(prep, 'ratio_hi', eventOf(c, 'bottom')?.index) },
   ],
   valid: (p, s) => p[s.shoulder].y < p[s.hip].y && p[s.knee].y < p[s.ankle].y,
   smoothing: 1.5,
