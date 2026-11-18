@@ -105,6 +105,10 @@ export const useSettings = create<SettingsState>((set, get) => ({
       const settings = await data.getSettings()
       setRtmQuality(settings.poseQuality)
       set({ settings, loaded: true })
+      // 前の版で撮った斜め・正面・後ろのスクワットに、向きによらない 3D を足す（裏で 1 回だけ）
+      void import('../data/upgrade3d')
+        .then((m) => m.addView3dToOldMotions())
+        .catch((e) => console.warn('前の記録に 3D を足せませんでした', e))
     } catch (e) {
       set({ loaded: true, storageError: e instanceof Error ? e.message : String(e) })
     }

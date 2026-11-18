@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { squat3dSeries } from '../src/domain/motion3d'
 import { metricDoc, PROFILES } from '../src/domain/motionSports'
-import { VIEW3D_POINTS } from '../src/domain/view3d'
+import { VIEW3D_POINTS, parseView3DModel, type View3DModelFile } from '../src/domain/view3d'
+import { analyzeMotion, motionMetric, packLandmarks, packWorld, type MotionInput, type MotionRecord } from '../src/domain/motion'
+import { needsView3d, withView3d } from '../src/data/upgrade3d'
+import type { Landmark } from '../src/domain/types'
 
 type V = [number, number, number]
 const RAD = Math.PI / 180
@@ -97,5 +101,93 @@ describe('向きによらない 3D からスクワットの角度を求める', 
     // なめらかにする前の値と比べるため、いちばん深いコマのまわりではなく、端のコマ（立った姿勢）で 0 に近い
     expect(Math.abs(r.depth[0])).toBeLessThan(1)
     expect(r.depth[9]).toBeGreaterThan(5)
+  })
+})
+
+// ---------- 斜め後ろの下から撮ったスクワットを、分析の入口から通す ----------
+
+const W = 1000
+const H = 1600
+
+/** 体の座標 → カメラの座標（toCamera と同じ向き。原点は体のまわりを回すときの中心、カメラは奥へ D 離れる） */
+function camPoint(q: V, yawDeg: number, pitchDeg: number, D = 3): V {
+  const cy = Math.cos(yawDeg * RAD)
+  const sy = Math.sin(yawDeg * RAD)
+  const cp = Math.cos(pitchDeg * RAD)
+  const sp = Math.sin(pitchDeg * RAD)
+  const x = q[0] * cy + q[2] * sy
+  const z = -q[0] * sy + q[2] * cy
+  const Y = -(q[1] - 0.55)
+  const Z = -z
+  return [x, Y * cp - Z * sp, Y * sp + Z * cp + D]
+}
+
+/** 3 回しゃがむ動き（1 回 3 秒、30 コマ/秒）を、斜め後ろ（yaw 135°）の下（pitch −15°）から撮った入力。v は withV のときだけ */
+function obliqueInput(maxKnee: number, withV: boolean): MotionInput {
+  const frames: MotionInput['frames'] = []
+  const yaw = 135
+  const pitch = -15
+  for (let t = 0; t <= 600 + 3 * 3600; t += 1000 / 30) {
+    const local = t - 600
+    const k = Math.floor(local / 3600)
+    const u = local - k * 3600
+    const phase = local >= 0 && k < 3 && u <= 3000 ? u / 3000 : 0
+    const knee = maxKnee * (1 - Math.cos(2 * Math.PI * phase)) * 0.5
+    const p = body(knee, knee * 0.35)
+    const c: Record<number, V> = {}
+    for (const m of Object.keys(p).map(Number)) c[m] = camPoint(p[m], yaw, pitch)
+    const base = (i: number) => (i <= 10 && ![7, 8].includes(i) ? 0 : i >= 17 && i <= 22 ? (i % 2 ? 15 : 16) : i)
+    const lm: Landmark[] = []
+    const world: Landmark[] = []
+    const hip = c[23].map((v, j) => (v + c[24][j]) / 2)
+    for (let i = 0; i < 33; i++) {
+      const q = c[base(i)]
+      lm.push({ x: (W / 2 + (1000 * q[0]) / q[2]) / W, y: (H / 2 + (1000 * q[1]) / q[2]) / H, z: 0, visibility: 0.9 })
+      world.push({ x: q[0] - hip[0], y: q[1] - hip[1], z: q[2] - hip[2], visibility: 0.9 })
+    }
+    frames.push({ t: Math.round(t), lm, world, v: withV ? toCamera(p, yaw, pitch) : undefined })
+  }
+  return { frames, width: W, height: H }
+}
+
+describe('斜め後ろの下から撮ったスクワット', () => {
+  it('3D があれば、角度と深さを 3D から求め、回を区切り、重心は出さない', () => {
+    const a = analyzeMotion(obliqueInput(110, true), 'squat')
+    expect(a.angles3d).toBe(true)
+    expect(a.cycles).toHaveLength(3)
+    expect(a.warnings.some((w) => w.includes('向きによらない 3D'))).toBe(true)
+    expect(a.warnings.some((w) => w.includes('参考になりません'))).toBe(false)
+    // なめらか化で山が少し削れる分を許す
+    expect(motionMetric(a, 'knee')!.value!).toBeGreaterThan(105)
+    expect(motionMetric(a, 'knee')!.value!).toBeLessThan(111)
+    expect(motionMetric(a, 'trunk')!.value!).toBeGreaterThan(35)
+    expect(motionMetric(a, 'trunk')!.value!).toBeLessThan(39)
+    expect(motionMetric(a, 'com_bottom')?.status ?? 'unavailable').not.toBe('ok')
+  })
+
+  it('3D がない前の記録は「真横でない」になり、3D を足すと計算し直せる', () => {
+    const input = obliqueInput(110, false)
+    const before = analyzeMotion(input, 'squat')
+    expect(before.angles3d).toBeFalsy()
+    const rec: MotionRecord = {
+      id: 'm_test',
+      createdAt: '2026-11-18T00:00:00.000Z',
+      appVersion: '0.25.0',
+      kind: before.kind,
+      source: 'upload',
+      modelVersion: 'test',
+      video: { width: W, height: H, durationMs: 11400, frameCount: input.frames.length, fps: 30, quarterTurns: 0 },
+      videoSaved: false,
+      frames: input.frames.map((f) => ({ t: f.t, p: packLandmarks(f.lm), w: packWorld(f.world!) })),
+      analysis: before,
+    }
+    expect(needsView3d(rec)).toBe(true)
+    // 真横の記録・3D を足した記録は対象にしない
+    expect(needsView3d({ ...rec, analysis: { ...before, view: before.view && { ...before.view, view: 'side' } } })).toBe(false)
+    const model = parseView3DModel(JSON.parse(readFileSync('public/models/view3d-v2.json', 'utf8')) as View3DModelFile)
+    const next = withView3d(rec, model)!
+    expect(next.frames.every((f) => f.v?.length === 60)).toBe(true)
+    expect(needsView3d(next)).toBe(false)
+    expect(next.analysis.angles3d).toBe(true)
   })
 })
