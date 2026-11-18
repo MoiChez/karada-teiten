@@ -30,7 +30,7 @@ export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 8
+export const MOTION_ALGORITHM_VERSION = 9
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },

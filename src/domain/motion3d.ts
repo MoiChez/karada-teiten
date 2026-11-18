@@ -88,8 +88,18 @@ export function squat3dSeries(vs: (number[] | undefined)[]): Record<'knee' | 'hi
         })
       : NaN,
   )
-  // 深さ: 足首の中点から股関節の中点までの、上の向きの高さ。立っているとき（高い方から 1 割）からの下がり
-  const height = fs.map((F) => (F ? dot(sub(mid(F, 23, 24), mid(F, 27, 28)), F.up) : NaN))
+  // 深さ: 足首から股関節までの、上の向きの高さ。立っているとき（高い方から 1 割）からの下がり。
+  // 高さは「太ももの長さ × 太ももの鉛直からの傾きの cos + すねの長さ × すねの cos」（左右の平均）で求め、長さは記録の中の中央値にする。
+  // 股関節の点の高さをそのまま使うと、推定の脚の長さがコマごとに少し変わるだけで高さが揺れ、膝がほとんど曲がっていないのに
+  // 深さが 15% を超えて 1 回と数えることがあった（実際の人の動画）
+  const lens = (a: number, b: number) => {
+    const v = fs.flatMap((F) => (F ? [len(sub(F.P(a), F.P(b)))] : [])).sort((x, y) => x - y)
+    return v.length ? v[Math.floor(v.length / 2)] : NaN
+  }
+  const Lt = (lens(23, 25) + lens(24, 26)) / 2
+  const Ls = (lens(25, 27) + lens(26, 28)) / 2
+  const cosUp = (F: Frame3D, a: number, b: number) => dot(unit(sub(F.P(a), F.P(b))), F.up)
+  const height = fs.map((F) => (F ? both((s) => Lt * cosUp(F, pick(s, 23, 24), pick(s, 25, 26)) + Ls * cosUp(F, pick(s, 25, 26), pick(s, 27, 28))) : NaN))
   const hs = height.filter(Number.isFinite).sort((a, b) => a - b)
   const stand = hs.length ? hs[Math.floor((hs.length - 1) * 0.9)] : NaN
   const depth = height.map((h) => (Number.isFinite(h) && stand > 0 ? ((stand - h) / stand) * 100 : NaN))

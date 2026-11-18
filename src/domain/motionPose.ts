@@ -10,6 +10,7 @@ import { PAIRS, bodySideIndex } from './motionFrontal'
 import { evenPicks } from './torsoDepth'
 import { frame3d } from './motion3d'
 import { VIEW3D_POINTS } from './view3d'
+import { smoothPointsInTime, smoothSeries, stabilizeArms } from './view3dSmooth'
 
 /**
  * 座って行う種目で、体の大きさをそろえる比（標準の体の「股関節〜膝〜足首の長さ / 耳〜かかとの高さ」）。
@@ -155,6 +156,11 @@ function view3dBody(prep: PreparedMotion): { poses: { t: number; pose: Pose3D }[
     }
     return { k, pts }
   })
+  // 3D の体を落ち着かせる（実際の動画では、見えにくい手首などの推定がコマごとに揺れ、腕が暴れて見えた）。
+  // 腕は胴に対する位置の前後 1 秒の中央値にし（外れたコマに引っぱられない）、そのあと全部の点を時間でなめらかにする（σ 80 ミリ秒。view3dSmooth.ts）
+  const rawTs = okIdx.map((k) => prep.frames[k].t)
+  const calm = smoothPointsInTime(stabilizeArms(raw.map((r) => r.pts), rawTs, 1000), rawTs, 80)
+  raw.forEach((r, i) => (r.pts = calm[i]))
   const feet = raw.flatMap((r) => [29, 30, 31, 32].map((m) => r.pts.get(m)!.y))
   const floor = quantile(feet, 0.1)
   const poses = raw.map(({ k, pts }) => {
@@ -181,7 +187,10 @@ function view3dBody(prep: PreparedMotion): { poses: { t: number; pose: Pose3D }[
   const ax = quantile(okIdx.map(ankPx).map((p) => p.x), 0.5)
   const ay = quantile(okIdx.map(ankPx).map((p) => p.y), 0.5)
   const ts = poses.map((p) => p.t)
-  const shifts = okIdx.map((k) => ({ x: ankPx(k).x - ax, y: ankPx(k).y - ay }))
+  // 画面の上の足首の点のずれ（手持ちで撮ったときに 3D を動画についていかせる）も、揺れないように時間でなめらかにする
+  const sx = smoothSeries(okIdx.map((k) => ankPx(k).x - ax), ts, 100)
+  const sy = smoothSeries(okIdx.map((k) => ankPx(k).y - ay), ts, 100)
+  const shifts = sx.map((x, i) => ({ x, y: sy[i] }))
   return {
     poses,
     mapping: { ts, H, originX: ax, floorY: ay, shifts, camera: 'front', free: { ...cam, anchor: { x: 0, y: -floor, z: 0 } } },

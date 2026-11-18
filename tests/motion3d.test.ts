@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { squat3dSeries } from '../src/domain/motion3d'
 import { metricDoc, PROFILES } from '../src/domain/motionSports'
 import { VIEW3D_POINTS, parseView3DModel, type View3DModelFile } from '../src/domain/view3d'
-import { analyzeMotion, motionMetric, packLandmarks, packWorld, type MotionInput, type MotionRecord } from '../src/domain/motion'
+import { analyzeMotion, motionMetric, packLandmarks, packWorld, prepareMotion, type MotionInput, type MotionRecord } from '../src/domain/motion'
+import { motionPoses } from '../src/domain/motionPose'
 import { needsView3d, withView3d } from '../src/data/upgrade3d'
 import type { Landmark } from '../src/domain/types'
 
@@ -28,8 +29,12 @@ function body(knee: number, lean: number): Record<number, V> {
     p[L ? 25 : 26] = kneeP
     p[L ? 23 : 24] = hip
     p[L ? 11 : 12] = sh
-    p[L ? 13 : 14] = [sh[0], sh[1] - 0.15, sh[2] + 0.1]
-    p[L ? 15 : 16] = [sh[0], sh[1] - 0.1, sh[2] + 0.25]
+    // 腕はバーを担ぐ形（胴に対して決まった位置。胴の上の向き u・前の向き w）
+    const u: V = [0, Math.cos(lean * RAD), Math.sin(lean * RAD)]
+    const w: V = [0, -Math.sin(lean * RAD), Math.cos(lean * RAD)]
+    const along = (o: V, dx: number, du: number, dw: number): V => [o[0] + dx, o[1] + du * u[1] + dw * w[1], o[2] + du * u[2] + dw * w[2]]
+    p[L ? 13 : 14] = along(sh, x * 1.1, -0.05, -0.08)
+    p[L ? 15 : 16] = along(sh, x * 2.2, 0.02, -0.05)
     p[L ? 29 : 30] = [x, 0.0, -0.05]
     p[L ? 31 : 32] = [x, 0.0, 0.15]
   }
@@ -84,6 +89,18 @@ describe('向きによらない 3D からスクワットの角度を求める', 
     expect(results[0].knee[0]).toBeCloseTo(100, 4)
     expect(results[0].trunk[0]).toBeCloseTo(35, 4)
     expect(results[1].shin[0]).toBeCloseTo(40, 4)
+  })
+
+  it('立っている間に推定の脚の長さが揺れても、深さは上がらない（膝が曲がっていなければ、しゃがんだと数えない）', () => {
+    // 股関節から上を、コマごとに脚の長さの ±12% だけ上下させる（膝はまっすぐのまま）
+    const frames = Array.from({ length: 40 }, (_, i) => {
+      const p = body(5, 5)
+      const dy = (i % 3 === 0 ? -0.12 : i % 3 === 1 ? 0.06 : 0) * 0.5
+      for (const m of Object.keys(p).map(Number)) if (![27, 28, 29, 30, 31, 32, 25, 26].includes(m)) p[m] = [p[m][0], p[m][1] + dy, p[m][2]]
+      return toCamera(p, 135, -15)
+    })
+    const r = squat3dSeries(frames)
+    expect(Math.max(...r.depth.map(Math.abs))).toBeLessThan(5)
   })
 
   it('3D から求めた記録では、値の説明を 3D の求め方にする（横ずれなど別の値はそのまま）', () => {
@@ -163,6 +180,39 @@ describe('斜め後ろの下から撮ったスクワット', () => {
     expect(motionMetric(a, 'trunk')!.value!).toBeGreaterThan(35)
     expect(motionMetric(a, 'trunk')!.value!).toBeLessThan(39)
     expect(motionMetric(a, 'com_bottom')?.status ?? 'unavailable').not.toBe('ok')
+  })
+
+  it('3D の体: 手首の推定が外れたコマがあっても、腕は暴れない', () => {
+    const input = obliqueInput(110, true)
+    const kw = [15, 16].map((m) => VIEW3D_POINTS.indexOf(m))
+    // 4 コマに 1 コマ、両手首を頭の方（カメラの座標で右上）へ大きく外す
+    const noisy: MotionInput = {
+      ...input,
+      frames: input.frames.map((f, i) => {
+        if (i % 4 !== 1 || !f.v) return f
+        const v = [...f.v]
+        for (const k of kw) {
+          v[3 * k] += 0.15
+          v[3 * k + 1] -= 0.2
+        }
+        return { ...f, v }
+      }),
+    }
+    const clean = motionPoses(prepareMotion(input, 'squat')!)
+    const got = motionPoses(prepareMotion(noisy, 'squat')!)
+    expect(got).toHaveLength(clean.length)
+    const dist = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)
+    let worst = 0
+    let worstJump = 0
+    for (let i = 0; i < got.length; i++) {
+      for (const m of [15, 16]) {
+        worst = Math.max(worst, dist(got[i].pose.points[m]!, clean[i].pose.points[m]!))
+        if (i) worstJump = Math.max(worstJump, dist(got[i].pose.points[m]!, got[i - 1].pose.points[m]!))
+      }
+    }
+    // 外したずれ（体の高さの 2 割ほど）に比べて十分に小さい
+    expect(worst).toBeLessThan(0.03)
+    expect(worstJump).toBeLessThan(0.02)
   })
 
   it('3D がない前の記録は「真横でない」になり、3D を足すと計算し直せる', () => {
