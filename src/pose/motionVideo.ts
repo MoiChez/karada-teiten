@@ -4,6 +4,7 @@
 import { packLandmarks, packWorld, turnsFromBody, voteTurns } from '../domain/motion'
 import { POSE_MODEL, createVideoLandmarker, detectImage } from './landmarker'
 import { createClipRefiner, loadRtm } from './rtmpose'
+import { attachView3D } from './view3dRun'
 
 /** 推定と再生に使うコマの長い辺（ピクセル）。推定モデルの入力より十分に大きく、再生用に残しても重くなりすぎない大きさ */
 export const MOTION_MAX_SIDE = 720
@@ -260,7 +261,12 @@ export async function detectRecorded(clip: RecordedClip, turns: number, onProgre
     lm.close()
   }
   const refined = refiner.finish()
-  const out: DetectedClip['frames'] = found.map((f, k) => ({ t: f.t, p: packLandmarks(refined[k]), w: f.w }))
+  // 向きによらない 3D（斜め・正面・後ろから撮った動画の角度に使う）
+  const out: DetectedClip['frames'] = await attachView3D(
+    found.map((f, k) => ({ t: f.t, p: packLandmarks(refined[k]), w: f.w })),
+    w,
+    h,
+  )
   return {
     frames: out,
     images,
@@ -334,7 +340,11 @@ export async function detectVideoFile(file: File, onProgress: (p: Progress) => v
       lm.close()
     }
     const refined = refiner.finish()
-    const out: DetectedClip['frames'] = found.map((f, k) => ({ t: f.t, p: packLandmarks(refined[k]), w: f.w }))
+    const out: DetectedClip['frames'] = await attachView3D(
+      found.map((f, k) => ({ t: f.t, p: packLandmarks(refined[k]), w: f.w })),
+      canvas.width,
+      canvas.height,
+    )
     return { frames: out, images, width: canvas.width, height: canvas.height, durationMs: end * 1000, frameCount: total, fps: FILE_FPS, quarterTurns: turns }
   } finally {
     video.remove()

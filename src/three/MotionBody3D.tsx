@@ -142,7 +142,11 @@ export function MovingBody({
   const shown = useRef('')
   // スクワットは、腕の構え（バーを担ぐ・頭の後ろで組む…）に合わせて手の形を変える
   const squat = sport === 'squat' || sport === 'squat_front'
-  const autoArms = useMemo(() => (squat && !arms ? detectArms(poses, { frontal: sport === 'squat_front' }) : undefined), [squat, arms, poses, sport])
+  // 向きによらない 3D から作った体は、前後の向きも本当の 3D なので、横からの決まりで見分ける
+  const autoArms = useMemo(
+    () => (squat && !arms ? detectArms(poses, { frontal: sport === 'squat_front' && poses[0]?.pose.depthSource !== 'model_estimate' }) : undefined),
+    [squat, arms, poses, sport],
+  )
   const hands = squat ? (arms ?? autoArms) : undefined
   useEffect(() => {
     shown.current = ''
@@ -179,7 +183,8 @@ export function MovingBody({
     // 腰を測った位置に置き、骨の長さを保ったまま足首・手首を測った位置に届かせる（動画に重ねたときに関節が重なるように）。
     // 横から撮った種目は、膝を前後・上下の面の中で曲げる。エルゴ・自転車は座った姿勢の腰にし、手を順手で握る形にする
     const seated = sport === 'erg' || sport === 'bike'
-    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front', seated: sport === 'erg' ? 'round' : seated, grip: seated, hands })
+    // 向きによらない 3D から作った体は、脚を横からの面に押し込まない
+    poseMannequin(root, pose, { anchor: 'hips', planarLegs: sport !== 'squat_front' && pose.depthSource !== 'model_estimate', seated: sport === 'erg' ? 'round' : seated, grip: seated, hands })
   })
 
   return (

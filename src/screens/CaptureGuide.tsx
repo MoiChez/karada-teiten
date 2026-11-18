@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
-import { ArrowLeftRight, Eye, Footprints, Hand, Ruler, Shirt, Smartphone, Sun, SquareDashed, User } from 'lucide-react'
+import { ArrowLeftRight, Eye, Footprints, Hand, Ruler, Shirt, Smartphone, Sun, SquareDashed, User, Users } from 'lucide-react'
 import type { BodyArea, ShootStyle } from '../domain/types'
 import { AREA_LABELS, localDateKey } from '../domain/format'
 import { newId } from '../domain/session'
@@ -13,7 +13,12 @@ type Check = { icon: typeof Sun; title: string; text: string }
 
 /** いちばん失敗しやすい 3 つ（初めから見せる） */
 const KEY_CHECKS: Check[] = [
-  { icon: Smartphone, title: 'スマホは腰の高さに、縦にまっすぐ立てる', text: '棚や台に立てかけます。2.5〜3m 離れて、頭からつま先まで入るところに立ちます。' },
+  {
+    icon: Users,
+    title: '人に撮ってもらうのがおすすめ',
+    text: 'スマホを縦にまっすぐ、腰の高さで持ってもらいます。置き場所を探さずにすみ、高さと距離もそろえやすくなります。1 人のときは、下のように台に立ててタイマーで撮ります。',
+  },
+  { icon: Smartphone, title: 'スマホは腰の高さに、縦にまっすぐ', text: '台に置くときは、棚や台に立てかけます。2.5〜3m 離れて、頭からつま先まで入るところに立ちます。' },
   { icon: Sun, title: '明るい場所で、無地の壁の前に', text: '逆光にならない場所を選びます。背景に物が少ないほど、体の位置を正しく読み取れます。' },
   { icon: Shirt, title: '体の線が分かる服で', text: 'ゆったりした服は、肩や膝の位置がずれます。長い髪は背中にかからないようにまとめます。' },
 ]

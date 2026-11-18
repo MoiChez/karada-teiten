@@ -124,7 +124,9 @@ export function MotionPlayer({
   const reduced =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const def = profile.series.find((d) => d.key === series) ?? profile.series[0];
+  // 値のない列（斜めなどから撮って求められなかった重心・負担の比など）は、グラフと今の値に出さない
+  const seriesDefs = profile.series.filter((d) => prep.series[d.key]?.some(Number.isFinite));
+  const def = seriesDefs.find((d) => d.key === series) ?? seriesDefs[0] ?? profile.series[0];
   const equipment = useMemo(
     () => motionEquipment(rec.kind, poses, prep.nearSide),
     [rec.kind, poses, prep.nearSide],
@@ -136,7 +138,7 @@ export function MotionPlayer({
     () =>
       squat
         ? detectArms(poses, {
-            frontal: rec.kind === "squat_front",
+            frontal: rec.kind === "squat_front" && poses[0]?.pose.depthSource !== "model_estimate",
             loadKg: rec.body?.loadKg,
           })
         : undefined,
@@ -546,7 +548,7 @@ export function MotionPlayer({
             aria-label="グラフにする値"
             className="-mx-4 -mt-1 flex gap-x-1 overflow-x-auto px-4 whitespace-nowrap"
           >
-            {profile.series.map((d) => (
+            {seriesDefs.map((d) => (
               <button
                 key={d.key}
                 type="button"
@@ -813,7 +815,7 @@ function NowTable({
 }) {
   const t = useClockValue(clock, (c) => c.get());
   const k = indexAt(ts, t);
-  const defs = PROFILES[prep.kind].series;
+  const defs = PROFILES[prep.kind].series.filter((d) => prep.series[d.key]?.some(Number.isFinite));
   const measured = defs.filter((d) => !d.estimate);
   const estimated = defs.filter((d) => d.estimate);
   const cell = (d: (typeof defs)[number]) => (

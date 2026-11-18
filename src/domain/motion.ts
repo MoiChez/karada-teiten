@@ -22,6 +22,7 @@ import { resolveBody, squatLoad, type BodyParams, type ResolvedBody } from './mo
 import { barSeries } from './motionBar'
 import { crankAngles } from './motionCrank'
 import { frontalValues, viewOf, type ViewInfo } from './motionFrontal'
+import { squat3dSeries } from './motion3d'
 import type { TorsoProfile } from './torsoDepth'
 import type { ArmStyle } from './motionArms'
 
@@ -29,7 +30,7 @@ export * from './motionCore'
 export { MOTION_KIND_LIST, MUSCLE_LABELS, PROFILES, REP_MIN_DEPTH, eventOf } from './motionSports'
 export type { MetricDef, MotionCycle, MotionEvent, MuscleKey, PreparedMotion, SeriesDef, SportProfile } from './motionSports'
 
-export const MOTION_ALGORITHM_VERSION = 7
+export const MOTION_ALGORITHM_VERSION = 8
 
 export const MOTION_KINDS: Record<MotionKind, { label: string }> = {
   squat: { label: PROFILES.squat.label },
@@ -67,7 +68,7 @@ export interface MotionRecord {
 
 export function motionInputOf(r: Pick<MotionRecord, 'frames' | 'video'> & { edits?: MotionEdit[]; body?: BodyParams }): MotionInput {
   return {
-    frames: r.frames.map((f) => ({ t: f.t, lm: unpackLandmarks(f.p), world: f.w ? unpackWorld(f.w) : undefined })),
+    frames: r.frames.map((f) => ({ t: f.t, lm: unpackLandmarks(f.p), world: f.w ? unpackWorld(f.w) : undefined, v: f.v })),
     width: r.video.width,
     height: r.video.height,
     rollDeg: r.video.rollDeg,
@@ -97,15 +98,27 @@ export function prepareMotion(input: MotionInput, kind: MotionKind = 'squat'): P
     const value = def.value
     if (value) series[def.key] = base.frames.map((fr) => value(fr.px, ctx))
   }
-  const load = profile.load ? (squatLoad(base.frames, s, base.f, body, base.breaks) ?? undefined) : undefined
+  // 斜め・正面・後ろから撮ったスクワットは、角度と深さを向きによらない 3D から求める（3D があるときだけ）
+  const vByT = new Map(input.frames.map((f) => [f.t, f.v]))
+  const v3 = base.frames.map((fr) => vByT.get(fr.t))
+  const angles3d = (kind === 'squat' || kind === 'squat_front') && view.view !== 'side' && v3.filter(Boolean).length >= base.frames.length * 0.6
+  if (angles3d) {
+    const s3 = squat3dSeries(v3)
+    for (const key of Object.keys(s3) as (keyof typeof s3)[]) if (profile.series.some((d) => d.key === key)) series[key] = s3[key]
+  }
+  const none = base.frames.map(() => NaN)
+  // 横からの見かけの値で求める推定（重心・負担の比）は、真横でないときは出さない
+  const load = profile.load && !angles3d ? (squatLoad(base.frames, s, base.f, body, base.breaks) ?? undefined) : undefined
   if (profile.load) {
-    const none = base.frames.map(() => NaN)
     series.ratio = load?.ratio ?? none
     series.ratio_lo = load?.ratioLo ?? none
     series.ratio_hi = load?.ratioHi ?? none
+    if (angles3d) series.com = none
   }
-  const prep: PreparedMotion = { ...base, kind, standLeg: ctx.standLeg, series, body, load, view, leftDir }
-  if (profile.load) prep.bar = barSeries(prep) ?? undefined
+  // 値の求め方を持たない列（向きによらない 3D だけで求める値など）は、なければ数でない値で埋める
+  for (const def of profile.series) series[def.key] ??= none
+  const prep: PreparedMotion = { ...base, kind, standLeg: ctx.standLeg, series, body, load, view, leftDir, angles3d, v3: angles3d ? v3 : undefined }
+  if (profile.load && !angles3d) prep.bar = barSeries(prep) ?? undefined
   if (profile.crank) prep.crank = crankAngles(prep) ?? undefined
   return prep
 }
@@ -154,6 +167,8 @@ export interface MotionAnalysis {
   sideView?: boolean
   /** 撮った向き（横・正面・後ろ・斜め） */
   view?: ViewInfo
+  /** 角度と深さを、向きによらない 3D から求めた（斜め・正面・後ろから撮ったスクワット） */
+  angles3d?: boolean
 }
 
 /**
@@ -213,7 +228,11 @@ export function analyzeMotion(input: MotionInput, requested: MotionKind = 'squat
       const torso = Math.hypot(p[s.shoulder].x - p[s.hip].x, p[s.shoulder].y - p[s.hip].y)
       return torso > 0 ? hw / torso : 0
     })
-  if (ratios.length >= 5 && quantile(ratios, 0.5) > SIDE_HIP_RATIO_MAX) {
+  if (prep.angles3d) {
+    warnings.push(
+      '真横ではない向きから撮った動画なので、膝・股関節・上体・すねの角度と深さは、向きによらない 3D の推定から求めました。真横から撮ったときより誤差が大きくなります。重心と負担の比は、真横から撮ったときだけ出します。',
+    )
+  } else if (ratios.length >= 5 && quantile(ratios, 0.5) > SIDE_HIP_RATIO_MAX) {
     sideView = false
     warnings.push(
       `体が真横を向いていないようです（腰の幅から見た向き）。${anyViewLabels(profile)}は使えますが、角度・位置などのほかの値は、横から見た見かけの値として求めているため、この動画では参考になりません。次は体の真横から撮ってください。${kind === 'squat' ? '左右の差を見たいときは、斜めではなく真正面か真後ろから撮ると、左右の差を測ります。' : ''}`,
@@ -254,6 +273,7 @@ export function analyzeMotion(input: MotionInput, requested: MotionKind = 'squat
     body: prep.load ? prep.body : undefined,
     sideView,
     view: prep.view,
+    angles3d: prep.angles3d || undefined,
   }
 }
 

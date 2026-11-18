@@ -18,6 +18,8 @@ export interface MotionFrameData {
   t: number
   p: number[]
   w?: number[]
+  /** 向きによらない 3D のモデルの出力（19 点の 3D と上の向き。src/domain/view3d.ts）。モデルがなかった記録にはない */
+  v?: number[]
 }
 
 export interface MotionVideoInfo {
@@ -68,7 +70,7 @@ export function unpackWorld(w: number[]): Landmark[] {
 // ---------- 計算の途中 ----------
 
 export interface MotionInput {
-  frames: { t: number; lm: Landmark[]; world?: Landmark[] }[]
+  frames: { t: number; lm: Landmark[]; world?: Landmark[]; v?: number[] }[]
   width: number
   height: number
   rollDeg?: number

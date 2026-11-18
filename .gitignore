@@ -9,3 +9,4 @@ public/mediapipe
 coverage
 # 開発時の確認用の動画など（配信しない）
 public/_dev
+__pycache__

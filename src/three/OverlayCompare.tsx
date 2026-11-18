@@ -43,6 +43,15 @@ function AlignedCamera({
     c.bottom = (mapping.floorY + sh.y - height) / H;
     // 顔が画面の右向き: 体の右側（-X）から見る（画面の右が +Z）。左向きは +X から。正面は +Z から、後ろは -Z から
     const D = 10;
+    const f = mapping.free;
+    if (f) {
+      // 斜めなど: 動画を撮ったカメラと同じ向きから見る（3D の anchor が画面の (originX, floorY) に写る）
+      c.position.set(f.anchor.x - f.forward.x * D, f.anchor.y - f.forward.y * D, f.anchor.z - f.forward.z * D);
+      c.up.set(-f.down.x, -f.down.y, -f.down.z);
+      c.lookAt(f.anchor.x, f.anchor.y, f.anchor.z);
+      c.updateProjectionMatrix();
+      return;
+    }
     if (mapping.camera === "right") c.position.set(-D, 0, 0);
     else if (mapping.camera === "left") c.position.set(D, 0, 0);
     else if (mapping.camera === "front") c.position.set(0, 0, D);

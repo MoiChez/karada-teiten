@@ -17,6 +17,7 @@ import {
   type MotionRecord,
 } from '../domain/motion'
 import { motionPoses } from '../domain/motionPose'
+import { metricDoc } from '../domain/motionSports'
 import { TORSO_PROFILE_VERSION } from '../domain/torsoDepth'
 import { motionCyclesCsv, motionFramesCsv, motionJson } from '../domain/motionExport'
 import type { UserProfile } from '../domain/types'
@@ -235,7 +236,8 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
   const [arms, setArms] = useState(saved.arms)
   const rec = useMemo<MotionRecord>(() => ({ ...saved, edits: work.edits, body: work.body, analysis: work.analysis, torsoDepth: torso, arms }), [saved, work, torso, arms])
   // 条件がそろったときだけ出す値（バーの値など）は、値があるときだけ
-  const shown = profile.metrics.filter((d) => !d.hidden && !(d.optional && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
+  // 条件がそろったときだけ出す値と、斜めなどから撮って求められなかった値（重心・負担の比・バー）は、値があるときだけ
+  const shown = profile.metrics.filter((d) => !d.hidden && !((d.optional || rec.analysis.angles3d) && motionMetric(rec.analysis, d.key)?.status !== 'ok'))
   const built = useMemo(() => prepareRecord(rec), [rec])
   const poses = useMemo(() => (built ? motionPoses(built.prep, built.cycles) : []), [built])
   // 3D の胴の前後の厚みと位置を、動画の人の輪郭に合わせる（横から撮った記録で、まだ測っていないか測り方の版が古く、
@@ -361,7 +363,7 @@ function MotionResultBody({ rec: saved, prev, video, sex }: { rec: MotionRecord;
                   )}
                 </div>
                 {def.reference && <p className="mt-1.5 text-sm text-ink-2">{def.reference}</p>}
-                <Details summary="この値について">{def.doc}</Details>
+                <Details summary="この値について">{metricDoc(def, rec.analysis.angles3d)}</Details>
               </li>
             )
           })}

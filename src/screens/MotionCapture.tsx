@@ -338,6 +338,7 @@ export function MotionCapture() {
             </p>
             <h2 className="mt-6 font-bold">撮る前に</h2>
             <ol className="mt-2 list-decimal space-y-2 pl-5 text-[15px]">
+              <li>人に撮ってもらうのがおすすめです。スマホを動かさないように持ってもらい、動いている間はカメラを追いかけないでもらいます。1 人のときは、台に立てて撮ります。</li>
               {profile.guide.map((g) => (
                 <li key={g}>{g}</li>
               ))}

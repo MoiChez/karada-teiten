@@ -12,6 +12,7 @@ import {
   type MotionRecord,
   type PreparedMotion,
 } from './motion'
+import { metricDoc } from './motionSports'
 import type { ConstraintNote } from './motionConstraints'
 import type { CameraView } from './motionFrontal'
 
@@ -74,8 +75,13 @@ function framesMeta(rec: MotionRecord, prep: PreparedMotion): Cell[][] {
   }
   add('点の座標', '傾きを戻した後のピクセル（画像の左上が原点、x は右、y は下が +）。なめらか化・手で直した点・器具の前提を当てた後の、計算に使った位置')
   add('区間', '250 ミリ秒より長く体を検出できなかったところで区間を分け、なめらか化と区切りは区間をまたがない')
-  add('角度の符号の決まり', '横から見た見かけの角度。前は顔の向き。それぞれの列の決まりは次の行')
-  for (const d of profile.series) add(`${d.label}（${d.unit}）`, d.doc)
+  add(
+    '角度の符号の決まり',
+    prep.angles3d
+      ? '真横ではない向きから撮ったため、膝・股関節・上体・すね・太もも・深さは、向きによらない 3D の推定から求めた。前は体の正面の向き。それぞれの列の決まりは次の行'
+      : '横から見た見かけの角度。前は顔の向き。それぞれの列の決まりは次の行',
+  )
+  for (const d of profile.series) add(`${d.label}（${d.unit}）`, metricDoc(d, prep.angles3d))
   return rows
 }
 

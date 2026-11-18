@@ -8,6 +8,8 @@ import type { MotionCycle, PreparedMotion } from './motionSports'
 import { sidePoints } from './landmarks'
 import { PAIRS, bodySideIndex } from './motionFrontal'
 import { evenPicks } from './torsoDepth'
+import { frame3d } from './motion3d'
+import { VIEW3D_POINTS } from './view3d'
 
 /**
  * 座って行う種目で、体の大きさをそろえる比（標準の体の「股関節〜膝〜足首の長さ / 耳〜かかとの高さ」）。
@@ -105,9 +107,92 @@ export interface PoseMapping {
   shifts: Point[]
   /** 動画を撮ったカメラの位置: 顔が画面の右向き（体の右側から） / 左向き / 体の前から / 後ろから */
   camera: 'right' | 'left' | 'front' | 'rear'
+  /**
+   * 斜めなど、決まった向きでないカメラ（向きによらない 3D のとき）。3D の座標で、カメラの右・下・奥の向きと、
+   * 画面の (originX, floorY) に写る 3D の点。H は 3D の長さ 1 あたりのピクセル
+   */
+  free?: { right: Vec3; down: Vec3; forward: Vec3; anchor: Vec3 }
+}
+
+/** 向きによらない 3D から作る 3D の体と、動画に重ねるための対応（斜め・正面・後ろから撮ったスクワット） */
+function view3dBody(prep: PreparedMotion): { poses: { t: number; pose: Pose3D }[]; mapping: PoseMapping } | null {
+  const v3 = prep.v3
+  if (!v3) return null
+  const fs = v3.map(frame3d)
+  const okIdx = fs.map((f, k) => (f ? k : -1)).filter((k) => k >= 0)
+  if (okIdx.length < 5) return null
+  // 記録で 1 つの向き: 上と左（コマごとの平均）。前 = 左 × 上
+  const avg = (get: (k: number) => Vec3): Vec3 => {
+    const s = okIdx.reduce((a, k) => ({ x: a.x + get(k).x, y: a.y + get(k).y, z: a.z + get(k).z }), { x: 0, y: 0, z: 0 })
+    const l = Math.hypot(s.x, s.y, s.z) || 1
+    return { x: s.x / l, y: s.y / l, z: s.z / l }
+  }
+  const up = avg((k) => fs[k]!.up)
+  const l0 = avg((k) => fs[k]!.left)
+  const d = l0.x * up.x + l0.y * up.y + l0.z * up.z
+  const left = (() => {
+    const v = { x: l0.x - up.x * d, y: l0.y - up.y * d, z: l0.z - up.z * d }
+    const n = Math.hypot(v.x, v.y, v.z) || 1
+    return { x: v.x / n, y: v.y / n, z: v.z / n }
+  })()
+  const front = { x: left.y * up.z - left.z * up.y, y: left.z * up.x - left.x * up.z, z: left.x * up.y - left.y * up.x }
+  // カメラの座標 → 3D の体の座標（X: 体の左、Y: 上、Z: 前）
+  const toBody = (p: Vec3): Vec3 => ({ x: p.x * left.x + p.y * left.y + p.z * left.z, y: p.x * up.x + p.y * up.y + p.z * up.z, z: p.x * front.x + p.y * front.y + p.z * front.z })
+  const midAnkle = (k: number) => {
+    const F = fs[k]!
+    const a = F.P(27)
+    const b = F.P(28)
+    return toBody({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 })
+  }
+  // 足首の中点を記録の中で動かさない（スクワットでは足は動かない）。床は足の点の低いところ
+  const raw = okIdx.map((k) => {
+    const F = fs[k]!
+    const a = midAnkle(k)
+    const pts = new Map<number, Vec3>()
+    for (const m of VIEW3D_POINTS) {
+      const q = toBody(F.P(m))
+      pts.set(m, { x: q.x - a.x, y: q.y - a.y, z: q.z - a.z })
+    }
+    return { k, pts }
+  })
+  const feet = raw.flatMap((r) => [29, 30, 31, 32].map((m) => r.pts.get(m)!.y))
+  const floor = quantile(feet, 0.1)
+  const poses = raw.map(({ k, pts }) => {
+    const points: (Vec3 | null)[] = Array.from({ length: 33 }, () => null)
+    for (const [m, q] of pts) points[m] = { x: q.x, y: q.y - floor, z: q.z }
+    return { t: prep.frames[k].t, pose: { points, depthSource: 'model_estimate' as const } }
+  })
+  // 動画に重ねる: 足首の中点（3D の (0, -floor, 0)）が、画面の足首の中点に写る。1 あたりのピクセルは、肩〜足首の長さの比の中央値
+  const px = (k: number, i: number) => prep.frames[k].px[i]
+  const ankPx = (k: number) => ({ x: (px(k, 27).x + px(k, 28).x) / 2, y: (px(k, 27).y + px(k, 28).y) / 2 })
+  const cam = { right: toBody({ x: 1, y: 0, z: 0 }), down: toBody({ x: 0, y: 1, z: 0 }), forward: toBody({ x: 0, y: 0, z: 1 }) }
+  const ratios = raw.map(({ k, pts }) => {
+    const sh = { x: (px(k, 11).x + px(k, 12).x) / 2, y: (px(k, 11).y + px(k, 12).y) / 2 }
+    const a = ankPx(k)
+    const s3 = pts.get(11)!
+    const s4 = pts.get(12)!
+    const v = { x: (s3.x + s4.x) / 2, y: (s3.y + s4.y) / 2, z: (s3.z + s4.z) / 2 }
+    const pxLen = Math.hypot(sh.x - a.x, sh.y - a.y)
+    const proj = Math.hypot(v.x * cam.right.x + v.y * cam.right.y + v.z * cam.right.z, v.x * cam.down.x + v.y * cam.down.y + v.z * cam.down.z)
+    return proj > 1e-3 ? pxLen / proj : NaN
+  })
+  const H = quantile(ratios.filter(Number.isFinite), 0.5)
+  if (!(H > 0)) return null
+  const ax = quantile(okIdx.map(ankPx).map((p) => p.x), 0.5)
+  const ay = quantile(okIdx.map(ankPx).map((p) => p.y), 0.5)
+  const ts = poses.map((p) => p.t)
+  const shifts = okIdx.map((k) => ({ x: ankPx(k).x - ax, y: ankPx(k).y - ay }))
+  return {
+    poses,
+    mapping: { ts, H, originX: ax, floorY: ay, shifts, camera: 'front', free: { ...cam, anchor: { x: 0, y: -floor, z: 0 } } },
+  }
 }
 
 export function poseMapping(prep: PreparedMotion): PoseMapping | null {
+  if (prep.angles3d) {
+    const b = view3dBody(prep)
+    if (b) return b.mapping
+  }
   const ts = prep.frames.map((f) => f.t)
   if (prep.kind === 'squat_front') {
     const { H, floorY, cx } = frontFrame(prep)
@@ -120,6 +205,10 @@ export function poseMapping(prep: PreparedMotion): PoseMapping | null {
 }
 
 export function motionPoses(prep: PreparedMotion, cycles: MotionCycle[] = []): { t: number; pose: Pose3D }[] {
+  if (prep.angles3d) {
+    const b = view3dBody(prep)
+    if (b) return b.poses
+  }
   if (prep.kind === 'squat_front') return frontalPoses(prep)
   const { s, fr, H, at, floorY, ankleX } = sideFrame(prep)
   if (!(H > 0)) return []

@@ -60,6 +60,10 @@ export interface PreparedMotion extends PreparedBase {
   leftDir: 1 | -1
   /** 動画の人の輪郭から測った胴の厚み（記録に保存した値。3D の表示だけに使う） */
   torsoDepth?: TorsoProfile
+  /** 斜め・正面・後ろから撮ったので、角度と深さを向きによらない 3D から求めた */
+  angles3d?: boolean
+  /** コマごとの向きによらない 3D（frames と同じ並び。ないコマは undefined） */
+  v3?: (number[] | undefined)[]
 }
 
 export interface MotionEvent {
@@ -402,6 +406,42 @@ const cycleMax =
   (key: string): MetricDef['value'] =>
   (c, prep) =>
     maxIn(prep.series[key], c.startIndex, c.endIndex)
+
+// 真横でないスクワットで、向きによらない 3D から求めた値の説明（コマごとの値・1 回ごとの値の key で引く）。
+// 誤差は、学習に使っていない合成の検証クリップ（人形の動画、正解つき）のコマごとの差の中央値
+const DOC_3D_KNEE =
+  '股関節・膝・足首の点を、向きによらない 3D の推定で立体にして求めた膝の曲がりです（左右の平均）。脚がまっすぐなとき 0° で、曲げるほど大きくなります。人形の動画（正解つき）で確かめたコマごとの差は、斜めから約 4°、正面・後ろから約 8° でした（正面・後ろから撮った深いしゃがみは、平均約 8° 小さく出ました）。実際の人では確かめていません。'
+const DOC_3D_HIP =
+  '上体（股関節から肩への線）と太もも（股関節から膝への線）の間の曲がりを、向きによらない 3D の推定から求めた値です（左右の平均）。一直線のとき 0° で、曲げるほど大きくなります。骨盤の傾きと腰・背中の曲がりも含みます。人形の動画（正解つき）で確かめたコマごとの差は、斜めから約 3°、正面・後ろから約 5° でした。'
+const DOC_3D_TRUNK =
+  '両股関節の中点から両肩の中点への線が、推定した鉛直（床に垂直な向き）からどれだけ前に傾いたかです（後ろに傾くと −）。向きによらない 3D の推定から求めました。人形の動画（正解つき）で確かめたコマごとの差は、斜めから約 2°、正面・後ろから約 4° でした。'
+const DOC_3D_SHIN = '足首から膝への線が、推定した鉛直からどれだけ前に傾いたかです（左右の平均）。向きによらない 3D の推定から求めました。人形の動画での差は、まだ確かめていません。'
+const DOC_3D_THIGH =
+  '股関節と膝を結ぶ線の、推定した水平からの角度です（左右の平均）。太ももが水平（パラレル）のとき 0° で、股関節が膝より下になると + 、上にあると − になります。向きによらない 3D の推定から求めました。人形の動画での差は、まだ確かめていません。'
+const DOC_3D_DEPTH =
+  '両股関節の中点が、立っているとき（高い方から 1 割の高さ）からどれだけ下がったかを、そのときの両足首の中点から股関節までの高さに対する割合で表した値です。0% が立った姿勢です。高さは、向きによらない 3D の推定の鉛直の向きで測りました。人形の動画での差は、まだ確かめていません。'
+const DOC_3D: Record<string, string> = {
+  knee: DOC_3D_KNEE,
+  hip: DOC_3D_HIP,
+  trunk: DOC_3D_TRUNK,
+  shin: DOC_3D_SHIN,
+  thigh: DOC_3D_THIGH,
+  thigh_bottom: DOC_3D_THIGH,
+  depth: DOC_3D_DEPTH,
+}
+
+/** 値の説明。向きによらない 3D から求めた記録（angles3d）では、その求め方の説明にする */
+export function metricDoc(def: { key: string; doc: string }, angles3d?: boolean): string {
+  return (angles3d && DOC_3D[def.key]) || def.doc
+}
+
+/** 値が数でなければ null（向きによらない 3D がないときの値） */
+const finiteOrNull =
+  (f: MetricDef['value']): MetricDef['value'] =>
+  (c, prep) => {
+    const v = f(c, prep)
+    return v !== null && Number.isFinite(v) ? v : null
+  }
 
 const BAR_DOC =
   'バーそのものは検出していません。カメラ側の手首の点をバーの位置とみなしています（バーを握っている前提）。長さは、立っているときの耳〜かかとの高さを身長 × 0.91 として換算した目安で、身長を入れていないときは 170 cm と仮定しています。'
@@ -1011,7 +1051,8 @@ const SQUAT_FRONT: SportProfile = {
   unitLabel: '回',
   mainEvent: 'bottom',
   jumpLabel: (n) => `${n} 回目の底`,
-  series: [F_DEPTH, HIP_SHIFT, KNEE_RATIO, KNEE_L, KNEE_R, SHOULDER],
+  // 膝・股関節・上体の曲がりは、向きによらない 3D があるときだけ（画面の上の点からは、正面・後ろでは求められない）
+  series: [F_DEPTH, HIP_SHIFT, KNEE_RATIO, KNEE_L, KNEE_R, SHOULDER, { ...KNEE, value: undefined }, { ...HIP, value: undefined }, { ...TRUNK, value: undefined }],
   defaultSeries: 'hip_shift',
   metrics: [
     { key: 'depth', label: 'いちばん深いところ', short: '深さ', unit: '%', digits: 0, doc: F_DEPTH.doc, floor: 2, anyView: true, value: cycleMax('depth') },
@@ -1032,6 +1073,10 @@ const SQUAT_FRONT: SportProfile = {
     { key: 'knee_r_bottom', label: '右の膝の外への開き（いちばん深いところ）', short: '右膝', unit: '%', digits: 0, doc: KNEE_R.doc, floor: 2, value: atBottom('knee_r') },
     { key: 'shoulder_bottom', label: '肩の傾き（いちばん深いところ。体の左が上がると +）', short: '肩', unit: '°', digits: 1, doc: SHOULDER.doc, floor: 1, value: atBottom('shoulder') },
     ...SQUAT.metrics.filter((m) => m.key === 'descent' || m.key === 'ascent'),
+    // 向きによらない 3D から求めた曲がり（ないときは出さない）
+    ...SQUAT.metrics
+      .filter((m) => m.key === 'knee' || m.key === 'hip' || m.key === 'trunk')
+      .map((m) => ({ ...m, optional: true, value: finiteOrNull(m.value) })),
   ],
   valid: (p) => p[11].y < p[23].y && p[12].y < p[24].y && p[25].y < p[27].y && p[26].y < p[28].y,
   smoothing: 1.5,
