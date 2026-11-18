@@ -17,7 +17,7 @@ import torch  # noqa: E402
 from mediapipe.tasks.python import BaseOptions, vision  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import IDX, N, USED, WINDOW, angle, frame_features, joint_angles  # noqa: E402
+from common import IDX, N, USED, WINDOW, angle, frame_features, frame_scales, joint_angles  # noqa: E402
 from rtm_refine import refine, session  # noqa: E402
 
 model_dir, video = sys.argv[1], sys.argv[2]
@@ -31,7 +31,7 @@ lm = vision.PoseLandmarker.create_from_options(
 cap = cv2.VideoCapture(video)
 fps = cap.get(cv2.CAP_PROP_FPS) or 30
 step = max(1, int(round(fps / 10)))
-feats, raw = [], []
+feats, raw, scales = [], [], []
 k = 0
 while True:
     ok, fr = cap.read()
@@ -52,12 +52,49 @@ while True:
             vis = np.array([full[m][2] for m in USED])
             world = np.array([[r.pose_world_landmarks[0][m].x, r.pose_world_landmarks[0][m].y, r.pose_world_landmarks[0][m].z] for m in USED])
             feats.append(frame_features(p, vis, world))
+            scales.append(frame_scales(p, vis, world))
             raw.append((p, vis))
         else:
             feats.append(None)
             raw.append(None)
+            scales.append(None)
     k += 1
 ok_idx = [i for i, f in enumerate(feats) if f is not None]
+SEQ = 'd' in torch.load(os.path.join(model_dir, 'model.pt'), weights_only=False)
+
+
+def run_seq():
+    """時間方向のモデル（アプリの runView3DSeqClip と同じく、24 コマずつ 8 コマずらして重ね、真ん中ほど重く平均する）"""
+    from train_net import load_seq  # noqa: E402
+
+    net, mu, sd = load_seq(model_dir)
+    n = len(feats)
+    L = min(24, n)
+    starts = list(range(0, n - L + 1, 8))
+    if starts[-1] + L < n:
+        starts.append(n - L)
+    acc = np.zeros((n, N * 3 + 3))
+    wsum = np.zeros(n)
+    for s0 in starts:
+        idx = list(range(s0, s0 + L))
+        ok = np.array([feats[i] is not None for i in idx], np.float32)
+        if ok.sum() < 3:
+            continue
+        lg = np.array([np.log(scales[i]) for i in idx if feats[i] is not None])
+        ref = np.sort(lg, 0)[(len(lg) - 1) // 2]
+        x = np.zeros((L, len(mu)), np.float32)
+        for j, i in enumerate(idx):
+            if feats[i] is not None:
+                x[j] = np.concatenate([feats[i], np.log(scales[i]) - ref])
+        with torch.no_grad():
+            y = net(torch.tensor((x - mu) / sd, dtype=torch.float32)[None], torch.tensor(ok)[None])[0].numpy()
+        for j, i in enumerate(idx):
+            w = 1.1 - abs(j - (L - 1) / 2) / (L / 2)
+            acc[i] += w * y[j]
+            wsum[i] += w
+    return np.stack([acc[i] / wsum[i] for i in ok_idx])
+
+
 X = []
 for i in ok_idx:
     win = []
@@ -72,9 +109,12 @@ X = np.stack(X)
 # モデル（train.py と同じ形）
 from train_net import load_net  # noqa: E402
 
-net, mu, sd = load_net(model_dir)
-with torch.no_grad():
-    P = net(torch.tensor((X - mu) / sd, dtype=torch.float32)).numpy()
+if SEQ:
+    P = run_seq()
+else:
+    net, mu, sd = load_net(model_dir)
+    with torch.no_grad():
+        P = net(torch.tensor((X - mu) / sd, dtype=torch.float32)).numpy()
 p3 = P[:, : N * 3].reshape(-1, N, 3)
 up = P[:, N * 3 :] / np.linalg.norm(P[:, N * 3 :], axis=1, keepdims=True)
 A = joint_angles(p3, up)

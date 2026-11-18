@@ -26,6 +26,18 @@ def norm2d(p, vis):
     return q / s
 
 
+def frame_scales(p, vis, world):
+    """1 コマの大きさ（2D の点の広がり〔ピクセル〕と、推定モデルの 3D の広がり〔メートル〕）。時間方向のモデルで、
+    クリップの中の大きさの変わり方（しゃがむと見かけが小さくなる）を入れるのに使う"""
+    hip = (p[IDX[23]] + p[IDX[24]]) / 2
+    q = p - hip
+    w = np.clip(vis, 0.2, 1.0)[:, None]
+    s = np.sqrt((w * (q ** 2)).sum() / w.sum() / 2) + 1e-6
+    wv = world - (world[IDX[23]] + world[IDX[24]]) / 2
+    ws = np.sqrt((wv ** 2).sum(1).mean()) + 1e-6
+    return np.array([s, ws], np.float32)
+
+
 def frame_features(p, vis, world):
     """1 コマの入力。p: ピクセルの 2D（N×2）、vis: 見えている度合い（N）、world: 推定モデルの 3D（N×3、メートル、腰が原点）"""
     q = norm2d(p, vis)
